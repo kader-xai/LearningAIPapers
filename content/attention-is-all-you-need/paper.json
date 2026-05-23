@@ -1,0 +1,508 @@
+{
+  "title": "Attention Is All You Need",
+  "authors": "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, Illia Polosukhin",
+  "year": "2017",
+  "venue": "NeurIPS 2017 — arXiv:1706.03762",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The headline claim",
+          "subtitle": "Recurrence and convolutions are not necessary — attention alone suffices.",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "<b>Sequence transduction</b> means: take one sequence in, emit another sequence out. Machine translation is the canonical example (English in, German out), but the same framing covers summarization, parsing, speech recognition, code generation, and so on. Before this paper, the dominant recipe was: an <i>encoder</i> RNN reads the source one token at a time and produces hidden states; a <i>decoder</i> RNN generates the target one token at a time; an <i>attention</i> module lets the decoder look back at encoder states. The RNN was the load-bearing piece. Attention was an add-on." },
+            { "type": "p", "html": "This paper inverts that. The authors propose the <b>Transformer</b>, a model with no recurrence and no convolutions anywhere in the main path — only stacked attention layers and per-position MLPs. Their bet: a network of attention modules is enough to model any sequence-to-sequence dependency, and removing recurrence unlocks two large practical wins simultaneously." },
+            { "type": "quote", "html": "We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train." },
+            { "type": "p", "html": "<b>Win 1 — parallelism.</b> RNNs must process tokens sequentially because $h_t$ depends on $h_{t-1}$. That serial chain is the bottleneck: even on a GPU with thousands of cores, the wall-clock cost grows linearly with sequence length and you can't trade flops for time. A Transformer layer applies the <i>same</i> matmul-heavy operations across all positions in parallel — perfect for modern accelerators." },
+            { "type": "p", "html": "<b>Win 2 — short paths between distant tokens.</b> In an RNN, information from position 1 reaches position 50 only after passing through 49 nonlinear hidden states. Gradients diffuse along the way. In a Transformer, position 1 and position 50 are one attention hop apart — distance is irrelevant. This is why Transformers learn long-range structure (coreference, agreement, document structure) so much more easily." },
+            { "type": "p", "html": "<b>Headline results.</b> <span class=\"pill\">28.4 BLEU</span> on WMT 2014 English→German — a 2+ BLEU jump over the prior best, which was itself an <i>ensemble</i>. <span class=\"pill\">41.8 BLEU</span> on WMT 2014 English→French, beating every prior single model after only 3.5 days of training on 8 GPUs. The baselines they unseated had been trained for weeks on much larger clusters. The 'and it's cheaper' part shocked people as much as the BLEU numbers." }
+          ],
+          "viz": ["transformer-architecture"]
+        }
+      ]
+    },
+
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "Where RNNs hit a wall",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "Recurrent networks — vanilla RNNs, LSTMs, GRUs — were the workhorses of sequence modeling. They held state-of-the-art on language modelling, machine translation, and most other tasks involving sequences. The recurrence is at the heart of the model: a hidden state $h_t$ is computed as a (typically gated) function of the previous hidden state and the current input." },
+            { "type": "math", "tex": "h_t = f(h_{t-1},\\, x_t)" },
+            { "type": "p", "html": "This factorization aligns the computation with the temporal structure of the data, which is conceptually clean but operationally costly: there is no way to compute $h_t$ before $h_{t-1}$ is finished. With training sequences in the hundreds or thousands of tokens, the sequential chain is the dominant wall-clock cost." },
+            { "type": "p", "html": "Memory matters too: backpropagation-through-time has to keep every intermediate hidden state around so it can compute gradients on the backward pass. The memory footprint scales linearly with sequence length, which limits batch size and rules out training on very long contexts." },
+            { "type": "p", "html": "There had been clever workarounds — factorization tricks, conditional computation that skips updates when nothing has changed — and those gave real speed-ups. But the <i>fundamental</i> constraint (one step's output gates the next step's input) persisted. You can polish the chain but you can't break it." }
+          ]
+        },
+        {
+          "title": "Attention before this paper",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "Attention was not a new idea in 2017. Bahdanau, Cho & Bengio (2014) had introduced it for translation, and by the time of this paper it was standard equipment in seq2seq models: the decoder, at each step, computes a weighted average over encoder hidden states rather than relying on a single bottleneck vector. This fixed the obvious failure mode of fixed-size encodings choking on long sentences." },
+            { "type": "p", "html": "But in essentially all of that prior work, attention sat <i>on top of</i> recurrence. The encoder was an RNN. The decoder was an RNN. Attention was the glue. Nobody had asked: <i>what if attention is the whole computation?</i>" },
+            { "type": "p", "html": "The Transformer's pitch in one line: <b>relate every pair of positions in O(1) operations</b>, and stack many of these layers in parallel. The model becomes a deep network of pure attention + MLPs, with no recurrence anywhere." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "2. Background",
+      "pages": [
+        {
+          "title": "Convolutional alternatives & their tradeoff",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "Several lines of work had already attacked the parallelism problem by replacing recurrence with convolutions. Extended Neural GPU (Kaiser & Bengio), ByteNet (Kalchbrenner et al.), and ConvS2S (Gehring et al.) all process the entire sequence in parallel through stacked convolutional blocks." },
+            { "type": "p", "html": "The catch: a convolution with kernel size $k$ only mixes tokens within a window of $k$ positions per layer. To make information from token 1 reachable at token 100, you need either a deep stack of standard convolutions (linear in distance) or a stack of <b>dilated</b> convolutions (logarithmic in distance). For ConvS2S that's $O(n)$; for ByteNet, $O(\\log_k n)$." },
+            { "type": "p", "html": "Either way, modeling a relationship between two faraway tokens requires routing the signal through many intermediate operations — and the deeper the route, the harder it is for gradient signal to identify what to attend to." },
+            { "type": "p", "html": "Self-attention sidesteps this entirely: <i>any</i> two positions are directly connected by a single attention operation. The 'distance' between tokens in the computation graph is always 1, regardless of how far apart they are in the sequence." },
+            { "type": "p", "html": "But there's a cost: attention is a weighted average. Averaging is fundamentally a smoothing operation — it can blur out fine distinctions. The paper's countermeasure is <b>multi-head attention</b>, which lets multiple independent 'lenses' average the same input, each focusing on a different aspect." }
+          ]
+        },
+        {
+          "title": "Self-attention and end-to-end memory",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "<b>Self-attention</b> (also called intra-attention) is attention where the queries, keys, and values all come from the same sequence — the model is looking at itself. Prior work had used it for reading comprehension, abstractive summarization, textual entailment, and learning sentence representations. So the building block existed; the paper's contribution is showing it can be the <i>only</i> building block." },
+            { "type": "p", "html": "<b>End-to-end memory networks</b> (Sukhbaatar et al.) had used attention as a recurrent module — they re-attend over the same memory multiple times, with each pass refining the answer. That's recurrence over an <i>attention</i> operation, but still recurrence." },
+            { "type": "p", "html": "Distinct from all of these, the Transformer's stated contribution is: <i>the first sequence transduction model relying entirely on self-attention to compute representations of its input and output</i>, without any sequence-aligned RNN or convolution in the main path." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3. Model Architecture",
+      "pages": [
+        {
+          "title": "Overall shape: encoder–decoder",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "Like nearly every competitive neural transduction model, the Transformer is shaped as an <b>encoder–decoder</b>. The two halves do different jobs:" },
+            { "type": "list", "items": [
+              "The <b>encoder</b> reads the source sequence $(x_1, \\dots, x_n)$ — a sentence in English, say — and turns it into a sequence of $d_{\\text{model}}$-dimensional vectors $\\mathbf{z} = (z_1, \\dots, z_n)$. There's one vector per input token, and each one is a contextualized representation of that token informed by every other token in the input.",
+              "The <b>decoder</b> generates the target sequence $(y_1, \\dots, y_m)$ — the German translation — <b>one token at a time</b>, autoregressively. At each step, it conditions on (a) the encoder's outputs $\\mathbf{z}$ and (b) everything it has emitted so far. It then produces a probability distribution over the vocabulary; the chosen token is appended and the loop repeats until an end-of-sentence token."
+            ]},
+            { "type": "p", "html": "Auto-regressive generation is the source of one important architectural constraint: when the decoder is predicting position $t$, it must not be allowed to peek at positions $\\ge t$ in its own output, otherwise training would be trivial and inference would be impossible. This is enforced by a <b>causal mask</b> inside the decoder's self-attention — more on this later." },
+            { "type": "p", "html": "Both halves are built from identical layers (one design, two contexts). Each encoder layer has two sub-layers; each decoder layer has three. Every sub-layer is wrapped with a residual connection and layer normalization." }
+          ],
+          "viz": ["transformer-architecture"]
+        }
+      ]
+    },
+
+    {
+      "title": "3.1 Encoder and Decoder Stacks",
+      "pages": [
+        {
+          "title": "Encoder: a stack of N=6 identical layers",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "The encoder is just six copies of the same layer, applied in sequence. There's no recurrence between layers in the usual RNN sense — each layer takes the previous layer's outputs as input and produces new outputs. After six layers the token representations have been mixed and refined six times." },
+            { "type": "p", "html": "Each encoder layer has <b>two sub-layers</b>:" },
+            { "type": "list", "items": [
+              "<b>Multi-head self-attention</b> — the layer's input is used to produce queries, keys, and values; every position attends to every other position. This is the only point where tokens exchange information.",
+              "<b>Position-wise feed-forward network</b> — a small two-layer MLP, applied <i>independently and identically</i> to every position. No information crosses between positions inside this sub-layer; the only mixing happens in attention."
+            ]},
+            { "type": "p", "html": "Around each sub-layer you wrap a residual connection and a layer normalization. Schematically:" },
+            { "type": "math", "tex": "\\text{LayerNorm}\\!\\left(x + \\text{Sublayer}(x)\\right)" },
+            { "type": "p", "html": "The residual is doing two jobs at once. <b>(a)</b> It gives gradients a short path back through the stack, so deep networks remain trainable. <b>(b)</b> It makes the function the sub-layer has to learn an <i>increment</i> on top of the identity — useful for very deep stacks. LayerNorm keeps the activations on a stable scale across positions, which keeps softmax (in attention) in a useful regime." },
+            { "type": "p", "html": "Because residual connections add the input to the output element-wise, every sub-layer must emit vectors of the same dimensionality as its input. The paper fixes this once for the whole model: $d_{\\text{model}} = 512$ for the base model, $1024$ for the big one. The token embeddings live in $\\mathbb{R}^{d_{\\text{model}}}$ too." }
+          ]
+        },
+        {
+          "title": "Decoder: a stack of N=6, with an extra sub-layer",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "The decoder mirrors the encoder — also six layers — but each layer has <b>three sub-layers</b> instead of two:" },
+            { "type": "list", "items": [
+              "<b>Masked multi-head self-attention</b> over the decoder's own previous outputs. Same operation as encoder self-attention, but with a triangular mask that blocks each position from attending to any position to its right.",
+              "<b>Encoder–decoder (cross) attention</b> — multi-head attention where the <i>queries</i> come from the decoder's previous sub-layer, and the <i>keys and values</i> come from the encoder's final output. This is the channel through which the decoder consumes the source sentence at every position.",
+              "<b>Position-wise feed-forward network</b> — same shape as in the encoder."
+            ]},
+            { "type": "p", "html": "Residual + LayerNorm wraps each of the three, exactly like the encoder." },
+            { "type": "p", "html": "<b>Why the mask?</b> The decoder is trained with <i>teacher forcing</i>: during training, you feed the model the entire ground-truth target sequence at once and ask it to predict each token from the prefix to its left. Without the mask, position $i$ could attend to position $i+1$ and just copy it — training would learn nothing useful, and at inference time (where the future doesn't exist) the model would collapse. The mask is implemented by setting the disallowed attention logits to $-\\infty$ before softmax, so their probability mass vanishes." },
+            { "type": "p", "html": "<b>Why shift right?</b> The decoder input is the target sequence shifted right by one (and prepended with a <code>&lt;BOS&gt;</code> token). That way, when the model is computing the prediction for position $t$, the only target tokens it has seen are positions $0, 1, \\ldots, t-1$ — exactly what would be available at inference time." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3.2 Attention",
+      "pages": [
+        {
+          "title": "Attention as a query against keys and values",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "Strip attention down to its essence and you get a database-style lookup, but soft." },
+            { "type": "list", "items": [
+              "You have a <b>query</b> $q$ — a vector that says 'I'm looking for something that looks like this.'",
+              "You have a set of <b>keys</b> $\\{k_1, k_2, \\ldots\\}$ — one per entry in your memory, each describing what's there.",
+              "You have a set of <b>values</b> $\\{v_1, v_2, \\ldots\\}$ — one per entry, containing the actual content you'd want to retrieve.",
+              "A <b>compatibility function</b> scores how well each key matches the query. Softmaxing those scores produces weights $\\alpha_i$ that sum to 1. The output is the weighted sum $\\sum_i \\alpha_i v_i$."
+            ]},
+            { "type": "p", "html": "If the scores were one-hot (i.e. one key wins, everything else is zero), this would be exactly a discrete lookup. Softmax makes it differentiable and lets the model spread its bet across several matches when the query is ambiguous." },
+            { "type": "p", "html": "In a Transformer, you don't have one query — you have $n$ of them, one per token. You stack them into a matrix $Q$ and compute all of their lookups in parallel:" },
+            { "type": "math", "tex": "Q \\in \\mathbb{R}^{n \\times d_k},\\quad K \\in \\mathbb{R}^{m \\times d_k},\\quad V \\in \\mathbb{R}^{m \\times d_v}" },
+            { "type": "p", "html": "$n$ is the number of queries (decoder positions, say) and $m$ is the number of key/value pairs (encoder positions, say). In <i>self</i>-attention they're equal because Q, K, V all come from the same sequence." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3.2.1 Scaled Dot-Product Attention",
+      "pages": [
+        {
+          "title": "The formula",
+          "subtitle": "The one you remember from the paper.",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "math", "tex": "\\text{Attention}(Q, K, V) = \\text{softmax}\\!\\left(\\frac{QK^\\top}{\\sqrt{d_k}}\\right) V" },
+            { "type": "p", "html": "Read it left to right:" },
+            { "type": "list", "items": [
+              "$QK^\\top$ is an $n \\times m$ matrix. Entry $(i, j)$ is the dot product of query $i$ with key $j$ — a raw scalar score for how well that query/key pair match.",
+              "Divide by $\\sqrt{d_k}$ (more on this on the next page).",
+              "Apply softmax <b>row-wise</b>. Each row turns into a probability distribution over the $m$ keys — these are the attention weights.",
+              "Multiply by $V$ ($m \\times d_v$). Each output row is a weighted sum of the value vectors, using that row's attention weights."
+            ]},
+            { "type": "p", "html": "Everything is two big matrix multiplications plus a softmax — extremely well-optimized on GPUs. Compare this to additive attention (Bahdanau-style), which uses a small feed-forward network for the compatibility function: theoretically equivalent in expressive power, but a single matmul beats a per-pair MLP for throughput." }
+          ]
+        },
+        {
+          "title": "Why the √dₖ scale",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Suppose the components of $q$ and $k$ are independent samples with mean 0 and variance 1. Then the dot product $q \\cdot k = \\sum_{i=1}^{d_k} q_i k_i$ is a sum of $d_k$ zero-mean random products. Its mean is still 0, but its <b>variance is $d_k$</b>. So the magnitude of dot-product scores grows like $\\sqrt{d_k}$." },
+            { "type": "p", "html": "Why does that matter? Softmax. If one logit is much larger than the rest, softmax produces a near-one-hot distribution. The Jacobian of softmax at such a point is essentially zero — gradients vanish, and the layer stops learning which token to attend to. For small $d_k$ this never bites; for $d_k = 64$ or larger, it does." },
+            { "type": "p", "html": "Dividing by $\\sqrt{d_k}$ rescales the dot products back to unit variance. Softmax stays in the regime where it actually distinguishes options without saturating." },
+            { "type": "p", "html": "<b>Try it.</b> In the visualization below, slide $d_k$ up while leaving the scale off (uncheck the box) and watch the softmax row collapse onto a single column. Then turn the scale back on and the distribution recovers." }
+          ],
+          "viz": ["scaled-dot-product-attention"]
+        },
+        {
+          "title": "Additive vs. dot-product, and where each wins",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "<b>Additive attention</b> (Bahdanau et al.) computes compatibility with a one-hidden-layer MLP:" },
+            { "type": "math", "tex": "\\text{score}(q, k) = w^\\top \\tanh(W_q q + W_k k)" },
+            { "type": "p", "html": "<b>Dot-product attention</b> just uses $q \\cdot k$. Theoretically the two have similar expressive power. In practice, dot-product wins on speed because the entire score matrix becomes one $QK^\\top$ matmul." },
+            { "type": "p", "html": "However, the paper notes that for large $d_k$, additive attention <i>outperforms</i> unscaled dot-product. The reason is exactly the saturation problem above — additive attention's MLP keeps scores bounded by its activation, so it doesn't suffer from the same explosion. Once you add the $\\sqrt{d_k}$ scale, dot-product matches additive's quality and keeps its speed advantage. Hence 'scaled dot-product.'" }
+          ]
+        },
+        {
+          "title": "Masking inside the formula",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Two cases require masking:" },
+            { "type": "list", "items": [
+              "<b>Padding mask.</b> When batching variable-length sequences, you pad shorter ones with a <code>&lt;PAD&gt;</code> token. You don't want any query to actually attend to those positions, so their attention logits are set to $-\\infty$.",
+              "<b>Causal (look-ahead) mask</b> — used in decoder self-attention. The upper triangle of the $n \\times n$ logit matrix is set to $-\\infty$, blocking every position from seeing anything to its right."
+            ]},
+            { "type": "p", "html": "After softmax, $-\\infty$ logits become exactly $0$, so masked positions contribute zero weight to the output. No reshaping, no special code path — same kernel, different mask tensor." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3.2.2 Multi-Head Attention",
+      "pages": [
+        {
+          "title": "Why one head isn't enough",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "A single attention head produces, per query, a single weighted average of values. That's one summary. But useful linguistic structure is multi-dimensional: a pronoun has a referent (one kind of attention), a verb has a subject (another), a noun has its modifiers (another), a word participates in long-range topical structure (another). Forcing all of these to share one set of softmax weights would make the layer compromise — its weights would average across all the relations it's trying to express." },
+            { "type": "p", "html": "<b>Multi-head attention</b> sidesteps this by running $h$ attention operations in parallel, each on a different learned projection of the same input. Each projection puts the input into a different $d_k$-dimensional subspace; each head can specialize in a different kind of relation; the outputs are concatenated and re-projected back to $d_{\\text{model}}$ for the next layer." },
+            { "type": "p", "html": "Empirically — see the appendix of the paper, and a decade of follow-up work — different heads do learn qualitatively different patterns. Some look at the previous token, some at the next, some at syntactic dependencies, some at coreference. Not always cleanly, but clearly enough that mechanistic interpretability research has built whole tools around it." }
+          ]
+        },
+        {
+          "title": "The formula",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "math", "tex": "\\text{MultiHead}(Q, K, V) = \\text{Concat}(\\text{head}_1, \\dots, \\text{head}_h)\\, W^O" },
+            { "type": "math", "tex": "\\text{head}_i = \\text{Attention}(Q W_i^Q,\\; K W_i^K,\\; V W_i^V)" },
+            { "type": "p", "html": "Per-head projection shapes:" },
+            { "type": "list", "items": [
+              "$W_i^Q,\\; W_i^K \\in \\mathbb{R}^{d_{\\text{model}} \\times d_k}$ — project the input down to a $d_k$-dim query/key subspace for head $i$.",
+              "$W_i^V \\in \\mathbb{R}^{d_{\\text{model}} \\times d_v}$ — project to a $d_v$-dim value subspace.",
+              "$W^O \\in \\mathbb{R}^{hd_v \\times d_{\\text{model}}}$ — mix the concatenated head outputs back into $d_{\\text{model}}$."
+            ]},
+            { "type": "p", "html": "<b>Base config.</b> $h = 8$ heads, $d_k = d_v = d_{\\text{model}}/h = 64$. So each head sees a 64-dim slice; concatenating 8 of them gives back 512-dim outputs; $W^O$ remixes them. Because per-head dimensionality shrinks proportionally to $h$, the total FLOPs are roughly the same as a single full-dimensional attention head — multi-head is essentially free compared to single-head, but expresses much more." },
+            { "type": "p", "html": "In implementations, all heads are computed in a single batched matmul. You reshape $Q, K, V$ from $(n, d_{\\text{model}})$ to $(h, n, d_k)$ once and run scaled dot-product attention across the head dimension." }
+          ],
+          "viz": ["multi-head-attention"]
+        }
+      ]
+    },
+
+    {
+      "title": "3.2.3 Applications of Attention",
+      "pages": [
+        {
+          "title": "Three places attention shows up",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "The same multi-head attention block is reused in three contexts inside the Transformer, distinguished only by where $Q$, $K$, $V$ come from and whether a mask is applied." },
+            { "type": "list", "items": [
+              "<b>Encoder self-attention.</b> $Q$, $K$, $V$ all come from the previous encoder layer. No mask. Every source token can attend to every other source token, including itself.",
+              "<b>Decoder masked self-attention.</b> $Q$, $K$, $V$ all come from the previous decoder layer. Causal mask in place. Position $t$ can attend only to positions $0, \\ldots, t$. This is what preserves the autoregressive property.",
+              "<b>Encoder–decoder (cross) attention.</b> $Q$ comes from the previous decoder layer; $K$ and $V$ come from the <i>final</i> output of the encoder stack. This is the channel through which the decoder reads the source sentence."
+            ]},
+            { "type": "p", "html": "Cross-attention is the direct generalization of the original Bahdanau attention: at every decoding step (and at every layer), each decoder position queries the entire source representation. Note that the encoder output is computed once and reused across every decoder step at inference time." }
+          ],
+          "viz": ["transformer-architecture"]
+        }
+      ]
+    },
+
+    {
+      "title": "3.3 Position-wise Feed-Forward Networks",
+      "pages": [
+        {
+          "title": "An MLP per position",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "Between attention sub-layers, each layer applies a small feed-forward network <i>independently to every position</i>. Same weights for every position; no information crosses positions inside this sub-layer." },
+            { "type": "math", "tex": "\\text{FFN}(x) = \\max(0,\\; x W_1 + b_1) W_2 + b_2" },
+            { "type": "p", "html": "Shapes (base model): $W_1 \\in \\mathbb{R}^{512 \\times 2048}$, $W_2 \\in \\mathbb{R}^{2048 \\times 512}$. So the network expands the per-token vector by 4× into a wider hidden space, applies a ReLU, and projects back. Different layers learn their own $W_1, W_2$." },
+            { "type": "p", "html": "<b>Equivalent framings.</b> Because it's applied position-wise, you can think of FFN as two 1×1 convolutions across the sequence. Or as a per-token classifier into a 2048-dimensional code-book of intermediate features, followed by a linear map back down." },
+            { "type": "p", "html": "<b>Why both attention and FFN?</b> Attention does <i>position mixing</i> — it lets tokens exchange information. FFN does <i>feature mixing</i> — it transforms each position's vector through a nonlinear map. Neither alone is enough. Attention without FFN is just weighted averaging and projection (one big linear function of inputs); FFN without attention can't move information between positions at all. Together they're a complete computational primitive, and you can stack them as deep as you want." },
+            { "type": "p", "html": "<b>Parameter count.</b> FFN is where the bulk of the parameters live: $2 \\cdot 512 \\cdot 2048 \\approx 2.1\\text{M}$ per layer, vs. $\\approx 1.0\\text{M}$ for the attention projections. Across 6 layers, FFN dominates. Modern LLM scaling typically keeps this ratio." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3.4 Embeddings and Softmax",
+      "pages": [
+        {
+          "title": "Tokenization to embeddings",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "The model never sees raw text. Source and target sentences are first split into <b>sub-word tokens</b> — byte-pair encoding (BPE) for En→De (~37k shared source/target vocab) and word-piece for En→Fr (32k). Sub-word units let the model handle rare and out-of-vocabulary words by composing them from frequent pieces: <code>unbelievably</code> might become <code>un · believ · ably</code>." },
+            { "type": "p", "html": "Each token id is then looked up in an <b>embedding matrix</b> $E \\in \\mathbb{R}^{V \\times d_{\\text{model}}}$ to produce a dense vector representation. This is the input the encoder/decoder actually consumes." }
+          ]
+        },
+        {
+          "title": "Shared weights for input, output, and softmax",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "The Transformer reuses one $V \\times d_{\\text{model}}$ weight matrix in three places:" },
+            { "type": "list", "items": [
+              "The encoder's input embedding.",
+              "The decoder's input embedding.",
+              "The pre-softmax linear projection that produces logits over the vocabulary at the decoder's output."
+            ]},
+            { "type": "p", "html": "Tied embeddings are a known trick (Press & Wolf, Inan et al.) — they cut parameters and tend to improve quality. The intuition: the inverse of 'token → vector' is 'vector → token', and the same $V \\times d$ table can do both directions." },
+            { "type": "p", "html": "<b>Scaling.</b> Embeddings are multiplied by $\\sqrt{d_{\\text{model}}}$ before being added to the positional encoding. Why: embedding entries are initialized at unit variance, but positional encodings have entries in $[-1, 1]$, so to keep the two signals on comparable scales, the embeddings need to be amplified. Without the scale, positional information would dominate in the early stages of training." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "3.5 Positional Encoding",
+      "pages": [
+        {
+          "title": "The model has no notion of order — give it one",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "Self-attention is <b>permutation-equivariant</b>: if you shuffle the input tokens, you get the output tokens shuffled in the same way. There's nothing in the dot product or weighted sum that says 'token 5 comes after token 4.' For natural language, where 'dog bites man' and 'man bites dog' are very different sentences, this would be a problem." },
+            { "type": "p", "html": "The fix: add a position-dependent vector to each token embedding. The token embedding carries <i>what</i> the token is; the positional encoding carries <i>where</i> it sits in the sequence. Their sum is the actual input to the first encoder/decoder layer." },
+            { "type": "p", "html": "<b>Design space.</b> You could learn the positional vectors as parameters (a $L_{\\max} \\times d_{\\text{model}}$ table indexed by position). You could compute them as a fixed deterministic function of position. The paper goes with the latter, using sinusoids." }
+          ]
+        },
+        {
+          "title": "Sinusoidal encoding",
+          "pdfPages": [6],
+          "blocks": [
+            { "type": "math", "tex": "PE_{(pos,\\, 2i)} = \\sin\\!\\left(\\frac{pos}{10000^{2i/d_{\\text{model}}}}\\right)" },
+            { "type": "math", "tex": "PE_{(pos,\\, 2i+1)} = \\cos\\!\\left(\\frac{pos}{10000^{2i/d_{\\text{model}}}}\\right)" },
+            { "type": "p", "html": "Each dimension of the encoding is a sinusoid; the wavelengths form a geometric progression from $2\\pi$ (highest frequency, fastest-changing dimensions) up to $10000 \\cdot 2\\pi$ (lowest frequency, slowly-changing). At any fixed position $pos$, the vector $PE_{pos}$ is a unique fingerprint of that location." },
+            { "type": "p", "html": "<b>Why this specific function?</b> For any fixed offset $k$, $PE_{pos+k}$ can be expressed as a <b>linear</b> function of $PE_{pos}$ — the sum/difference identities for sin and cos give you a small rotation matrix that doesn't depend on $pos$. So if the model wants to detect 'three tokens to the left,' it doesn't need to learn separate behavior for every absolute position; it just learns the right linear combination of dimensions, and that combination works everywhere." },
+            { "type": "p", "html": "<b>Why fixed instead of learned?</b> They tried both and got essentially identical BLEU scores. The fixed sinusoidal version was chosen because it <i>extrapolates</i>: a learned positional embedding only knows positions it saw in training (up to some $L_{\\max}$), while sin/cos are defined at every real-valued position. Sequences longer than training are still represented sensibly." },
+            { "type": "p", "html": "The visualization below shows the encoding matrix as a heatmap. Each column is one position; each row is one dimension. Fast-oscillating rows at the top, slow-oscillating ones at the bottom — together they form a unique pattern for every column." }
+          ],
+          "viz": ["positional-encoding"]
+        }
+      ]
+    },
+
+    {
+      "title": "4. Why Self-Attention",
+      "pages": [
+        {
+          "title": "Three axes of comparison",
+          "pdfPages": [6],
+          "blocks": [
+            { "type": "p", "html": "The paper motivates self-attention by comparing it to recurrent and convolutional layers on three concrete axes:" },
+            { "type": "list", "items": [
+              "<b>Total computational complexity per layer</b> — number of operations to process one example.",
+              "<b>Sequential operations</b> — minimum number of steps that can't be parallelized. This is the wall-clock bottleneck on a wide enough accelerator.",
+              "<b>Maximum path length</b> in the computation graph between any two input positions. Shorter paths mean fewer composed operations stand between cause and effect, which empirically makes long-range dependencies easier to learn."
+            ]},
+            { "type": "p", "html": "Self-attention is best-in-class on the second and third axes by a wide margin, and competitive on the first. The first is the only one where you have to be careful — see the table below." }
+          ]
+        },
+        {
+          "title": "The comparison table",
+          "pdfPages": [6],
+          "blocks": [
+            { "type": "table", "headers": ["Layer type", "Complexity per layer", "Sequential ops", "Max path length"], "rows": [
+              ["Self-attention", "O(n² · d)", "O(1)", "O(1)"],
+              ["Recurrent", "O(n · d²)", "O(n)", "O(n)"],
+              ["Convolutional (kernel k)", "O(k · n · d²)", "O(1)", "O(log_k n)"],
+              ["Self-attention (restricted, window r)", "O(r · n · d)", "O(1)", "O(n/r)"]
+            ]},
+            { "type": "p", "html": "<b>Reading the rows.</b> Recurrent layers do $O(n \\cdot d^2)$ work because each of the $n$ steps performs an $O(d^2)$ matmul on the hidden state, and they must run serially. Self-attention's $O(n^2 \\cdot d)$ comes from the $n \\times n$ score matrix, each entry costing $O(d)$ to compute, all done in one parallel shot." },
+            { "type": "p", "html": "<b>When does self-attention win on complexity too?</b> When $n \\le d$. For sentence-level translation, typical sentence length is 20–40 tokens and $d = 512$, so $n \\ll d$ and self-attention is asymptotically <i>faster</i> than RNN. The crossover happens for sequences in the hundreds — which is exactly when you'd switch to <b>restricted self-attention</b>: limit each position to attend only to a window of $r$ neighbors, reducing complexity to $O(r \\cdot n \\cdot d)$ at the cost of growing path length to $O(n/r)$." },
+            { "type": "p", "html": "Convolutional layers are $O(k \\cdot n \\cdot d^2)$ — a factor of $k \\cdot d$ more expensive than self-attention for typical $n$. They are parallel ($O(1)$ sequential ops, like attention) but pay a $\\log_k n$ path-length cost to relate distant tokens." }
+          ]
+        },
+        {
+          "title": "Interpretability bonus",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "An attention layer's intermediate state is just a probability distribution over input positions — a thing you can visualize directly. Plot the matrix and you can see what each head is doing at each position. RNN hidden states are opaque blobs by comparison." },
+            { "type": "p", "html": "The paper's appendix shows several heads from the trained encoder. Different heads attend to clearly distinct things: one head co-references pronouns to their antecedents; another seems to act as a syntactic 'previous-word' relation; another attends to long-distance dependencies. Not every head is interpretable, and individual head behavior isn't always stable across runs, but the inspectability is a real advantage." },
+            { "type": "p", "html": "Below: a small hand-crafted illustration of self-attention. Hover any matrix cell to set the query row. Notice how the pronoun 'it' attends most strongly to 'animal' — exactly the coreference that the original sentence requires." }
+          ],
+          "viz": ["attention-heatmap"]
+        }
+      ]
+    },
+
+    {
+      "title": "5. Training",
+      "pages": [
+        {
+          "title": "Data, tokenization, and batching",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "<b>WMT 2014 English→German.</b> About 4.5M sentence pairs. Encoded with <b>byte-pair encoding</b> using a shared source-target vocabulary of roughly 37,000 sub-word tokens. Sharing the vocab matters because English and German share many sub-word fragments; tied embeddings can then transfer information between sides." },
+            { "type": "p", "html": "<b>WMT 2014 English→French.</b> About 36M sentence pairs. Encoded with <b>word-piece</b> tokenization, vocabulary size 32,000." },
+            { "type": "p", "html": "<b>Batching.</b> Sentences are bucketed by approximate length so a batch contains examples of similar length — this minimizes wasted padding. Each training batch contains roughly 25,000 source tokens and 25,000 target tokens. The number of <i>sentences</i> per batch therefore varies based on average sentence length in that bucket, but the token budget per batch is roughly constant. This stabilizes the gradient signal and makes wall-clock per step predictable." }
+          ]
+        },
+        {
+          "title": "Hardware and schedule",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "<b>Hardware.</b> 8× NVIDIA P100 GPUs in one machine — modest by modern standards. They report ~0.4 seconds per training step for the base model and ~1.0 seconds per step for the big model." },
+            { "type": "p", "html": "<b>Schedule.</b>" },
+            { "type": "list", "items": [
+              "<b>Base model</b>: 100,000 steps, ~12 hours total.",
+              "<b>Big model</b>: 300,000 steps, ~3.5 days total."
+            ]},
+            { "type": "p", "html": "These numbers became famous partly because the prior state-of-the-art models trained on much larger clusters for much longer (weeks of GPU time across dozens of machines). The Transformer trained to better accuracy on one box in days." }
+          ]
+        },
+        {
+          "title": "Optimizer & the warm-up learning-rate schedule",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "<b>Optimizer.</b> Adam with the slightly non-default settings:" },
+            { "type": "list", "items": [
+              "$\\beta_1 = 0.9$ (standard).",
+              "$\\beta_2 = 0.98$ (the default 0.999 was too aggressive in their experiments — 0.98 increased responsiveness to recent gradients).",
+              "$\\epsilon = 10^{-9}$ (very small; Adam's default is $10^{-8}$, but lower works fine here)."
+            ]},
+            { "type": "p", "html": "<b>Learning-rate schedule.</b> The now-iconic warm-up:" },
+            { "type": "math", "tex": "\\text{lr} = d_{\\text{model}}^{-0.5} \\cdot \\min\\!\\left(\\text{step}^{-0.5},\\;\\; \\text{step} \\cdot \\text{warmup\\_steps}^{-1.5}\\right)" },
+            { "type": "p", "html": "Decoded: for the first <code>warmup_steps</code> (default 4000), the LR grows <b>linearly</b> from 0. After that, it decays as $\\text{step}^{-0.5}$. The peak is at $\\text{step} = \\text{warmup\\_steps}$." },
+            { "type": "p", "html": "<b>Why warm up?</b> Early in training, the residual stream is dominated by noise; a large LR can push parameters into bad attractors before the optimizer's running statistics have stabilized. Linear ramp-up gives Adam time to estimate its second moments before applying large updates. Without warm-up, training Transformers reliably <i>diverges</i> in the first few hundred steps. The schedule has been copied (with variations) in essentially every Transformer paper since." },
+            { "type": "p", "html": "<b>Why $\\text{step}^{-0.5}$ decay?</b> This is the Robbins–Monro condition for stochastic approximation convergence — it's slow enough to keep moving, fast enough to converge. The $d_{\\text{model}}^{-0.5}$ prefactor makes the schedule scale-invariant: a wider model gets a proportionally smaller LR." }
+          ]
+        },
+        {
+          "title": "Regularization",
+          "pdfPages": [7, 8],
+          "blocks": [
+            { "type": "p", "html": "Three forms of regularization, all important:" },
+            { "type": "list", "items": [
+              "<b>Residual dropout</b> ($p = 0.1$ base, $0.3$ big). Applied to the output of each sub-layer <i>before</i> the residual addition and LayerNorm. Also applied to the sum of embeddings + positional encodings at the bottom of each stack.",
+              "<b>Attention dropout.</b> Applied directly to the attention weights (after softmax, before multiplication by $V$). This randomly zeros out some attention links during training — a form of structural noise that prevents over-reliance on specific position-to-position channels.",
+              "<b>Label smoothing</b> ($\\epsilon_{ls} = 0.1$). The target distribution for cross-entropy is changed from one-hot to a mixture: probability $1 - \\epsilon$ on the correct token, $\\epsilon$ uniformly spread over the others."
+            ]},
+            { "type": "p", "html": "<b>Label smoothing is interesting.</b> It actually <i>hurts</i> perplexity — the model is now being asked to predict a less peaked distribution, so by definition log-likelihood gets worse. But BLEU and accuracy improve. The mechanism: without smoothing, a confident model can collapse onto a few high-probability tokens; smoothing forces it to retain uncertainty over plausible alternatives, which makes beam search more diverse and the final outputs less brittle." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "6. Results",
+      "pages": [
+        {
+          "title": "Translation quality (Table 2 in the paper)",
+          "pdfPages": [8],
+          "blocks": [
+            { "type": "p", "html": "Headline numbers:" },
+            { "type": "table", "headers": ["Task", "Model", "BLEU", "Training cost (FLOPs)"], "rows": [
+              ["EN→DE", "Transformer (base)", "27.3", "3.3 × 10¹⁸"],
+              ["EN→DE", "Transformer (big)", "<b>28.4</b>", "2.3 × 10¹⁹"],
+              ["EN→FR", "Transformer (base)", "38.1", "3.3 × 10¹⁸"],
+              ["EN→FR", "Transformer (big)", "<b>41.8</b>", "2.3 × 10¹⁹"]
+            ]},
+            { "type": "p", "html": "For comparison, the previous best <i>single</i> models on these tasks were in the 24–26 BLEU range on En→De and 39–40 on En→Fr, and they typically required 1–2 orders of magnitude more training compute. The Transformer was both more accurate and dramatically cheaper." },
+            { "type": "p", "html": "<b>Inference.</b> Beam search with beam size 4 and length penalty $\\alpha = 0.6$. Max output length capped at <i>input length + 50</i>, and early-terminated once the model emits end-of-sentence." },
+            { "type": "p", "html": "<b>Averaging.</b> The reported numbers come from <i>checkpoint averaging</i>: rather than picking one checkpoint, they average the parameters of the last 5 (base) or 20 (big) checkpoints saved at 10-minute intervals. This is a cheap form of ensembling that smooths out late-training noise." }
+          ]
+        },
+        {
+          "title": "Ablations (Table 3 in the paper)",
+          "pdfPages": [9],
+          "blocks": [
+            { "type": "p", "html": "The paper varies one hyperparameter at a time, holding everything else at the base setup, and reports dev-set perplexity, BLEU, and parameter count. Highlights:" },
+            { "type": "list", "items": [
+              "<b>Number of heads.</b> A single attention head is significantly worse. 8 heads is a sweet spot; pushing to 16 or 32 starts to hurt mildly. Beyond a point, per-head dimensionality gets too small to do useful work.",
+              "<b>Key dimensionality.</b> Reducing $d_k$ specifically (while keeping other things constant) hurts. Dot-product compatibility is sensitive to having enough dimensions to distinguish tokens.",
+              "<b>Depth and width.</b> Larger $d_{\\text{model}}$ helps. More layers help up to a point. Bigger FFN inner dimension helps.",
+              "<b>Dropout.</b> Too little overfits; too much underfits. The base $p=0.1$ is well-tuned for the base model and data scale.",
+              "<b>Positional encoding.</b> Replacing sinusoidal PE with learned positional embeddings gives essentially identical BLEU. The choice of PE is not a major lever; it's the <i>existence</i> of position information that matters."
+            ]}
+          ]
+        },
+        {
+          "title": "Generalization beyond translation: parsing",
+          "pdfPages": [9],
+          "blocks": [
+            { "type": "p", "html": "To show the architecture isn't a one-task wonder, the paper trains the same Transformer (with minor changes — 4 layers, $d_{\\text{model}} = 1024$) on <b>English constituency parsing</b>. Parsing is a structurally very different task: the output is a parenthesized tree, and the dataset (WSJ Section 2–21, ~40k sentences) is much smaller than translation corpora — overfitting is the main risk." },
+            { "type": "p", "html": "Results: <b>91.3 F1</b> WSJ-only and <b>92.7 F1</b> with semi-supervised data — competitive with the best task-specific parsers of the time, despite essentially no task-specific architectural tuning. This was an early data point that the Transformer was a general-purpose sequence learning backbone, not just a translation architecture. The next several years would prove that emphatically." }
+          ]
+        }
+      ]
+    },
+
+    {
+      "title": "7. Conclusion",
+      "pages": [
+        {
+          "title": "What they shipped, and where it pointed",
+          "pdfPages": [10],
+          "blocks": [
+            { "type": "p", "html": "<b>The contribution in one sentence.</b> The Transformer is the first sequence transduction model built entirely from attention — no recurrence and no convolutions in its main path. On WMT 2014 English↔German and English↔French it set new state-of-the-art BLEU while training in a small fraction of the prior compute." },
+            { "type": "p", "html": "<b>What the paper lists as future work</b>:" },
+            { "type": "list", "items": [
+              "Extending attention-based models to other modalities — images, audio, video.",
+              "Investigating <b>restricted attention mechanisms</b> for handling very long inputs efficiently.",
+              "Making generation <b>less sequential</b> — beam search and autoregressive decoding are still the inference bottleneck."
+            ]},
+            { "type": "p", "html": "<b>In hindsight.</b> Each of those bullets became a research subfield: vision transformers (ViT), audio Transformers, multimodal models like CLIP and Flamingo; sparse / windowed / linear-attention variants (Longformer, BigBird, Performer, Mamba); non-autoregressive decoding (Gu et al.), speculative decoding, and so on. And the architecture itself is the literal backbone of GPT, BERT, T5, PaLM, LLaMA, Claude, ViT, AlphaFold's evoformer, Whisper, MusicLM, video models — essentially every major frontier model since 2018." },
+            { "type": "p", "html": "It is hard to overstate this paper's influence. A 15-page NeurIPS submission introducing a slightly tweaked attention layer turned out to be the foundation of the modern AI era." }
+          ],
+          "viz": ["transformer-architecture"]
+        }
+      ]
+    }
+  ]
+}

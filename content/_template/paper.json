@@ -1,0 +1,43 @@
+{
+  "title": "Your Paper Title",
+  "authors": "First A. Last, Second B. Last",
+  "year": "2025",
+  "venue": "Venue / arXiv id",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "One-line idea",
+          "subtitle": "Optional subtitle for context",
+          "blocks": [
+            { "type": "p", "html": "Plain HTML allowed. Use <b>bold</b>, <i>italics</i>, <code>code</code>." },
+            { "type": "math", "tex": "y = Wx + b" },
+            { "type": "quote", "html": "Verbatim quote from the paper." }
+          ],
+          "viz": []
+        }
+      ]
+    },
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "Motivation paragraph 1",
+          "blocks": [
+            { "type": "p", "text": "Plain text is fine if you don't need HTML." },
+            { "type": "list", "items": ["bullet a", "bullet b"] },
+            { "type": "figure", "src": "content/your-slug/images/fig1.png", "cap": "Figure 1. caption." }
+          ]
+        },
+        {
+          "title": "Motivation paragraph 2",
+          "blocks": [
+            { "type": "p", "html": "Block types available: <code>p</code>, <code>h2</code>, <code>quote</code>, <code>math</code>, <code>figure</code>, <code>list</code>, <code>table</code>." },
+            { "type": "table", "headers": ["A", "B"], "rows": [["1", "2"], ["3", "4"]] }
+          ]
+        }
+      ]
+    }
+  ]
+}

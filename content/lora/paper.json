@@ -1,0 +1,120 @@
+{
+  "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+  "authors": "Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen",
+  "year": "2021",
+  "venue": "ICLR 2022 — arXiv:2106.09685",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Freeze the big model, train tiny low-rank adapters",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Full fine-tuning of a 175B-parameter model means storing and updating 175B parameters per task. That's expensive in compute, expensive in memory, and impossible to deploy at scale (you'd need a full model copy per downstream task)." },
+            { "type": "p", "html": "<b>LoRA's idea</b>: freeze the pre-trained weights $W$ entirely. For each weight matrix you'd otherwise fine-tune, learn a <i>low-rank update</i> $\\Delta W = B A$ where $B \\in \\mathbb{R}^{d \\times r}$ and $A \\in \\mathbb{R}^{r \\times k}$, with $r \\ll \\min(d, k)$. At inference: $h = (W + BA)x$. The forward pass through $W$ stays unchanged; only $A$ and $B$ are trained." },
+            { "type": "quote", "html": "LoRA can reduce the number of trainable parameters by 10,000× and the GPU memory requirement by 3×, while performing on par or better than fine-tuning on RoBERTa, DeBERTa, GPT-2, and GPT-3." },
+            { "type": "p", "html": "Headline numbers for GPT-3 175B: trainable params drop from 175B → 4.7M (≈10000× fewer), checkpoint size 350GB → 35MB, no added inference latency once $BA$ is merged into $W$." }
+          ],
+          "viz": ["lora-decomposition"]
+        }
+      ]
+    },
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "The cost of full fine-tuning",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "Pre-train-then-fine-tune is the standard transfer learning recipe. But as base models cross 100B parameters, fine-tuning becomes operationally hostile: every downstream task needs its own copy of the model, and the optimizer state (Adam's moment estimates) requires ~2× the parameter memory on top of the weights themselves." },
+            { "type": "p", "html": "Earlier parameter-efficient methods — adapter layers (Houlsby et al.) and prefix tuning (Li & Liang) — reduce trainable parameters, but adapters add inference latency (extra sequential layers) and prefix tuning is hard to optimize and reduces usable sequence length." }
+          ]
+        },
+        {
+          "title": "The low intrinsic rank hypothesis",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "Aghajanyan et al. showed empirically that pre-trained language models have a <b>low intrinsic dimension</b>: the task-specific update needed to solve a downstream task can be represented in a much smaller subspace than the full parameter space." },
+            { "type": "p", "html": "LoRA takes the next step: if the update $\\Delta W$ is intrinsically low-rank, parameterize it that way explicitly. Use $\\Delta W = BA$ with rank $r$, and you've matched the hypothesized structure." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Method",
+      "pages": [
+        {
+          "title": "The decomposition",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "For a pre-trained weight $W_0 \\in \\mathbb{R}^{d \\times k}$, the LoRA update is:" },
+            { "type": "math", "tex": "W_0 + \\Delta W = W_0 + B A,\\quad B \\in \\mathbb{R}^{d \\times r},\\; A \\in \\mathbb{R}^{r \\times k},\\; r \\ll \\min(d, k)" },
+            { "type": "p", "html": "$W_0$ is frozen (no gradient). Only $A$ and $B$ are trained. The forward pass becomes:" },
+            { "type": "math", "tex": "h = W_0 x + B A x" },
+            { "type": "p", "html": "<b>Initialization</b>: $A$ is initialized to a random Gaussian, $B$ is initialized to zero. So at the start of training, $\\Delta W = BA = 0$ and the model behaves exactly like the frozen base — fine-tuning starts from the pre-trained model and can only improve from there." },
+            { "type": "p", "html": "<b>Scaling</b>: the update is scaled by $\\alpha / r$ where $\\alpha$ is a constant. This makes the update invariant to changes in $r$: doubling $r$ doesn't double the magnitude of $\\Delta W$." }
+          ],
+          "viz": ["lora-decomposition"]
+        },
+        {
+          "title": "Which weights to adapt? Where to put LoRA",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "In a Transformer, you could LoRA-fy any weight matrix: the four attention projections ($W_q, W_k, W_v, W_o$), the two FFN matrices, or all of them." },
+            { "type": "p", "html": "Empirically, adapting just $W_q$ and $W_v$ (the query and value projections) gives the best parameter-budget-to-quality tradeoff. Adapting $W_k$ adds little; the FFN matrices benefit somewhat but are huge." },
+            { "type": "p", "html": "<b>No inference latency</b>: once trained, you can absorb $BA$ directly into $W_0$ by computing $W = W_0 + BA$ once. The deployed model has identical shape to the original. (You can also keep them separate if you need to swap tasks.)" }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Experiments",
+      "pages": [
+        {
+          "title": "Results across models and tasks",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            { "type": "p", "html": "LoRA is benchmarked against full fine-tuning, adapters (multiple variants), prefix tuning, and BitFit on RoBERTa-base/large, DeBERTa-XXL, GPT-2 medium/large, and GPT-3 175B. Tasks: GLUE, WikiSQL, MNLI, SAMSum, E2E NLG." },
+            { "type": "list", "items": [
+              "<b>RoBERTa large</b> on GLUE: LoRA with 0.8M params matches full fine-tuning (355M params) average score.",
+              "<b>GPT-3 175B</b> on WikiSQL: LoRA with 4.7M params reaches 73.4% — exceeds full fine-tuning (73.8%) within noise, while prefix tuning lags by 2-4 points.",
+              "<b>GPT-3 175B</b> on MNLI-m: LoRA 91.7%, full FT 89.5%. LoRA actually <i>beats</i> full FT here, likely due to the regularization effect of constraining updates to low rank."
+            ]}
+          ]
+        },
+        {
+          "title": "Why does it work? Investigating the low-rank update",
+          "pdfPages": [9, 10, 11],
+          "blocks": [
+            { "type": "p", "html": "Section 7 of the paper digs into <i>what</i> the LoRA update is capturing. They find:" },
+            { "type": "list", "items": [
+              "Even rank r=1 or r=2 already captures most of the task-specific signal. r=8 is rarely improved on. This validates the low-intrinsic-rank claim.",
+              "$\\Delta W$ amplifies directions in $W$ that the pre-trained model wasn't already emphasizing — i.e. it highlights task-relevant features that were latent but underused, rather than rotating the model entirely.",
+              "The amplification factor is large: $\\Delta W$ has features whose magnitude is ~20× larger than the corresponding directions in $W$ itself."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "7. Conclusion",
+      "pages": [
+        {
+          "title": "Why LoRA stuck",
+          "pdfPages": [12],
+          "blocks": [
+            { "type": "p", "html": "LoRA is now the default parameter-efficient fine-tuning method in open-source ecosystems (HuggingFace PEFT, etc). Reasons:" },
+            { "type": "list", "items": [
+              "Trivially composable — multiple LoRAs can be added together to combine tasks/styles.",
+              "Storage and switching costs collapse: a 7B model + 10 LoRAs takes ~14GB instead of 140GB.",
+              "Zero inference overhead once merged.",
+              "Works as well as full fine-tuning in most regimes, sometimes better."
+            ]},
+            { "type": "p", "html": "QLoRA (next paper) extends this by quantizing the frozen base to 4-bit, making LoRA fine-tuning of 65B+ models possible on a single consumer GPU." }
+          ]
+        }
+      ]
+    }
+  ]
+}

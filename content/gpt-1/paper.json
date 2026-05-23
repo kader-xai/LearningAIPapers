@@ -1,0 +1,108 @@
+{
+  "title": "Improving Language Understanding by Generative Pre-Training (GPT-1)",
+  "authors": "Alec Radford, Karthik Narasimhan, Tim Salimans, Ilya Sutskever",
+  "year": "2018",
+  "venue": "OpenAI technical report",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Pre-train a Transformer LM, fine-tune on downstream tasks",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Before this paper, NLP models were typically trained task-by-task from scratch, sometimes initialized with word embeddings (word2vec, GloVe). Labeled data is expensive; unlabeled text is abundant. The motivating question: can we use the unlabeled text to do most of the learning, and adapt cheaply?" },
+            { "type": "p", "html": "<b>GPT-1's recipe</b>:" },
+            { "type": "list", "items": [
+              "Step 1 — <b>pre-train</b> a Transformer decoder on a large unlabeled corpus (BooksCorpus, 7000 books, ~800M words) with a standard left-to-right language modeling objective.",
+              "Step 2 — <b>fine-tune</b> the pre-trained model on each downstream task, with a small task-specific input transformation and an extra linear layer. Whole model is updated."
+            ]},
+            { "type": "p", "html": "This is the recipe that the entire pre-train-then-fine-tune era runs on. GPT-1 was the first paper to show it could be applied uniformly across a range of NLP tasks and beat task-specific models on most of them." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Framework",
+      "pages": [
+        {
+          "title": "Pre-training objective",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "Standard left-to-right language modeling:" },
+            { "type": "math", "tex": "L_1(\\mathcal{U}) = \\sum_i \\log P(u_i | u_{i-k}, \\ldots, u_{i-1};\\; \\Theta)" },
+            { "type": "p", "html": "$\\mathcal{U}$ is the unlabeled token corpus, $k$ is the context window. The model: a 12-layer Transformer decoder (the masked self-attention variant), 12 heads, hidden size 768, FFN size 3072. ~117M parameters." },
+            { "type": "p", "html": "BPE tokenization with 40k merges. Position embeddings are learned (not sinusoidal). Trained for 100 epochs on BooksCorpus, ~8 GPU-days on 8 P600 GPUs." }
+          ]
+        },
+        {
+          "title": "Fine-tuning objective",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "Given labeled examples $(x^1, \\ldots, x^m, y)$, feed the inputs through the pre-trained Transformer, take the final hidden state of the last token, push through a linear classifier:" },
+            { "type": "math", "tex": "L_2(\\mathcal{C}) = \\sum_{(x,y)} \\log P(y | x^1, \\ldots, x^m)" },
+            { "type": "p", "html": "<b>Auxiliary LM loss</b>: also keep the language modeling loss active during fine-tuning, weighted by a small $\\lambda$. This serves as a regularizer and prevents catastrophic forgetting of pre-trained knowledge." }
+          ]
+        },
+        {
+          "title": "Task-specific input transformations",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "Different NLP tasks have different input structures. Rather than design a different architecture per task, GPT-1 <b>flattens every task into a single sequence</b> with delimiter tokens:" },
+            { "type": "list", "items": [
+              "<b>Classification</b>: <code>[start] text [extract]</code>",
+              "<b>Entailment</b>: <code>[start] premise [delim] hypothesis [extract]</code>",
+              "<b>Similarity</b>: two orderings <code>[start] A [delim] B [extract]</code> and <code>[start] B [delim] A [extract]</code>; sum the final reps.",
+              "<b>Multiple choice</b>: <code>[start] context [delim] choice_i [extract]</code> for each choice; softmax over the resulting logits."
+            ]},
+            { "type": "p", "html": "This 'turn everything into language' framing is the template GPT-2, GPT-3, and modern chat models all follow." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Experiments",
+      "pages": [
+        {
+          "title": "Results across 12 tasks",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            { "type": "p", "html": "Improved state-of-the-art on <b>9 of 12</b> evaluated tasks at release:" },
+            { "type": "list", "items": [
+              "Natural language inference: SNLI, MNLI, QNLI, RTE — all improved.",
+              "Question answering: RACE, Story Cloze — large gains.",
+              "Sentence similarity: MRPC, QQP — improved.",
+              "Classification: SST-2 — at state of the art."
+            ]},
+            { "type": "p", "html": "Crucially, the same pre-trained model is the starting point for all of them. Earlier work needed bespoke architectures and ad-hoc word embeddings; GPT-1 needed one model and a different last layer." }
+          ]
+        },
+        {
+          "title": "Ablations",
+          "pdfPages": [9, 10],
+          "blocks": [
+            { "type": "list", "items": [
+              "Pre-training is essential — without it, the same architecture trained from scratch performs much worse.",
+              "Number of pre-training layers transferred matters — performance improves nearly monotonically as you transfer more layers.",
+              "The auxiliary LM loss helps on larger datasets, mildly hurts on smaller ones.",
+              "A Transformer base beats a comparable LSTM base by ~5 absolute on average — the architecture matters too, not just pre-training."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Impact",
+      "pages": [
+        {
+          "title": "What GPT-1 started",
+          "pdfPages": [11],
+          "blocks": [
+            { "type": "p", "html": "GPT-1 introduced the recipe that, scaled up, became GPT-2 (1.5B params, 2019), GPT-3 (175B, 2020), GPT-4 (2023), and the entire modern LLM industry. The architectural choice (decoder-only autoregressive Transformer) and the methodology (pre-train on a huge unlabeled corpus, adapt to downstream tasks) both come straight from this paper." },
+            { "type": "p", "html": "BERT (released a few months later) took the same idea in a different direction (bidirectional masked LM). Both papers became foundational; both pre-training recipes are now part of standard ML curriculum." }
+          ]
+        }
+      ]
+    }
+  ]
+}

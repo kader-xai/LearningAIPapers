@@ -1,0 +1,81 @@
+{
+  "papers": [
+    {
+      "slug": "attention-is-all-you-need",
+      "title": "Attention Is All You Need",
+      "authors": "Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin",
+      "year": "2017",
+      "venue": "NeurIPS 2017 — arXiv:1706.03762"
+    },
+    {
+      "slug": "bert",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+      "authors": "Devlin, Chang, Lee, Toutanova",
+      "year": "2018",
+      "venue": "NAACL 2019 — arXiv:1810.04805"
+    },
+    {
+      "slug": "gpt-1",
+      "title": "Improving Language Understanding by Generative Pre-Training (GPT-1)",
+      "authors": "Radford, Narasimhan, Salimans, Sutskever",
+      "year": "2018",
+      "venue": "OpenAI tech report"
+    },
+    {
+      "slug": "vit",
+      "title": "An Image Is Worth 16×16 Words (Vision Transformer)",
+      "authors": "Dosovitskiy, Beyer, Kolesnikov, Weissenborn, Zhai, et al.",
+      "year": "2020",
+      "venue": "ICLR 2021 — arXiv:2010.11929"
+    },
+    {
+      "slug": "vae",
+      "title": "Auto-Encoding Variational Bayes (VAE)",
+      "authors": "Kingma, Welling",
+      "year": "2013",
+      "venue": "ICLR 2014 — arXiv:1312.6114"
+    },
+    {
+      "slug": "gan",
+      "title": "Generative Adversarial Networks",
+      "authors": "Goodfellow, Pouget-Abadie, Mirza, Xu, Warde-Farley, Ozair, Courville, Bengio",
+      "year": "2014",
+      "venue": "NeurIPS 2014 — arXiv:1406.2661"
+    },
+    {
+      "slug": "ddpm",
+      "title": "Denoising Diffusion Probabilistic Models",
+      "authors": "Ho, Jain, Abbeel",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2006.11239"
+    },
+    {
+      "slug": "lora",
+      "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+      "authors": "Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, Chen",
+      "year": "2021",
+      "venue": "ICLR 2022 — arXiv:2106.09685"
+    },
+    {
+      "slug": "qlora",
+      "title": "QLoRA: Efficient Finetuning of Quantized LLMs",
+      "authors": "Dettmers, Pagnoni, Holtzman, Zettlemoyer",
+      "year": "2023",
+      "venue": "NeurIPS 2023 — arXiv:2305.14314"
+    },
+    {
+      "slug": "rag",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "authors": "Lewis, Perez, Piktus, Petroni, Karpukhin, Goyal, Küttler, et al.",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2005.11401"
+    },
+    {
+      "slug": "cybertron",
+      "title": "Cybertron — Trend Micro AI (arXiv:2502.11191)",
+      "authors": "Trend Micro Research",
+      "year": "2025",
+      "venue": "arXiv:2502.11191"
+    }
+  ]
+}

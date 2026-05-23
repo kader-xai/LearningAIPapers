@@ -1,0 +1,103 @@
+{
+  "title": "Denoising Diffusion Probabilistic Models (DDPM)",
+  "authors": "Jonathan Ho, Ajay Jain, Pieter Abbeel",
+  "year": "2020",
+  "venue": "NeurIPS 2020 — arXiv:2006.11239",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Generate by reversing a noising process",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "<b>Forward process</b>: start with a real image $x_0$ and add a small amount of Gaussian noise. Repeat $T$ times. After enough steps, the image is indistinguishable from pure noise." },
+            { "type": "p", "html": "<b>Reverse process</b>: start from pure noise $x_T \\sim \\mathcal{N}(0, I)$ and learn to gradually remove noise step by step, producing a sample $x_0$ that looks like real data." },
+            { "type": "p", "html": "DDPM shows that both the forward and reverse processes can be written as Markov chains of Gaussian transitions, that the reverse-process parameters reduce to predicting <i>the noise that was added at each step</i>, and that the resulting loss is a remarkably simple weighted denoising MSE." },
+            { "type": "quote", "html": "We present high quality image samples using diffusion probabilistic models. ... a 256×256 sample matching the visual quality of GANs while remaining a likelihood-based model." }
+          ],
+          "viz": ["diffusion-forward-reverse"]
+        }
+      ]
+    },
+    {
+      "title": "2. Background",
+      "pages": [
+        {
+          "title": "Forward (noising) process",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "A fixed Markov chain that gradually corrupts the data:" },
+            { "type": "math", "tex": "q(x_t | x_{t-1}) = \\mathcal{N}(x_t;\\; \\sqrt{1-\\beta_t}\\, x_{t-1},\\; \\beta_t I)" },
+            { "type": "p", "html": "$\\beta_t$ is a small variance schedule (linearly from $10^{-4}$ to $0.02$ over $T=1000$ steps). Important closed-form: you can sample $x_t$ at any timestep $t$ directly from $x_0$:" },
+            { "type": "math", "tex": "q(x_t | x_0) = \\mathcal{N}(x_t;\\; \\sqrt{\\bar\\alpha_t}\\, x_0,\\; (1-\\bar\\alpha_t) I),\\quad \\bar\\alpha_t = \\prod_{s=1}^t (1 - \\beta_s)" },
+            { "type": "p", "html": "So during training, you don't need to simulate the chain step by step — you sample a random $t$, sample noise, and produce $x_t$ in one shot." }
+          ]
+        },
+        {
+          "title": "Reverse (denoising) process",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "The reverse process is also Markov, parameterized by a neural network:" },
+            { "type": "math", "tex": "p_\\theta(x_{t-1} | x_t) = \\mathcal{N}(x_{t-1};\\; \\mu_\\theta(x_t, t),\\; \\Sigma_\\theta(x_t, t))" },
+            { "type": "p", "html": "If $\\beta_t$ is small, this reverse step is also approximately Gaussian, so the Gaussian parameterization is justified." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The simple objective",
+      "pages": [
+        {
+          "title": "Predict the noise",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "Starting from the variational lower bound and applying clever reparameterization, the loss reduces to:" },
+            { "type": "math", "tex": "L_{\\text{simple}}(\\theta) = \\mathbb{E}_{t, x_0, \\epsilon}\\!\\left[\\|\\epsilon - \\epsilon_\\theta(\\sqrt{\\bar\\alpha_t}\\, x_0 + \\sqrt{1-\\bar\\alpha_t}\\, \\epsilon,\\; t)\\|^2\\right]" },
+            { "type": "p", "html": "Read it as: sample a clean image, sample a timestep, sample noise, build the noisy image, ask a neural network to predict the noise that was added. Train to minimize MSE." },
+            { "type": "p", "html": "The network $\\epsilon_\\theta(x_t, t)$ is typically a U-Net with timestep conditioning. The same network handles every $t$ — timestep is just an additional input." }
+          ]
+        },
+        {
+          "title": "Sampling",
+          "pdfPages": [6],
+          "blocks": [
+            { "type": "p", "html": "To generate: start with $x_T \\sim \\mathcal{N}(0, I)$. For $t = T, T-1, \\ldots, 1$:" },
+            { "type": "list", "items": [
+              "Predict the noise $\\hat\\epsilon = \\epsilon_\\theta(x_t, t)$.",
+              "Compute the mean $\\mu_\\theta$ in closed form from $\\hat\\epsilon$ and $x_t$.",
+              "Sample $x_{t-1} \\sim \\mathcal{N}(\\mu_\\theta, \\Sigma_t)$."
+            ]},
+            { "type": "p", "html": "After $T$ steps you have $x_0$, your sample. The slow part: $T = 1000$ neural network forward passes per sample. Later work (DDIM, classifier-free guidance, Karras schedulers) cut this to 20-50 steps." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Experiments",
+      "pages": [
+        {
+          "title": "Image quality and FID",
+          "pdfPages": [7, 8, 9],
+          "blocks": [
+            { "type": "p", "html": "On CIFAR-10 unconditional generation, DDPM achieves <b>FID 3.17</b> — at the time, the best result among likelihood-based models and competitive with state-of-the-art GANs (StyleGAN: 3.86, BigGAN: 14.7 on CIFAR-10 unconditional)." },
+            { "type": "p", "html": "On LSUN bedrooms and CelebA-HQ at 256×256, DDPM produces samples that are visually comparable to GANs (sharp, coherent), without the mode-collapse failure modes." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Impact",
+      "pages": [
+        {
+          "title": "The diffusion era",
+          "pdfPages": [10],
+          "blocks": [
+            { "type": "p", "html": "DDPM made diffusion models competitive with GANs for the first time on quality, and they came with several big advantages: stable training (no minimax), strong likelihoods, easy conditioning, and natural multi-modality." },
+            { "type": "p", "html": "Direct descendants: improved DDPMs (cosine schedule, learned variance), classifier-free guidance, latent diffusion (Stable Diffusion), score-based models, consistency models, rectified flow. DDPM is the technical foundation of the image-generation explosion of 2022-2024 — DALL·E 2, Imagen, Stable Diffusion, Midjourney, Sora, Veo." }
+          ]
+        }
+      ]
+    }
+  ]
+}
