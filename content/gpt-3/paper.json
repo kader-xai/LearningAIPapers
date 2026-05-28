@@ -1,0 +1,102 @@
+{
+  "title": "Language Models are Few-Shot Learners (GPT-3)",
+  "authors": "Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.",
+  "year": "2020",
+  "venue": "NeurIPS 2020 — arXiv:2005.14165",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Scale unlocks in-context learning",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Before GPT-3, the standard pipeline was <i>pre-train then fine-tune</i>: take a base language model, then update its weights on each downstream task with thousands of labeled examples. GPT-3's central claim is that at sufficient scale, you can <b>skip fine-tuning entirely</b> — describe the task in plain text, show a few examples in the prompt, and the model just does it." },
+            { "type": "p", "html": "<b>GPT-3</b> is a 175B-parameter autoregressive Transformer language model trained on ~300B tokens of internet text. The architecture is essentially the same as GPT-2 — the contribution is what happens when you scale it 100×." },
+            { "type": "quote", "html": "We train GPT-3 ... 10x more than any previous non-sparse language model, and test its performance in the few-shot setting. For all tasks, GPT-3 is applied without any gradient updates or fine-tuning, with tasks and few-shot demonstrations specified purely via text interaction with the model." },
+            { "type": "p", "html": "Three new evaluation modes get formalized here:" },
+            { "type": "list", "items": [
+              "<b>Zero-shot</b>: task description only, no examples.",
+              "<b>One-shot</b>: task description plus one demonstration.",
+              "<b>Few-shot</b>: task description plus K demonstrations (usually 10–100), filling the context window."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "Why fine-tuning is a problem",
+          "pdfPages": [1, 2, 3],
+          "blocks": [
+            { "type": "p", "html": "Three structural objections to the dominant pre-train-then-fine-tune paradigm:" },
+            { "type": "list", "items": [
+              "Each new task needs a large labeled dataset, expensive to collect and limited in scope.",
+              "Fine-tuning narrows the model's distribution — it can overfit to spurious features of the training set and lose generality.",
+              "Humans don't need thousands of examples to do a new task. The fact that current ML does suggests we're learning the wrong thing."
+            ]},
+            { "type": "p", "html": "In-context learning is the proposed alternative: the model uses its enormous prior over text patterns to recognize the task from a few examples and complete it correctly. No weights change." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Approach",
+      "pages": [
+        {
+          "title": "Model and training",
+          "pdfPages": [4, 5, 6],
+          "blocks": [
+            { "type": "p", "html": "Eight models from 125M (GPT-3 Small) to 175B parameters (GPT-3 175B). All decoder-only Transformers with alternating dense and sparse attention patterns. Context window 2048 tokens." },
+            { "type": "p", "html": "Training data is a weighted mixture: filtered Common Crawl, WebText2, Books1, Books2, English Wikipedia. Higher-quality sources are upsampled. Trained on ~300 billion tokens." },
+            { "type": "p", "html": "Compute: roughly $3.14 \\times 10^{23}$ FLOPs for the 175B run — a multi-million-dollar training run, on a custom Microsoft V100 cluster. Up to that point, the largest dense model training run by an order of magnitude." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Results",
+      "pages": [
+        {
+          "title": "In-context learning improves smoothly with scale",
+          "pdfPages": [7, 8, 9, 10],
+          "blocks": [
+            { "type": "p", "html": "Across dozens of benchmarks — language modeling (Penn Treebank, LAMBADA), closed-book QA (TriviaQA, WebQuestions), translation, Winograd Schema, common-sense reasoning, SuperGLUE, arithmetic, news article generation, novel word use — the same pattern appears:" },
+            { "type": "list", "items": [
+              "Zero-shot already does meaningful work at the 175B scale.",
+              "Few-shot accuracy grows smoothly as model size grows — usually log-linear, with no obvious saturation.",
+              "On many tasks, GPT-3 175B few-shot approaches or matches fine-tuned state-of-the-art models that have orders of magnitude more task-specific data."
+            ]},
+            { "type": "p", "html": "Standout results:" },
+            { "type": "list", "items": [
+              "<b>TriviaQA closed-book</b>: 71.2% few-shot — beats fine-tuned baselines.",
+              "<b>LAMBADA last-word prediction</b>: 86.4% — substantially beats prior SOTA.",
+              "<b>Arithmetic</b>: 2-digit addition reaches near-perfect accuracy; 3-digit and beyond degrade gracefully.",
+              "<b>News article generation</b>: human evaluators identify GPT-3 articles as machine-written only 52% of the time — chance is 50%."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Discussion and impact",
+      "pages": [
+        {
+          "title": "Limitations and what changed",
+          "pdfPages": [11, 12, 13],
+          "blocks": [
+            { "type": "p", "html": "The paper is honest about failure modes: factual errors on long-tail facts, repetition and contradiction in long generations, limited reasoning (especially mathematical and physical), bias inherited from web data, and the fundamental issue that the model is learning to predict text — not to act in the world." },
+            { "type": "p", "html": "What GPT-3 changed:" },
+            { "type": "list", "items": [
+              "Established <b>scale</b> as a first-class research direction — the modern 'scaling laws' literature (Hoffmann et al., Kaplan et al.) systematized this.",
+              "Made <b>prompting</b> a real skill — prompt engineering, chain-of-thought, ReAct, etc. all build on the in-context-learning paradigm GPT-3 introduced.",
+              "Spawned the modern LLM industry. Every major frontier model since (PaLM, LLaMA, Claude, Gemini) is a descendant of this paper's recipe."
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}

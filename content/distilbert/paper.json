@@ -1,0 +1,73 @@
+{
+  "title": "DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter",
+  "authors": "Victor Sanh, Lysandre Debut, Julien Chaumond, Thomas Wolf",
+  "year": "2019",
+  "venue": "NeurIPS 2019 EMC^2 Workshop — arXiv:1910.01108",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A smaller BERT that keeps 97% of its quality",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "BERT-Base is 110M parameters and runs slowly enough that real-time, on-device, and high-throughput deployments often can't use it. DistilBERT compresses BERT-Base by 40% (to ~66M parameters), runs 60% faster, and retains <b>97%</b> of BERT's language understanding capabilities on GLUE." },
+            { "type": "p", "html": "The technique is <b>knowledge distillation</b> (Hinton et al.): train a smaller 'student' model to mimic a larger 'teacher.' Applied here at the pre-training stage, not just at fine-tuning — which is the key contribution." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Method",
+      "pages": [
+        {
+          "title": "Architecture",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "Start with BERT-Base (12 layers, 12 heads, hidden 768). DistilBERT keeps the same hidden dimension and number of heads but <b>halves the number of layers</b> to 6. Token-type embeddings and the pooler are removed (rarely used downstream). The student is initialized by taking every other layer of the teacher." }
+          ]
+        },
+        {
+          "title": "Triple loss",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "Training mixes three losses:" },
+            { "type": "list", "items": [
+              "<b>Distillation loss</b> $\\mathcal{L}_{\\text{ce}}$: cross-entropy between the student's and teacher's softmax outputs over the masked tokens, with a temperature $T$ to soften both distributions. The student learns the teacher's <i>distribution over the vocabulary</i>, not just the argmax — much more information per training example than hard labels.",
+              "<b>Masked LM loss</b> $\\mathcal{L}_{\\text{mlm}}$: the standard BERT MLM objective, using ground-truth tokens.",
+              "<b>Cosine embedding loss</b> $\\mathcal{L}_{\\text{cos}}$: align the directions of student and teacher hidden states. Helps the student match the teacher's internal representations, not just outputs."
+            ]},
+            { "type": "math", "tex": "\\mathcal{L} = \\alpha \\mathcal{L}_{\\text{ce}} + \\beta \\mathcal{L}_{\\text{mlm}} + \\gamma \\mathcal{L}_{\\text{cos}}" }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Experiments",
+      "pages": [
+        {
+          "title": "GLUE and inference speed",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "On GLUE (9 NLU benchmarks averaged), DistilBERT scores 77.0 vs BERT-Base's 79.5 — a 2.5 point gap, or 97% of BERT's score retained." },
+            { "type": "p", "html": "Inference: 60% faster than BERT-Base on a single CPU; even larger speedup on mobile. Memory footprint shrinks from ~440MB to ~250MB." },
+            { "type": "p", "html": "On SQuAD 1.1, DistilBERT gets F1 86.2 vs BERT-Base's 88.5 — within 2.3 points. After task-specific fine-tuning with another distillation step on top, the gap narrows further." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Impact",
+      "pages": [
+        {
+          "title": "Why distillation became standard",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "DistilBERT was an inflection point for practical NLP deployments. It made BERT-class quality accessible at edge-device latencies and budgets, and established knowledge distillation as a first-class compression technique for Transformers." },
+            { "type": "p", "html": "Direct descendants and analogs: TinyBERT, MobileBERT, MiniLM, ALBERT (a different compression approach via parameter sharing), and the modern wave of distilled instruction-tuned models (DistilGPT-2, Alpaca's distillation-from-GPT-3.5 lineage, Llama-distillation methods)." }
+          ]
+        }
+      ]
+    }
+  ]
+}

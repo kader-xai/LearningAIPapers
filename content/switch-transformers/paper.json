@@ -1,0 +1,87 @@
+{
+  "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity",
+  "authors": "William Fedus, Barret Zoph, Noam Shazeer",
+  "year": "2021",
+  "venue": "JMLR 2022 — arXiv:2101.03961",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Scale by adding experts, not by making each token do more work",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Dense Transformers scale by making every parameter participate in every forward pass — bigger model means more FLOPs <i>per token</i>. That cost is the wall." },
+            { "type": "p", "html": "<b>Mixture of Experts (MoE)</b> breaks the link: each token is routed to only a small subset of the model's parameters (the 'experts'). The model can have 10× the parameters of a dense baseline while costing roughly the same per-token FLOPs to train and run." },
+            { "type": "p", "html": "<b>Switch Transformer</b> simplifies the standard MoE recipe by routing each token to <b>exactly one expert</b> (k=1, instead of the k=2 that prior work used). This 'switch' routing is simpler, faster, and — surprisingly — works at least as well as top-2." },
+            { "type": "quote", "html": "Switch Transformer achieves a 4-7× speedup over a strongly tuned T5-Base and a 4× speedup over T5-Large with the same computational resources. We further demonstrate that large sparse models trained with low precision (bfloat16) reach quality comparable to high precision dense models trained for much longer." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Switch Transformer",
+      "pages": [
+        {
+          "title": "Replacing the FFN with a Switch FFN",
+          "pdfPages": [4, 5, 6],
+          "blocks": [
+            { "type": "p", "html": "Take a standard Transformer. Inside each block there's a feed-forward network (FFN) that all tokens pass through. The Switch Transformer replaces this single FFN with $N$ independent FFNs (the experts) plus a small router." },
+            { "type": "p", "html": "For each token's hidden state $x$, the router computes $h = W_r x$ (a learned linear projection) and applies softmax to produce scores over experts. With top-1 routing, the token is sent to the highest-scoring expert $i^*$:" },
+            { "type": "math", "tex": "y = p_{i^*}(x) \\cdot \\text{Expert}_{i^*}(x)" },
+            { "type": "p", "html": "Only one expert runs per token. The expert's output is scaled by the router probability (so gradients flow back to the router). All other experts contribute nothing for that token." }
+          ]
+        },
+        {
+          "title": "Load balancing",
+          "pdfPages": [6, 7],
+          "blocks": [
+            { "type": "p", "html": "Routing is learned — but you don't want all tokens to pile onto one or two experts. That defeats the parallelism: idle experts waste capacity, hot experts bottleneck." },
+            { "type": "p", "html": "An auxiliary <b>load-balancing loss</b> is added during training. It pushes the routing to distribute tokens uniformly across experts:" },
+            { "type": "math", "tex": "\\mathcal{L}_{\\text{aux}} = \\alpha \\cdot N \\cdot \\sum_{i=1}^N f_i \\cdot P_i" },
+            { "type": "p", "html": "$f_i$ is the fraction of tokens dispatched to expert $i$; $P_i$ is the average router probability assigned to expert $i$. This product is minimized when both quantities equal $1/N$." }
+          ]
+        },
+        {
+          "title": "Capacity factor and expert overflow",
+          "pdfPages": [7, 8],
+          "blocks": [
+            { "type": "p", "html": "Each expert has a fixed capacity: <code>capacity = (tokens_per_batch / N) × capacity_factor</code>. Capacity factor 1.0 means perfect balance fills every expert exactly; >1.0 leaves slack for routing imbalance." },
+            { "type": "p", "html": "Tokens that overflow an expert's capacity are <b>dropped</b> — they bypass the FFN via the residual connection. Switch Transformer can train successfully even with mild token dropping; the auxiliary loss keeps it bounded." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Experiments",
+      "pages": [
+        {
+          "title": "Scaling and quality",
+          "pdfPages": [10, 11, 12, 13],
+          "blocks": [
+            { "type": "list", "items": [
+              "<b>Switch-Base</b> (4× the parameters of T5-Base at the same per-token FLOPs) trains <b>4-7× faster</b> to the same loss as T5-Base.",
+              "<b>Switch-Large</b> (4× T5-Large) trains 4× faster than T5-Large.",
+              "<b>Switch-XXL</b> demonstrates 1.6 trillion parameters trained successfully with 2048 experts.",
+              "Quality on downstream NLP tasks (SuperGLUE, SQuAD, summarization, translation) matches or exceeds the dense baselines."
+            ]},
+            { "type": "p", "html": "Other findings: low precision (bfloat16) training works at scale with some routing-precision tricks; distillation back to a dense model recovers most of the sparse model's quality at a fraction of the size." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "8. Conclusion",
+      "pages": [
+        {
+          "title": "MoE in the modern LLM stack",
+          "pdfPages": [15, 16],
+          "blocks": [
+            { "type": "p", "html": "Switch Transformer was the cleanest demonstration that MoE could scale to trillions of parameters and stay trainable. The simplifications (top-1 routing, expert capacity, drop-on-overflow) became the template." },
+            { "type": "p", "html": "Modern MoE descendants: GLaM (Google), GShard, the Mixtral family (Mistral's open MoE), DeepSeek-MoE, the OpenAI / Anthropic models widely believed to use sparse MoE at frontier scale. MoE is now the dominant scaling strategy at the trillion-parameter frontier." }
+          ]
+        }
+      ]
+    }
+  ]
+}

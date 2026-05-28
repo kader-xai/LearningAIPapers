@@ -1,0 +1,130 @@
+{
+  "title": "Model Context Protocol (MCP)",
+  "authors": "Anthropic — open standard",
+  "year": "2024",
+  "venue": "modelcontextprotocol.io — open spec",
+  "sections": [
+    {
+      "title": "Overview",
+      "pages": [
+        {
+          "title": "An open standard for connecting AI assistants to tools and data",
+          "blocks": [
+            { "type": "p", "html": "Unlike the other entries in this collection, MCP is not a research paper — it's a <b>protocol specification</b>, open-sourced by Anthropic in late 2024 and adopted across the ecosystem. The reference material lives at <a href=\"https://modelcontextprotocol.io/\">modelcontextprotocol.io</a> and the spec at <a href=\"https://github.com/modelcontextprotocol/specification\">github.com/modelcontextprotocol/specification</a>." },
+            { "type": "p", "html": "<b>The problem MCP solves.</b> Modern AI assistants are most useful when they can read your data and act on your tools — calendars, databases, file systems, version control, internal services. Before MCP, every assistant + every data source pair required custom plumbing. M assistants × N tools meant M×N adapters." },
+            { "type": "p", "html": "<b>MCP's pitch.</b> Standardize the plug. A tool/data provider implements an MCP <i>server</i> once; any AI assistant that speaks MCP can use it. M + N integrations instead of M × N." },
+            { "type": "quote", "html": "MCP is an open standard for connecting AI systems with the data sources and tools they need. It replaces fragmented integrations with a universal protocol." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Architecture",
+      "pages": [
+        {
+          "title": "Hosts, clients, servers",
+          "blocks": [
+            { "type": "p", "html": "MCP has three roles:" },
+            { "type": "list", "items": [
+              "<b>Host</b>: the application the user interacts with — Claude Desktop, an IDE, an agent framework. It runs the LLM and decides what to call.",
+              "<b>Client</b>: a component inside the host that maintains a 1-to-1 connection to one MCP server.",
+              "<b>Server</b>: a standalone process exposing tools, resources, or prompts to clients. Examples: a filesystem server, a Postgres server, a Slack server, a custom internal API server."
+            ]},
+            { "type": "p", "html": "One host can run many clients simultaneously, each connected to a different server. Servers are isolated — they only see the requests their client sends, not the rest of the conversation." }
+          ]
+        },
+        {
+          "title": "Transport: JSON-RPC over stdio or SSE",
+          "blocks": [
+            { "type": "p", "html": "Servers communicate over <b>JSON-RPC 2.0</b>. Two transports are standard:" },
+            { "type": "list", "items": [
+              "<b>stdio</b>: the host spawns the server as a child process and exchanges JSON-RPC messages over its stdin/stdout. Simplest deployment; used by Claude Desktop with local servers.",
+              "<b>HTTP + Server-Sent Events (SSE)</b>: for remote servers, the client connects over HTTP, sends requests as POST, and receives async messages via SSE. Used for hosted/cloud MCP servers."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Capabilities a server can expose",
+      "pages": [
+        {
+          "title": "Resources, Tools, Prompts",
+          "blocks": [
+            { "type": "p", "html": "MCP servers expose three categories of capabilities:" },
+            { "type": "list", "items": [
+              "<b>Resources</b>: read-only context the host can attach to a prompt — file contents, database rows, API responses. Resources have URIs and MIME types. The LLM can be told 'here's <code>file:///app/main.py</code>' and read the content as part of its context.",
+              "<b>Tools</b>: callable actions with typed JSON Schema inputs and outputs. Examples: <code>create_issue</code>, <code>run_sql</code>, <code>send_message</code>. The LLM decides when to call them; the server executes; the result returns as a structured message.",
+              "<b>Prompts</b>: reusable parameterized templates the server can offer to the host. Lets a server ship 'recommended workflows' that show up in the UI as slash-commands or shortcuts."
+            ]},
+            { "type": "p", "html": "Each capability is discoverable: when a client connects, it asks the server <code>tools/list</code>, <code>resources/list</code>, and <code>prompts/list</code>. The host can then surface these in the UI and the LLM's tool-calling interface." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Protocol mechanics",
+      "pages": [
+        {
+          "title": "Initialization, capability negotiation",
+          "blocks": [
+            { "type": "p", "html": "Connection lifecycle:" },
+            { "type": "list", "items": [
+              "Client sends <code>initialize</code> with its supported protocol version and the capabilities it can handle.",
+              "Server responds with its own version and capabilities.",
+              "Client sends <code>initialized</code> notification.",
+              "Normal operation: <code>tools/call</code>, <code>resources/read</code>, etc."
+            ]},
+            { "type": "p", "html": "Capability negotiation is real, not decorative — it lets new protocol features ship without breaking older clients. A v2 server with a new feature falls back gracefully when talking to a v1 client." }
+          ]
+        },
+        {
+          "title": "Notifications and sampling",
+          "blocks": [
+            { "type": "p", "html": "Beyond request/response, MCP supports:" },
+            { "type": "list", "items": [
+              "<b>Notifications</b>: one-way messages the server sends to inform the client of state changes (e.g. 'this resource updated'). Useful for live data sources.",
+              "<b>Sampling</b>: the server can ask the client to invoke the host's LLM on a sub-task. The server controls the orchestration; the host's LLM does the cognitive work. This enables servers that themselves need 'a little bit of AI' (e.g. a code-review server that asks the LLM to grade a diff)."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Ecosystem and impact",
+      "pages": [
+        {
+          "title": "What MCP changed in ~1 year",
+          "blocks": [
+            { "type": "p", "html": "Released by Anthropic in November 2024, MCP saw extraordinarily fast adoption. Within a year:" },
+            { "type": "list", "items": [
+              "Hundreds of reference servers shipped: filesystem, Git, GitHub, GitLab, Slack, Google Drive, Postgres, SQLite, Brave Search, Puppeteer, AWS, etc.",
+              "First-party MCP support landed in Claude Desktop, then Claude Code, Cursor, Zed, OpenAI's Agents SDK, and Gemini's CLI/IDE integrations.",
+              "Cross-vendor adoption: tools and assistants from different companies can interoperate without per-vendor adapters.",
+              "Enterprise MCP servers (single-sign-on aware, audit-logged) became a real product category."
+            ]},
+            { "type": "p", "html": "The success is partly technical (the spec is small and pragmatic) and partly social (Anthropic published it under MIT, took community PRs seriously, and shipped reference servers themselves). It's the closest thing the assistant ecosystem has to a USB-style interconnect standard." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Why it belongs in this collection",
+      "pages": [
+        {
+          "title": "Protocols as the new papers",
+          "blocks": [
+            { "type": "p", "html": "Every other entry in this collection is a research paper that changed how models are built or trained. MCP is the answer to a different question: <i>how do trained models reach the rest of the software world?</i>" },
+            { "type": "p", "html": "It's worth studying in the same spirit because:" },
+            { "type": "list", "items": [
+              "The agentic loop (perceive → reason → act) requires a standardized action surface. MCP is that surface, and it's winning.",
+              "Understanding how tools, resources, and prompts decompose teaches you the right abstractions when you build agents — even with frameworks other than MCP.",
+              "Like the Attention paper for architecture, MCP is the protocol-layer foundation that the next generation of agent papers (memory systems, agent-to-agent coordination, sandboxed execution) will build on."
+            ]},
+            { "type": "p", "html": "There's no PDF for this entry because there is no paper. The canonical reading is the spec itself: <a href=\"https://modelcontextprotocol.io/\">modelcontextprotocol.io</a>." }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "title": "Training Language Models to Follow Instructions with Human Feedback (InstructGPT)",
+  "authors": "Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.",
+  "year": "2022",
+  "venue": "NeurIPS 2022 — arXiv:2203.02155",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Aligning LLMs to human intent with RLHF",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "GPT-3 was extraordinarily capable but frequently <i>unhelpful</i> in practice — it might invent plausible-sounding answers, refuse to follow a stated style, or output harmful content. The base objective (predict the next token of internet text) doesn't optimize for 'be useful to the person asking.'" },
+            { "type": "p", "html": "<b>InstructGPT</b> is the recipe that turned GPT-3 into something usable as a chat assistant. Three stages, applied on top of a pre-trained base model:" },
+            { "type": "list", "items": [
+              "<b>Supervised fine-tuning (SFT)</b> on human-written demonstrations of helpful responses.",
+              "<b>Reward model (RM)</b> trained on human preference comparisons between pairs of model outputs.",
+              "<b>Reinforcement learning</b> using PPO against the reward model to fine-tune the SFT model."
+            ]},
+            { "type": "p", "html": "Result: a 1.3B-parameter InstructGPT model is <b>preferred to the 175B GPT-3</b> by human labelers in 85% of comparisons. Alignment beats scale, by a lot." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Methods",
+      "pages": [
+        {
+          "title": "Step 1: Supervised fine-tuning (SFT)",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "Collect ~13,000 prompts (sampled from the OpenAI API user submissions, plus labeler-written prompts). For each prompt, a human contractor writes a demonstration of the desired output. Fine-tune the base GPT-3 on these (prompt → demonstration) pairs with standard supervised learning." },
+            { "type": "p", "html": "This already produces a much more usable model than the base — but it's bottlenecked on how much demonstration data you can collect (expensive), and demonstrations only capture one possible good answer per prompt." }
+          ]
+        },
+        {
+          "title": "Step 2: Reward modeling (RM)",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "Sample multiple completions from the SFT model for each of ~33,000 prompts. Human labelers <i>rank</i> the completions from best to worst." },
+            { "type": "p", "html": "Train a separate reward model (initialized from a smaller pre-trained LM, 6B parameters in the paper) on these pairwise comparisons. The loss is the Bradley-Terry pairwise ranking loss:" },
+            { "type": "math", "tex": "\\mathcal{L}(\\theta) = -\\mathbb{E}_{(x, y_w, y_l)}\\!\\left[\\log\\sigma\\!\\left(r_\\theta(x, y_w) - r_\\theta(x, y_l)\\right)\\right]" },
+            { "type": "p", "html": "where $y_w$ is the preferred (winning) completion and $y_l$ is the rejected (losing) one. The reward model learns to assign higher scalar scores to responses humans prefer." },
+            { "type": "p", "html": "Comparisons are dramatically cheaper to collect than demonstrations and yield much higher-quality signal because they capture relative preferences across many possible answers." }
+          ]
+        },
+        {
+          "title": "Step 3: RL fine-tuning with PPO",
+          "pdfPages": [5, 6, 7],
+          "blocks": [
+            { "type": "p", "html": "Now fine-tune the SFT model using Proximal Policy Optimization (PPO), treating the reward model's score as the reward. At each step:" },
+            { "type": "list", "items": [
+              "Sample a prompt $x$ and generate a completion $y$ from the policy $\\pi$.",
+              "Score it: $r = r_\\theta(x, y)$.",
+              "Add a per-token KL penalty against the SFT policy: $r' = r - \\beta \\log(\\pi(y|x) / \\pi_{\\text{SFT}}(y|x))$. This keeps the RL-tuned model close to the SFT model so it doesn't drift into adversarial regions that exploit the reward model.",
+              "Take a PPO gradient step."
+            ]},
+            { "type": "p", "html": "Optionally, mix in a small amount of the original pre-training loss (PPO-ptx variant) to retain core LM capabilities." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Results",
+      "pages": [
+        {
+          "title": "Human preference: InstructGPT beats GPT-3 at much smaller scale",
+          "pdfPages": [8, 9, 10],
+          "blocks": [
+            { "type": "p", "html": "Headline finding: <b>InstructGPT 1.3B is preferred to GPT-3 175B</b> in 85% of head-to-head comparisons by labelers, even though it has 100× fewer parameters." },
+            { "type": "p", "html": "Other measured improvements:" },
+            { "type": "list", "items": [
+              "More truthful: 2× as likely to be truthful as GPT-3 on TruthfulQA.",
+              "Less toxic: ~25% reduction in toxic generations on RealToxicityPrompts.",
+              "Better instruction following: stronger compliance with explicit constraints (length, style, format)."
+            ]},
+            { "type": "p", "html": "Tradeoff: small alignment tax on academic NLP benchmarks (the model loses ~1-2 points on things like SQuAD because it's optimized for instruction following, not benchmark-style completion). The PPO-ptx variant mitigates this." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Impact",
+      "pages": [
+        {
+          "title": "Why RLHF is now the default",
+          "pdfPages": [11, 12],
+          "blocks": [
+            { "type": "p", "html": "InstructGPT is the technical foundation under ChatGPT (released Nov 2022, applying the same recipe to a tuned GPT-3.5). Every major frontier chat model since uses some variant of RLHF (or its modern descendants — DPO, RLAIF, Constitutional AI)." },
+            { "type": "p", "html": "Bigger picture: this paper shifted the field's attention from <i>capability</i> to <i>alignment</i>. The pre-trained base is the substrate; the human-feedback loop is what makes it useful and safe. Modern post-training pipelines spend an order of magnitude more effort here than was customary before this paper." }
+          ]
+        }
+      ]
+    }
+  ]
+}

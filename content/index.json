@@ -22,6 +22,20 @@
       "venue": "OpenAI tech report"
     },
     {
+      "slug": "distilbert",
+      "title": "DistilBERT, a distilled version of BERT",
+      "authors": "Sanh, Debut, Chaumond, Wolf",
+      "year": "2019",
+      "venue": "NeurIPS 2019 EMC² — arXiv:1910.01108"
+    },
+    {
+      "slug": "gpt-3",
+      "title": "Language Models are Few-Shot Learners (GPT-3)",
+      "authors": "Brown, Mann, Ryder, Subbiah, Kaplan, et al.",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2005.14165"
+    },
+    {
       "slug": "vit",
       "title": "An Image Is Worth 16×16 Words (Vision Transformer)",
       "authors": "Dosovitskiy, Beyer, Kolesnikov, Weissenborn, Zhai, et al.",
@@ -50,11 +64,32 @@
       "venue": "NeurIPS 2020 — arXiv:2006.11239"
     },
     {
+      "slug": "switch-transformers",
+      "title": "Switch Transformers: Scaling to Trillion Parameter Models",
+      "authors": "Fedus, Zoph, Shazeer",
+      "year": "2021",
+      "venue": "JMLR 2022 — arXiv:2101.03961"
+    },
+    {
       "slug": "lora",
       "title": "LoRA: Low-Rank Adaptation of Large Language Models",
       "authors": "Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, Chen",
       "year": "2021",
       "venue": "ICLR 2022 — arXiv:2106.09685"
+    },
+    {
+      "slug": "instructgpt",
+      "title": "Training Language Models to Follow Instructions with Human Feedback (InstructGPT)",
+      "authors": "Ouyang, Wu, Jiang, Almeida, Wainwright, Mishkin, et al.",
+      "year": "2022",
+      "venue": "NeurIPS 2022 — arXiv:2203.02155"
+    },
+    {
+      "slug": "llm-int8",
+      "title": "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale",
+      "authors": "Dettmers, Lewis, Belkada, Zettlemoyer",
+      "year": "2022",
+      "venue": "NeurIPS 2022 — arXiv:2208.07339"
     },
     {
       "slug": "qlora",
@@ -71,8 +106,22 @@
       "venue": "NeurIPS 2020 — arXiv:2005.11401"
     },
     {
+      "slug": "agents-survey",
+      "title": "The Rise and Potential of Large Language Model Based Agents: A Survey",
+      "authors": "Xi, Chen, Guo, He, Ding, Hong, et al.",
+      "year": "2023",
+      "venue": "arXiv:2309.07864"
+    },
+    {
+      "slug": "mcp",
+      "title": "Model Context Protocol (MCP)",
+      "authors": "Anthropic — open standard",
+      "year": "2024",
+      "venue": "modelcontextprotocol.io"
+    },
+    {
       "slug": "cybertron",
-      "title": "Cybertron — Trend Micro AI (arXiv:2502.11191)",
+      "title": "PRIMUS — Cybersecurity LLM Training Datasets (Trend Micro)",
       "authors": "Trend Micro Research",
       "year": "2025",
       "venue": "arXiv:2502.11191"

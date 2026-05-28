@@ -1,0 +1,103 @@
+{
+  "title": "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale",
+  "authors": "Tim Dettmers, Mike Lewis, Younes Belkada, Luke Zettlemoyer",
+  "year": "2022",
+  "venue": "NeurIPS 2022 — arXiv:2208.07339",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Run 175B-parameter models in 8-bit with zero quality loss",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Before LLM.int8(), running a 175B-parameter model required ~350GB of GPU memory in fp16 — spread across 8+ A100 80GB GPUs. Inference cost was prohibitive for almost everyone outside a few large labs." },
+            { "type": "p", "html": "Naive int8 quantization (uniformly map fp16 → int8) loses 15-30 points of perplexity at this scale and produces garbled outputs. The conventional wisdom by 2022 was that very large models simply couldn't be 8-bit quantized." },
+            { "type": "p", "html": "<b>LLM.int8()</b> identifies why naive quantization fails (a specific class of <i>emergent outlier features</i>) and proposes a mixed-precision matmul that handles outliers in fp16 and the rest in int8. Result: <b>zero degradation</b> in zero-shot performance for models up to 175B parameters, while halving memory." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Background",
+      "pages": [
+        {
+          "title": "What int8 quantization means",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "Quantization compresses each weight (or activation) from 16-bit floating point to 8-bit integer:" },
+            { "type": "math", "tex": "x_{\\text{int8}} = \\text{round}\\left(\\frac{127}{\\max|x_{\\text{fp16}}|} \\cdot x_{\\text{fp16}}\\right)" },
+            { "type": "p", "html": "You store the int8 tensor plus a scaling constant. Matmuls run in int8 (faster, half the memory, supported by NVIDIA Tensor Cores), then dequantize to fp16 for the next layer's normalization." },
+            { "type": "p", "html": "The problem: int8 only has 256 distinct levels. If your tensor has a few values with huge magnitude and most with tiny magnitude, the small values all quantize to the same bucket — information is destroyed." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Emergent outlier features",
+      "pages": [
+        {
+          "title": "What goes wrong above 6.7B parameters",
+          "pdfPages": [4, 5, 6, 7],
+          "blocks": [
+            { "type": "p", "html": "The paper's key empirical finding: starting around the 6.7B parameter scale, Transformers develop a small number of <b>emergent outlier features</b> — hidden-state dimensions whose values are systematically much larger (sometimes 20× larger) than the rest." },
+            { "type": "p", "html": "Properties of these outliers:" },
+            { "type": "list", "items": [
+              "They are sparse: ~0.1% of feature dimensions across the model.",
+              "They are systematic: the <i>same</i> dimensions consistently produce outliers across different inputs.",
+              "They are critical: zeroing them out (rather than quantizing) collapses model quality. So you can't just clip them.",
+              "They emerge abruptly with scale: small models don't have them; large models do."
+            ]},
+            { "type": "p", "html": "Standard int8 quantization tries to fit both the outliers and the normal-range values into 256 levels using one scale factor. The outliers dominate the scale, the normal values get crushed, and quality collapses." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Method: mixed-precision matmul",
+      "pages": [
+        {
+          "title": "Outliers in fp16, everything else in int8",
+          "pdfPages": [7, 8, 9],
+          "blocks": [
+            { "type": "p", "html": "LLM.int8()'s solution: split each matrix multiplication into two paths based on input features:" },
+            { "type": "list", "items": [
+              "Identify the outlier columns of the input (a small constant fraction, typically 0.1%-1%).",
+              "Compute those columns' matmul in <b>fp16</b> — accurate, but cheap because the slice is tiny.",
+              "Compute everything else in <b>int8</b> with row-wise quantization for the weights and column-wise quantization for the activations (vector-wise rather than tensor-wise scaling preserves resolution).",
+              "Sum the two partial results."
+            ]},
+            { "type": "p", "html": "This is implemented as a custom CUDA kernel. The fp16 path's overhead is small because outliers are sparse; the int8 path provides the memory and speed gains." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Experiments",
+      "pages": [
+        {
+          "title": "Quality preservation across scales",
+          "pdfPages": [10, 11, 12],
+          "blocks": [
+            { "type": "p", "html": "Measured on OPT models (125M to 175B) across a battery of zero-shot tasks (LAMBADA, PIQA, HellaSwag, WinoGrande). LLM.int8() matches fp16 quality at every scale tested. Naive int8 quantization degrades sharply above 6.7B." },
+            { "type": "p", "html": "Memory: ~50% reduction at inference. Speed: comparable to fp16 (int8 is faster per matmul but the mixed-precision path adds overhead). The win is memory and accessibility, not raw throughput." },
+            { "type": "p", "html": "Released as the <code>bitsandbytes</code> library — now standard in HuggingFace Transformers as <code>load_in_8bit=True</code>." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "6. Impact",
+      "pages": [
+        {
+          "title": "What 8-bit and 4-bit quantization unlocked",
+          "pdfPages": [13, 14],
+          "blocks": [
+            { "type": "p", "html": "Before LLM.int8(), running 30B+ models locally required serious hardware. After, a single 24GB consumer GPU could load OPT-30B; two could load OPT-66B. This enabled the open-source LLM movement to actually <i>run</i> the big models the community was sharing." },
+            { "type": "p", "html": "Direct descendants: GPTQ (post-training 4-bit quantization), QLoRA (which builds on bitsandbytes' int4 for the frozen base during fine-tuning), AWQ, EXL2. The line from LLM.int8() through QLoRA is the technical foundation for the entire 2023-2024 era of open-source fine-tuning at home." }
+          ]
+        }
+      ]
+    }
+  ]
+}
