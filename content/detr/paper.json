@@ -1,0 +1,120 @@
+{
+  "title": "End-to-End Object Detection with Transformers",
+  "authors": "Nicolas Carion, Francisco Massa, Gabriel Synnaeve, Nicolas Usunier, Alexander Kirillov, Sergey Zagoruyko",
+  "year": "2020",
+  "venue": "ECCV 2020",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The core idea",
+          "subtitle": "Detection as direct set prediction",
+          "pdfPages": [1],
+          "viz": ["transformer-architecture"],
+          "blocks": [
+            {"type":"p","html":"Classic object detectors are full of hand-designed machinery: anchor boxes, region proposals, and a <b>non-maximum suppression (NMS)</b> step to remove duplicate detections of the same object. DETR (DEtection TRansformer) throws all of that out and treats detection as a single problem: directly predict the <i>set</i> of objects in an image, in one shot."},
+            {"type":"p","html":"It does this with two ingredients. First, a <b>set-based global loss</b> that forces unique predictions through bipartite matching, so each ground-truth object is matched to exactly one prediction &mdash; no duplicates, no NMS needed. Second, a <b>Transformer encoder-decoder</b> that reasons about all objects and the whole image at once using attention."},
+            {"type":"quote","html":"DETR ... views object detection as a direct set prediction problem ... removing the need for many hand-designed components like a non-maximum suppression procedure or anchor generation."},
+            {"type":"p","html":"The result is a genuinely end-to-end detector that, despite its simplicity, matches a well-tuned Faster R-CNN on COCO &mdash; around <b>42 AP</b> &mdash; and extends cleanly to panoptic segmentation. Its main weakness is on small objects, which later work addressed."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Motivation",
+      "pages": [
+        {
+          "title": "Why remove the pipeline?",
+          "subtitle": "The cost of hand-designed components",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {"type":"p","html":"Detectors like Faster R-CNN do not predict objects directly. They generate a large number of candidate boxes (from anchors or proposals), classify and refine each one, and then run NMS to collapse the many near-duplicate boxes that inevitably cover the same object. These steps carry assumptions and hyperparameters &mdash; anchor scales, IoU thresholds, NMS thresholds &mdash; that must be tuned and that leak prior knowledge into the model."},
+            {"type":"p","html":"DETR's goal is to make the pipeline <b>end-to-end</b>, the way machine translation became end-to-end with sequence models. If the network can directly output a small set of final predictions and be trained with a loss that scores that set as a whole, all the surrogate steps disappear."},
+            {"type":"h2","text":"The set prediction challenge"},
+            {"type":"p","html":"The hard part is that a set has no natural order, and the model must avoid emitting two predictions for one object. A naive loss that pairs prediction $i$ with ground truth $i$ would be meaningless. DETR solves this with bipartite matching, described next."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Method",
+      "pages": [
+        {
+          "title": "Set prediction loss",
+          "subtitle": "Bipartite matching with the Hungarian algorithm",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type":"p","html":"DETR always outputs a fixed number $N$ of predictions (e.g. 100), more than the objects in any image. To train it, we first find the best one-to-one assignment between the $N$ predictions and the ground-truth objects (the ground truth is padded with 'no object' tokens to size $N$). We search over permutations $\\sigma$ for the one that minimizes the total matching cost:"},
+            {"type":"math","tex":"\\hat{\\sigma} = \\arg\\min_{\\sigma} \\sum_{i=1}^{N} \\mathcal{L}_{\\text{match}}\\big(y_i, \\hat{y}_{\\sigma(i)}\\big)"},
+            {"type":"p","html":"Reading this: $y_i$ is the $i$-th ground-truth object, $\\hat{y}_{\\sigma(i)}$ is the prediction assigned to it under permutation $\\sigma$, and $\\mathcal{L}_{\\text{match}}$ scores how well a prediction's class and box fit that object. The optimal assignment $\\hat{\\sigma}$ is found efficiently with the <b>Hungarian algorithm</b>. This one-to-one matching is exactly what removes duplicates: each object claims a single prediction."},
+            {"type":"p","html":"Once matched, the network is trained with a loss combining classification (negative log-likelihood of the correct class) and box regression. The box term blends an L1 loss with a <b>generalized IoU</b> term so it works regardless of box scale:"},
+            {"type":"math","tex":"\\mathcal{L}_{\\text{box}}(b_i, \\hat{b}_{\\sigma(i)}) = \\lambda_{\\text{iou}}\\,\\mathcal{L}_{\\text{iou}}(b_i, \\hat{b}_{\\sigma(i)}) + \\lambda_{\\text{L1}}\\,\\lVert b_i - \\hat{b}_{\\sigma(i)} \\rVert_1"},
+            {"type":"p","html":"In words: penalize both the geometric overlap error (IoU) and the raw coordinate error (L1), each weighted by a $\\lambda$. Using IoU alongside L1 keeps large and small boxes on comparable footing."}
+          ]
+        },
+        {
+          "title": "The DETR architecture",
+          "subtitle": "CNN backbone, Transformer, and object queries",
+          "pdfPages": [6, 7],
+          "viz": ["transformer-architecture"],
+          "blocks": [
+            {"type":"p","html":"The model has three parts. A <b>CNN backbone</b> (e.g. ResNet-50) turns the image into a grid of feature vectors. These are flattened, augmented with positional encodings, and fed to a <b>Transformer encoder</b>, whose self-attention lets every image location attend to every other &mdash; giving global context that is hard to get with convolutions alone."},
+            {"type":"p","html":"The <b>Transformer decoder</b> is where detection happens. It takes a fixed set of $N$ learned embeddings called <b>object queries</b>. Each query is a slot that attends to the encoded image and to the other queries, and is then decoded into one prediction: a class label (possibly 'no object') and a bounding box. Because queries attend to each other, they coordinate to cover different objects &mdash; the model learns not to fire twice on the same thing."},
+            {"type":"list","items":[
+              "Backbone: image &rarr; feature map (lower resolution, many channels).",
+              "Encoder: self-attention over all spatial positions for global reasoning.",
+              "Decoder: N object queries attend to image features and each other, in parallel.",
+              "Heads: a shared feed-forward network turns each decoded query into (class, box)."
+            ]},
+            {"type":"p","html":"Unlike autoregressive Transformers, the decoder runs <b>in parallel</b> &mdash; all $N$ objects are predicted at once, not one token at a time. The whole system is differentiable end-to-end, with no anchors and no NMS."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Results",
+      "pages": [
+        {
+          "title": "Matching Faster R-CNN on COCO",
+          "subtitle": "Headline numbers",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {"type":"p","html":"On COCO, DETR is competitive with a strong, well-tuned Faster R-CNN baseline. The ResNet-101 variant (DETR-DC5) reaches roughly <b>44 AP</b>, and the base ResNet-50 model sits around <b>42 AP</b> &mdash; comparable overall while using a far simpler pipeline."},
+            {"type":"table","headers":["Model","AP","AP (small)","AP (large)"],"rows":[["Faster R-CNN-R101-FPN","~44","~27","~56"],["DETR-R50","~42","~21","~61"],["DETR-DC5-R101","~44","~24","~62"]]},
+            {"type":"p","html":"The pattern is revealing: DETR is notably <b>better on large objects</b> (its global self-attention easily covers big regions) but <b>worse on small objects</b> than the FPN-based Faster R-CNN. The fixed low-resolution feature map and limited number of queries make tiny objects harder &mdash; the most-cited limitation of the original model."}
+          ]
+        },
+        {
+          "title": "One model, many tasks",
+          "subtitle": "Panoptic segmentation and interpretability",
+          "pdfPages": [10, 11],
+          "blocks": [
+            {"type":"p","html":"DETR extends to <b>panoptic segmentation</b> (labeling both things and stuff at the pixel level) by simply adding a small mask head on top of the trained detector's object queries. Each query that produces a box can also produce a mask, and the unified design is competitive with specialized panoptic methods."},
+            {"type":"p","html":"The attention maps are also interpretable: visualizing decoder attention shows each object query focusing on the extremities of its assigned object, and encoder self-attention already separates individual instances. This gives a clear picture of <i>how</i> the model decides, which anchor-based detectors lack."},
+            {"type":"quote","html":"DETR can be naturally extended to ... panoptic segmentation, by training a small extension on top of a pre-trained DETR."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why DETR mattered",
+          "subtitle": "Transformers enter detection",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"DETR showed that object detection could be reframed as a clean set-prediction problem solvable end-to-end with a Transformer, deleting decades of hand-engineered components. Even though its accuracy on small objects and its slow convergence left room to improve, it opened a whole research line."},
+            {"type":"list","items":[
+              "Reformulated detection as direct set prediction with a bipartite-matching loss &mdash; no NMS, no anchors.",
+              "Used a Transformer encoder-decoder with learned object queries to predict all objects in parallel.",
+              "Matched Faster R-CNN (~42 AP) on COCO with a much simpler pipeline; extended to panoptic segmentation.",
+              "Inspired follow-ups (Deformable DETR, DINO) that fixed small-object accuracy and slow training."
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}

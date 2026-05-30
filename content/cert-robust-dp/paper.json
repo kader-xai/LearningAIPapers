@@ -1,0 +1,105 @@
+{
+  "title": "Certified Robustness to Adversarial Examples with Differential Privacy (PixelDP)",
+  "authors": "Mathias Lecuyer, Vaggelis Atlidakis, Roxana Geambasu, Daniel Hsu, Suman Jana",
+  "year": "2019",
+  "venue": "IEEE S&P 2019 — arXiv:1802.03471",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "From empirical to certified robustness",
+          "subtitle": "A defense that comes with a mathematical guarantee",
+          "pdfPages": [1],
+          "blocks": [
+            {"type": "p", "html": "Most defenses against adversarial examples are <em>empirical</em>: they make the known attacks fail, but offer no promise against the next, smarter attack. History shows these defenses get broken again and again. What we really want is a <strong>certified</strong> defense: a proof that no perturbation below some size can change the prediction, no matter how clever the attacker."},
+            {"type": "p", "html": "PixelDP delivers exactly that, and it does so with a surprising borrowed tool: <strong>differential privacy (DP)</strong>. DP was invented to keep a single database record from swinging an analysis. PixelDP reuses the same mathematics to keep a single small change in the <em>input pixels</em> from swinging the network's output."},
+            {"type": "quote", "html": "We draw a formal connection between robustness against adversarial examples and a definition from privacy: a function that is differentially private with respect to small input changes is provably stable, and that stability can be turned into a robustness certificate."},
+            {"type": "p", "html": "The result is a defense that scales to large networks and datasets (including ImageNet), works with standard architectures, and crucially gives a per-prediction certificate: for this specific input, the label is guaranteed not to change under any attack within radius $L$."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "Why empirical defenses keep failing",
+          "subtitle": "The arms race and how to step out of it",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {"type": "p", "html": "An adversarial example is an input $x' = x + \\delta$ with $\\|\\delta\\|_p$ tiny, crafted so the model's prediction flips. Empirical defenses raise the bar for current attacks but leave a residual question: is the model actually robust, or did we just fail to find the attack that breaks it?"},
+            {"type": "p", "html": "A <strong>certified</strong> defense answers that question with a proof. For a given input it returns not only a label but a guaranteed radius $L$ such that <em>every</em> perturbation with $\\|\\delta\\|_p \\leq L$ leaves the prediction unchanged. No future attack within that ball can ever succeed."},
+            {"type": "h2", "text": "The differential privacy idea, recycled"},
+            {"type": "p", "html": "Differential privacy bounds how much the output distribution of a randomized function can change when one input is perturbed slightly. PixelDP's insight: treat a bounded change in the input image like the 'one record change' in DP. If the network's <em>scores</em> are differentially private with respect to a norm-bounded change in the input, then those scores cannot move much, which means the argmax (the predicted class) is stable."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Mechanism",
+      "pages": [
+        {
+          "title": "Inject calibrated noise into the network",
+          "subtitle": "Making the score function differentially private",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type": "p", "html": "PixelDP turns an ordinary network into a randomized one by inserting a <strong>noise layer</strong>. Gaussian (or Laplace) noise is added at some point in the forward pass, calibrated so that the mapping from input to class scores satisfies $(\\epsilon, \\delta)$-differential privacy with respect to a change of size up to $L$ in the chosen input norm."},
+            {"type": "p", "html": "The amount of noise depends on the <em>sensitivity</em> of the network up to the noise layer: how much its pre-noise output can change when the input moves by $L$. Concretely, for Gaussian noise providing $(\\epsilon,\\delta)$-DP at attack bound $L$, the standard deviation scales like:"},
+            {"type": "math", "tex": "\\sigma \\ =\\ \\frac{\\sqrt{2 \\ln(1.25/\\delta)}\\,\\cdot\\, L \\,\\cdot\\, \\Delta}{\\epsilon}"},
+            {"type": "p", "html": "Here $\\Delta$ is the sensitivity (how strongly a unit input change propagates to the noise layer). Read it plainly: a bigger guaranteed radius $L$, or a more sensitive network, demands more noise; a tighter privacy budget $\\epsilon$ also demands more noise. Noise is the currency you spend to buy a stability guarantee."},
+            {"type": "p", "html": "At prediction time PixelDP runs the noisy network many times (Monte Carlo) on the same input and averages the scores, producing an expected score $\\hat{E}[\\,Q_k(x)\\,]$ for each class $k$."}
+          ]
+        },
+        {
+          "title": "From DP to a robustness certificate",
+          "subtitle": "The bound that does the work",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "Differential privacy comes with a so-called <em>expected-output stability</em> property. If a function's output is in $[0,1]$ and the function is $(\\epsilon,\\delta)$-DP for input changes up to $L$, then for any perturbation within that bound the expected score cannot jump by more than a controlled factor:"},
+            {"type": "math", "tex": "\\mathbb{E}[\\,Q_k(x+\\delta)\\,]\\ \\leq\\ e^{\\epsilon}\\,\\mathbb{E}[\\,Q_k(x)\\,]\\ +\\ \\delta,\\qquad \\|\\delta\\|_p \\leq L"},
+            {"type": "p", "html": "In words: the privacy guarantee literally caps how far each class score can drift when the attacker perturbs the input inside the $L$-ball. Now the certificate is simple. Let $k_1$ be the top class and $k_2$ the runner-up. The prediction is <strong>certified robust</strong> at this input if the top score, even after the worst allowed drop, still beats the runner-up even after its worst allowed rise:"},
+            {"type": "math", "tex": "\\mathbb{E}[\\,Q_{k_1}(x)\\,]\\ >\\ e^{2\\epsilon}\\,\\mathbb{E}[\\,Q_{k_2}(x)\\,]\\ +\\ (1 + e^{\\epsilon})\\,\\delta"},
+            {"type": "p", "html": "When this inequality holds, no perturbation with $\\|\\delta\\|_p \\leq L$ can make $k_2$ overtake $k_1$. The label is provably locked in. If it fails, PixelDP simply abstains from certifying that input rather than making a false promise."},
+            {"type": "quote", "html": "The certificate is per-prediction: the same model certifies some inputs and declines others. Robustness becomes a measurable quantity, not a hope."}
+          ]
+        },
+        {
+          "title": "Making the bound trustworthy in practice",
+          "subtitle": "Monte Carlo estimation and confidence",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type": "p", "html": "Because the scores are estimated by sampling the noisy network, PixelDP cannot use the exact expectations; it uses empirical estimates. To stay sound, it computes <strong>confidence bounds</strong> (via Hoeffding's inequality) on each expected score and plugs the conservative ends into the certificate check. This guarantees the certificate holds with high probability even though the scores were sampled."},
+            {"type": "list", "items": [
+              "Lower-bound the top class's expected score.",
+              "Upper-bound the runner-up's expected score.",
+              "Certify only if the conservative top still dominates the conservative runner-up under the DP drift bound.",
+              "More Monte Carlo samples tighten the bounds and certify more inputs."
+            ]},
+            {"type": "p", "html": "The accuracy-robustness trade-off shows up as a noise knob: more noise yields a larger certified radius $L$ but lowers clean accuracy. PixelDP lets you dial this explicitly, with the guarantee always intact."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Takeaways",
+      "pages": [
+        {
+          "title": "Scales where prior certified defenses could not",
+          "subtitle": "ImageNet-scale certificates",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type": "p", "html": "Earlier certified defenses (based on exact verification or convex relaxations) were precise but did not scale much beyond small networks and datasets. PixelDP's noise-based approach is architecture-agnostic and cheap, so it certifies robustness on large models and on datasets up to <strong>ImageNet</strong>, a first at that scale."},
+            {"type": "list", "items": [
+              "Gives a genuine guarantee, not just empirical resistance to today's attacks.",
+              "Works as a wrapper around standard architectures with a single added noise layer.",
+              "Certificate is per-input, so you know exactly which predictions are provably safe.",
+              "Trades clean accuracy for certified radius via the noise level, transparently."
+            ]},
+            {"type": "p", "html": "The lasting contribution is conceptual: PixelDP showed that <strong>differential privacy and adversarial robustness are two faces of the same stability requirement</strong>. This bridge seeded a whole line of work on randomized-smoothing certified defenses, which became one of the most reliable tools in adversarial ML."}
+          ]
+        }
+      ]
+    }
+  ]
+}

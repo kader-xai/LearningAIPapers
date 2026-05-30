@@ -1,0 +1,112 @@
+{
+  "title": "Poison Frogs! Targeted Clean-Label Poisoning Attacks on Neural Networks",
+  "authors": "Ali Shafahi, W. Ronny Huang, Mahyar Najibi, Octavian Suciu, Christoph Studer, Tudor Dumitras, Tom Goldstein",
+  "year": "2018",
+  "venue": "NeurIPS 2018 (arXiv:1804.00792)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Attacking the Training Set",
+          "subtitle": "A different kind of threat",
+          "pdfPages": [1],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Most adversarial work attacks a model at <strong>test time</strong> by perturbing the input you want to misclassify. This paper attacks at <strong>training time</strong>: the adversary slips one or a few crafted images into the training set so that, after the victim trains, the model misbehaves on a chosen input it was never shown during the attack."},
+            {"type": "p", "html": "The threat is realistic. Models are routinely trained on data scraped from the web or contributed by users. If an attacker can get even a single poisoned image into that pipeline, they can plant a hidden failure."},
+            {"type": "quote", "html": "The central feat: a <strong>clean-label</strong> poison. The poisoned image looks like a normal example of its class and is <em>correctly labeled</em>, so a human reviewer (or an automatic label check) sees nothing wrong, yet it reliably causes one specific target image to be misclassified."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Threat Model",
+      "pages": [
+        {
+          "title": "Clean-Label vs Dirty-Label Poisoning",
+          "subtitle": "Why correct labels make the attack stealthy",
+          "pdfPages": [2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Classic data poisoning uses <strong>mislabeled</strong> examples: paste a stop sign and label it 'speed limit'. These work, but they are easy to catch, because the image and its label obviously disagree, and a human or a simple cleaning step removes them."},
+            {"type": "p", "html": "A <strong>clean-label</strong> attack accepts a harsh constraint: the attacker may <em>not</em> change labels. Every poison must carry the label a human would naturally assign. This is much harder, but the payoff is stealth: the poison passes any inspection that only checks whether labels look right."},
+            {"type": "list", "items": [
+              "The attacker picks one specific test image, the <strong>target</strong>, that they want misclassified.",
+              "They craft a <strong>poison</strong> from a <em>base</em> image of a different class. The poison keeps the base class's label and stays visually close to the base.",
+              "The victim trains (or fine-tunes) on their data plus the poison. After training, the target is classified as the base class, while overall accuracy looks normal."
+            ]},
+            {"type": "p", "html": "Two scenarios are studied. In <strong>transfer learning</strong> the victim uses a fixed pretrained feature extractor and only trains the final layer; this is the strongest setting, where a single poison often suffices. In <strong>end-to-end training</strong>, where all layers update, the attack is harder and needs a few extra tricks."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Feature Collision",
+          "subtitle": "Wear the target's face, keep the base's clothes",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The key idea is a <strong>feature collision</strong>. A trained network maps each image to a point in a deep <em>feature space</em> (the activations of a near-final layer), and the classifier draws decision boundaries in that space. The attacker crafts a poison that lands almost exactly on top of the <strong>target</strong> in feature space, while in pixel space it still looks like the <strong>base</strong>."},
+            {"type": "p", "html": "So the poison is a chameleon: to the human eye and to the labeler it is a base-class image (correct label), but to the network's deep features it is nearly indistinguishable from the target. When the model learns 'this feature region is the base class', it has unknowingly placed the target on the wrong side of the boundary."},
+            {"type": "math", "tex": "p = \\arg\\min_{x} \\; \\| f(x) - f(t) \\|_{2}^{2} \\; + \\; \\beta \\, \\| x - b \\|_{2}^{2}"},
+            {"type": "p", "html": "Read this optimization in two halves. The first term, $\\| f(x) - f(t) \\|_2^2$, pulls the poison's deep features $f(x)$ toward the <strong>target's</strong> features $f(t)$ &mdash; this is the collision. The second term, $\\beta \\, \\| x - b \\|_2^2$, keeps the poison's pixels close to the <strong>base</strong> image $b$ so it still looks like (and is labeled as) the base class."},
+            {"type": "p", "html": "The coefficient $\\beta$ balances the two goals: large $\\beta$ keeps the poison visually clean but less effective; small $\\beta$ makes a stronger collision that may start to look like the target. The sweet spot yields a poison that is both convincing to humans and deadly to the model."}
+          ]
+        },
+        {
+          "title": "Solving for the Poison",
+          "subtitle": "Forward-backward optimization",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The objective mixes a term in feature space (needs the network) with a term in pixel space (simple). The authors solve it with a <strong>forward-backward splitting</strong> procedure that alternates two cheap steps:"},
+            {"type": "list", "items": [
+              "<strong>Forward step:</strong> take a gradient step that reduces the feature distance $\\| f(x) - f(t) \\|_2^2$, dragging the poison toward the target in feature space.",
+              "<strong>Backward (proximal) step:</strong> pull the result back toward the base image $b$, enforcing visual similarity and the clean label."
+            ]},
+            {"type": "p", "html": "Iterating these two steps converges to a poison that sits on the target in feature space yet stays a believable base image in pixels &mdash; exactly the chameleon described above."},
+            {"type": "h2", "text": "Making it survive end-to-end training"},
+            {"type": "p", "html": "When all layers retrain, the feature space itself moves, so a single collision can be 'undone'. The authors add two robustness tricks: a <strong>watermarking</strong> trick that blends a faint, low-opacity copy of the target into the poison, and using <strong>multiple poisons</strong>. Together these keep the target trapped even as features shift during full training."},
+            {"type": "math", "tex": "x_{\\text{poison}} = (1-\\gamma)\\, b \\; + \\; \\gamma \\, t"},
+            {"type": "p", "html": "The optional watermark blends a small fraction $\\gamma$ of the target $t$ into the base $b$ at low opacity &mdash; faint enough to stay clean-label, but enough to anchor the collision through retraining."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "One Poison, One Hijacked Prediction",
+          "subtitle": "High success in transfer learning",
+          "pdfPages": [5, 6],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "In the transfer-learning setting (frozen features, retrained last layer), <strong>a single clean-label poison achieves a very high attack success rate</strong> on the chosen target. The model's overall test accuracy barely moves, so the poisoning is invisible in standard evaluation."},
+            {"type": "p", "html": "This is what makes the attack alarming: the only observable effect is that one specific input now gets the attacker's chosen label. There is no accuracy drop to raise alarms, no obviously bad training image, and no test-time perturbation to detect."},
+            {"type": "table", "headers": ["Setting", "Poisons needed", "Target attack success"], "rows": [
+              ["Transfer learning (frozen features)", "Often just 1", "Very high"],
+              ["End-to-end training (all layers)", "~50 with watermark + multiplicity", "High"]
+            ]},
+            {"type": "p", "html": "For end-to-end training the attacker needs more poisons and the watermarking trick, but the attack still succeeds while keeping each poison clean-labeled and natural-looking."}
+          ]
+        },
+        {
+          "title": "Why This Changes the Threat Model",
+          "subtitle": "Trust in training data is not free",
+          "pdfPages": [7, 8],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Poison Frogs shows that <strong>controlling even a tiny, correctly labeled slice of the training data is enough to plant a targeted backdoor</strong>. The usual defenses &mdash; label sanitization, outlier filtering on inputs &mdash; do not catch a poison that is a valid-looking, correctly labeled image."},
+            {"type": "quote", "html": "Stealth lesson: an attack you cannot see in the labels, cannot see in the accuracy, and cannot see at test time is the hardest kind to defend against."},
+            {"type": "p", "html": "The practical implications are broad: any system that fine-tunes on scraped, crowdsourced, or user-submitted images inherits this risk. It motivated a wave of follow-up work on detecting feature-space anomalies and on poisoning attacks and defenses generally."}
+          ]
+        }
+      ]
+    }
+  ]
+}

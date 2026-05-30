@@ -1,0 +1,106 @@
+{
+  "title": "Adversarial Patch",
+  "authors": "Tom B. Brown, Dandelion Mané, Aurko Roy, Martín Abadi, Justin Gilmer",
+  "year": "2017",
+  "venue": "NeurIPS 2017 Workshop — arXiv:1712.09665",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "An attack you can print and stick anywhere",
+          "subtitle": "Forget invisibility; build something physical and universal",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Classic adversarial examples are invisible perturbations tied to one specific image. They are fragile: they assume digital access to the exact pixels and break down once you print, photograph, or move the object. This paper goes the opposite direction and builds something brazenly visible but far more practical."},
+            {"type": "p", "html": "The <strong>adversarial patch</strong> is a small printable sticker. Place it anywhere in a scene, photograph the scene with any camera, and the classifier confidently reports a target class you chose, say 'toaster,' regardless of what is actually in the picture. It is <strong>universal</strong> (one patch works across images), <strong>location-independent</strong> (works wherever you put it), and <strong>physically realizable</strong> (survives printing and the real world)."},
+            {"type": "quote", "html": "Because the patch is scene-independent, it allows attackers to create a physical-world attack without prior knowledge of the lighting, camera angle, or even the objects the classifier is being applied to."},
+            {"type": "p", "html": "The trade is deliberate: the patch is not subtle (a human plainly sees a weird sticker), but it is robust, reusable, and works through a camera in the real world, which is exactly what most prior attacks could not do."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Goal",
+      "pages": [
+        {
+          "title": "Why visibility is an acceptable price",
+          "subtitle": "Optimizing for the real world, not the L-infinity ball",
+          "pdfPages": [1, 2],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Traditional attacks optimize a perturbation under a strict imperceptibility constraint $\\|\\delta\\|_\\infty \\leq \\epsilon$. That constraint is what makes them brittle in the physical world: tiny pixel-precise changes are destroyed by resampling, lighting, and viewpoint change."},
+            {"type": "p", "html": "The patch throws away the imperceptibility constraint and instead optimizes for the properties an attacker actually needs in practice:"},
+            {"type": "list", "items": [
+              "<strong>Universal</strong>: the same patch fools the classifier across many different background images.",
+              "<strong>Robust</strong>: survives translation, rotation, scaling, and real-world lighting and camera noise.",
+              "<strong>Targeted</strong>: forces a specific attacker-chosen class, not just any misclassification.",
+              "<strong>Physical</strong>: can be printed on paper and still works when photographed."
+            ]},
+            {"type": "p", "html": "The patch dominates the prediction by exploiting how classifiers behave: they tend to report whatever is the most salient, confident object in the frame. The patch is engineered to be the single most 'toaster-like' thing the network has ever seen, so it overpowers the real object."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Method",
+      "pages": [
+        {
+          "title": "Expectation over Transformations",
+          "subtitle": "Train the patch to survive the real world",
+          "pdfPages": [3],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The core technique is <strong>Expectation over Transformations (EOT)</strong>. Instead of optimizing the patch for one fixed placement, we optimize its <em>average</em> effectiveness over a whole distribution of random placements and conditions. A patch that works on average across all of them is one that works in the messy real world."},
+            {"type": "p", "html": "An operator $A(p, x, l, t)$ takes the patch $p$, applies a random transformation $t$ (rotation, scaling, etc.), and pastes it at a random location $l$ onto image $x$. We then maximize the expected probability of the target class $\\hat{y}$ over random images, locations, and transformations:"},
+            {"type": "math", "tex": "\\hat{p}\\ =\\ \\arg\\max_{p}\\ \\ \\mathbb{E}_{x\\sim X,\\ t\\sim T,\\ l\\sim L}\\Big[\\ \\log\\,\\Pr\\big(\\hat{y}\\ \\big|\\ A(p, x, l, t)\\big)\\ \\Big]"},
+            {"type": "p", "html": "Read this as: 'find the single patch $p$ that, when randomly rotated, scaled, and stuck somewhere on a random image, makes the network shout the target class as loudly as possible, on average.' By baking the random transformations directly into the training objective, the optimizer is forced to discover a pattern whose adversarial power does not depend on exact placement or orientation."},
+            {"type": "quote", "html": "Averaging over a distribution of transformations during optimization is what converts a fragile digital perturbation into a robust physical artifact."}
+          ]
+        },
+        {
+          "title": "Why universality and location-independence emerge",
+          "subtitle": "The expectation does the heavy lifting",
+          "pdfPages": [3, 4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Each piece of the expectation buys a property of the final patch. Averaging over many background images $x$ forces the patch to work regardless of the scene, which is <strong>universality</strong>. Averaging over locations $l$ forces it to work wherever placed, which is <strong>location-independence</strong>. Averaging over transformations $t$ forces it to survive rotation and scale, which is <strong>physical robustness</strong>."},
+            {"type": "p", "html": "Because no single image, position, or angle is privileged during training, the optimizer cannot cheat by overfitting to one configuration. The only way to score well on the average is to find a genuinely transferable adversarial texture."}
+          ]
+        },
+        {
+          "title": "Crossing into the physical world",
+          "subtitle": "Print it, photograph it, fool it",
+          "pdfPages": [4, 5],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The decisive demonstration: the authors <strong>print</strong> the optimized patch, place it next to ordinary objects (e.g., a banana), and photograph the scene with a regular camera. The network, which correctly identifies the banana when the patch is absent, switches to confidently reporting the target class once the patch is in frame."},
+            {"type": "p", "html": "This works precisely because EOT trained the patch against the kinds of distortions a print-then-photograph pipeline introduces. The attack needs no access to the victim's pixels or camera; an attacker can simply leave a sticker in the environment."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Takeaways",
+      "pages": [
+        {
+          "title": "A new, practical threat",
+          "subtitle": "Why this matters for deployed systems",
+          "pdfPages": [5, 6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The adversarial patch reframes what an attack can look like. It abandons invisibility, which most defenses assume, and in exchange gains everything an attacker actually wants in the wild: reusability, robustness, and a physical form factor."},
+            {"type": "list", "items": [
+              "Adversarial attacks need not be imperceptible to be dangerous.",
+              "Expectation over Transformations is the recipe for physically robust attacks.",
+              "A single universal patch generalizes across scenes, positions, and viewpoints.",
+              "Defenses built around small L_p perturbations do not address this threat model at all."
+            ]},
+            {"type": "p", "html": "The broader lesson for anyone deploying vision systems in the real world (autonomous cars, surveillance, robotics): an attacker may not need to hack your pipeline at all. They may just need to print a sticker."}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "title": "A Style-Based Generator Architecture for Generative Adversarial Networks",
+  "authors": "Tero Karras, Samuli Laine, Timo Aila (NVIDIA)",
+  "venue": "CVPR",
+  "year": "2019",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Redesigning the Generator",
+          "subtitle": "Borrowing ideas from style transfer to control image synthesis",
+          "pdfPages": [1],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "h2", "text": "The Motivation"},
+            {"type": "p", "html": "A normal GAN generator is a black box: you feed in a random vector and an image comes out, with no obvious way to control specific aspects like pose, hairstyle, or freckles. StyleGAN re-architects the generator so that different visual attributes become separately controllable, borrowing the style-transfer idea that an image's look can be set by per-channel feature statistics."},
+            {"type": "quote", "html": "The new architecture leads to an automatically learned, unsupervised separation of high-level attributes (e.g., pose and identity) and stochastic variation (e.g., freckles, hair)."},
+            {"type": "h2", "text": "What Changed"},
+            {"type": "p", "html": "Three big changes: the random input is first transformed by a <b>mapping network</b> into an intermediate space; the image is built by injecting <b>styles</b> at every resolution via AdaIN; and fine random detail is added through explicit <b>noise inputs</b>. The discriminator and the loss are left essentially unchanged."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Mapping Network",
+      "pages": [
+        {
+          "title": "From z to w",
+          "subtitle": "An intermediate latent space that disentangles factors",
+          "pdfPages": [2],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "h2", "text": "Why Not Use z Directly"},
+            {"type": "p", "html": "The input latent $\\mathbf{z}$ is sampled from a fixed distribution (a normal sphere). Forcing the generator to follow that fixed shape entangles attributes: changing one number changes several visual features at once. StyleGAN inserts an 8-layer MLP, the mapping network $f$, that maps $\\mathbf{z}$ to an intermediate code $\\mathbf{w}$:"},
+            {"type": "math", "tex": "\\mathbf{w} = f(\\mathbf{z}), \\qquad \\mathbf{z} \\in \\mathcal{Z}, \\; \\mathbf{w} \\in \\mathcal{W}"},
+            {"type": "p", "html": "Because $\\mathbf{w}$ does not have to match any fixed distribution, the network can \"unwarp\" the space so that factors of variation become more linear and separable. This is what the paper means by a more <b>disentangled</b> latent space $\\mathcal{W}$."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Style Injection",
+      "pages": [
+        {
+          "title": "Styles via AdaIN at Every Resolution",
+          "subtitle": "The same building block from arbitrary style transfer",
+          "pdfPages": [2],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "h2", "text": "How a Style Controls a Layer"},
+            {"type": "p", "html": "The synthesis network does not take $\\mathbf{w}$ as a starting image. Instead it starts from a learned constant and is sculpted layer by layer. At each layer, $\\mathbf{w}$ is turned by a learned affine transform into a <b>style</b> $\\mathbf{y} = (\\mathbf{y}_s, \\mathbf{y}_b)$ that controls an Adaptive Instance Normalization (AdaIN) operation:"},
+            {"type": "math", "tex": "\\mathrm{AdaIN}(\\mathbf{x}_i, \\mathbf{y}) = \\mathbf{y}_{s,i} \\, \\frac{\\mathbf{x}_i - \\mu(\\mathbf{x}_i)}{\\sigma(\\mathbf{x}_i)} + \\mathbf{y}_{b,i}"},
+            {"type": "p", "html": "Reading it plainly: normalize each feature channel $i$ to zero mean and unit variance, then rescale by $\\mathbf{y}_{s,i}$ and shift by $\\mathbf{y}_{b,i}$, both derived from $\\mathbf{w}$. Each AdaIN affects only the next convolution, so the style at that resolution is overwritten before the next style is applied."},
+            {"type": "h2", "text": "Coarse to Fine Control"},
+            {"type": "p", "html": "Styles injected at low resolutions ($4^2$ to $8^2$) control coarse attributes like pose and face shape; middle resolutions control features like hairstyle and eyes; high resolutions control fine color and micro-texture. This natural separation by scale is what makes attribute-level control emerge."}
+          ]
+        },
+        {
+          "title": "Stochastic Noise",
+          "subtitle": "Letting the network draw random detail for free",
+          "pdfPages": [3],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "h2", "text": "Where Randomness Should Come From"},
+            {"type": "p", "html": "Details like the exact placement of individual hairs or freckles are essentially random and should not consume the precious latent code. StyleGAN adds explicit per-pixel Gaussian <b>noise images</b> after each convolution, scaled by learned per-channel weights. The noise lets the generator add realistic stochastic variation without changing identity, and frees $\\mathbf{w}$ to encode the meaningful, global attributes."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Style Mixing & Quality",
+      "pages": [
+        {
+          "title": "Style Mixing and FID",
+          "subtitle": "A regularizer that proves the styles are localized",
+          "pdfPages": [3],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "h2", "text": "Mixing Regularization"},
+            {"type": "p", "html": "During training, some images are generated using two different latent codes: $\\mathbf{w}_1$ drives the styles up to a random crossover layer and $\\mathbf{w}_2$ drives the rest. This <b>style mixing</b> discourages the network from assuming adjacent layers are correlated, pushing each resolution's style to act independently. At test time it lets you take pose from one face and hair color from another."},
+            {"type": "h2", "text": "Measured Quality (FID)"},
+            {"type": "p", "html": "Quality is measured by Fréchet Inception Distance (FID); lower is better. On the FFHQ face dataset the full style-based generator reached an FID around 4.4, a clear improvement over the traditional generator baseline (around 4.4 vs. the prior best near 5.0 on the same setup), while producing visibly cleaner faces up to $1024 \\times 1024$."},
+            {"type": "table", "headers": ["Generator", "CelebA-HQ FID", "FFHQ FID"], "rows": [
+              ["Traditional (Progressive GAN baseline)", "7.79", "8.04"],
+              ["+ Mapping network and AdaIN styles", "5.20", "5.06"],
+              ["+ Noise inputs", "5.06", "4.42"],
+              ["+ Mixing regularization (full StyleGAN)", "5.17", "4.40"]
+            ]},
+            {"type": "h2", "text": "Measuring Disentanglement"},
+            {"type": "p", "html": "Beyond FID, the authors propose two new metrics, <b>perceptual path length</b> (how abruptly images change as you move through latent space) and <b>linear separability</b> (how cleanly a linear classifier can read an attribute off the code). Both confirm that the intermediate space $\\mathcal{W}$ is substantially more disentangled than the input space $\\mathcal{Z}$."}
+          ]
+        }
+      ]
+    }
+  ]
+}

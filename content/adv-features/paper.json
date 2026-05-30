@@ -1,0 +1,116 @@
+{
+  "title": "Adversarial Examples Are Not Bugs, They Are Features",
+  "authors": "Andrew Ilyas, Shibani Santurkar, Dimitris Tsipras, Logan Engstrom, Brandon Tran, Aleksander Madry",
+  "year": "2019",
+  "venue": "NeurIPS 2019",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The puzzle of adversarial examples",
+          "subtitle": "A tiny, imperceptible nudge flips the prediction",
+          "pdfPages": [1],
+          "blocks": [
+            {"type": "p", "html": "Modern image classifiers can be fooled by perturbations so small that a human cannot see them. Add a carefully chosen, almost invisible pattern to a photo of a pig and the network confidently says \"airplane.\" For years this was treated as a <em>bug</em>: a sign that the models were broken, brittle, or had simply not learned the right thing."},
+            {"type": "p", "html": "This paper makes a startling claim. Adversarial examples are not flukes or glitches. They are a direct consequence of the model doing exactly what we trained it to do: extract every scrap of signal in the data that helps it predict the label. Some of that signal lives in patterns that are real and predictive but <strong>imperceptible to humans</strong>. The authors call these <em>non-robust features</em>."},
+            {"type": "quote", "html": "Adversarial vulnerability is not a flaw of a particular model or training method. It is a property of the dataset, arising from features that are genuinely predictive yet brittle and human-meaningless."},
+            {"type": "p", "html": "The reframing matters because it changes what a \"fix\" looks like. If adversarial examples were noise, better optimization or more data might erase them. But if they come from real predictive structure in the data, then robustness requires us to <em>choose</em> to ignore that structure, which trades away some accuracy."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "Robust vs. non-robust features",
+          "subtitle": "Two kinds of predictive signal",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {"type": "p", "html": "A <em>feature</em> here is any function of the input that correlates with the label. The authors split features into two camps based on how they behave under a small adversarial perturbation of size $\\epsilon$."},
+            {"type": "p", "html": "A feature is <strong>$\\rho$-useful</strong> if, on average over the data, it is correlated with the true label by at least $\\rho$:"},
+            {"type": "math", "tex": "\\mathbb{E}_{(x,y)\\sim\\mathcal{D}}[\\, y \\cdot f(x) \\,] \\ \\geq\\ \\rho"},
+            {"type": "p", "html": "Read this as: \"feature $f$ points in the right direction often enough to help.\" A feature is <strong>robustly useful</strong> if it stays useful even after an adversary perturbs the input within an $\\epsilon$-ball:"},
+            {"type": "math", "tex": "\\mathbb{E}_{(x,y)\\sim\\mathcal{D}}\\left[\\ \\inf_{\\|\\delta\\|\\leq\\epsilon}\\ y \\cdot f(x+\\delta)\\ \\right]\\ \\geq\\ \\gamma"},
+            {"type": "p", "html": "Read this as: \"even in the worst case the adversary can create, $f$ still helps by at least $\\gamma$.\" A <strong>non-robust feature</strong> is the dangerous middle case: it is useful on clean data, but a tiny perturbation can flip its sign so it now votes for the wrong class."},
+            {"type": "list", "items": [
+              "Robust features: edges, shapes, textures a human would also rely on. Hard for an adversary to destroy with a small nudge.",
+              "Non-robust features: faint statistical patterns, invisible to us, genuinely correlated with the label, but easily flipped by an imperceptible perturbation.",
+              "Standard training has no reason to prefer one over the other. It greedily uses both because both lower the loss."
+            ]}
+          ]
+        },
+        {
+          "title": "Why standard training drinks the poison",
+          "subtitle": "Accuracy and robustness can genuinely conflict",
+          "pdfPages": [3],
+          "blocks": [
+            {"type": "p", "html": "Suppose a non-robust feature is correlated with the label 95% of the time. A loss-minimizing classifier <em>should</em> use it, because it lowers test error. The model is not being stupid; it is being accurate. The catch is that the same feature is, by definition, easy for an adversary to manipulate."},
+            {"type": "p", "html": "This explains a famous tension. Robust models (those trained to ignore non-robust features) often have <strong>lower clean accuracy</strong> than standard models. They are throwing away real, useful signal in exchange for stability. The trade-off is not an artifact of weak training; it is baked into the data."},
+            {"type": "quote", "html": "Human perception only uses robust features. So a model that is accurate by human standards and a model that is accurate by every-bit-of-signal standards are not the same model."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Two Experiments",
+      "pages": [
+        {
+          "title": "Experiment 1: a robust dataset",
+          "subtitle": "Strip out the non-robust features, and robustness transfers",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "If adversarial vulnerability comes from non-robust features in the data, then we should be able to <em>build a dataset that contains only robust features</em> and train a normal classifier on it to get a robust model for free, with no adversarial training at the final step."},
+            {"type": "h2", "text": "The recipe"},
+            {"type": "list", "items": [
+              "Start with a model that was already adversarially trained, so its learned representation relies on robust features only.",
+              "For each image, optimize a new image so that its deep representation matches the original's, as seen through this robust model.",
+              "The result is a 'robustified' image: it looks roughly like the original to humans, but its non-robust features have been scrubbed out.",
+              "Train a brand-new classifier on this robust dataset using completely standard (non-adversarial) training."
+            ]},
+            {"type": "p", "html": "The payoff: the new classifier, trained normally, is <strong>substantially robust</strong> to adversarial attacks. Robustness came from the data, not the training algorithm. This is strong evidence that the vulnerability lived in the features all along."}
+          ]
+        },
+        {
+          "title": "Experiment 2: a non-robust dataset",
+          "subtitle": "Mislabeled by a perturbation, yet it generalizes",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type": "p", "html": "The second experiment is the knockout punch. The authors construct a dataset that is <em>completely mislabeled from a human's point of view</em>, yet trains a model that generalizes well on the normal test set."},
+            {"type": "h2", "text": "The construction"},
+            {"type": "list", "items": [
+              "Take a correctly labeled image of, say, a dog.",
+              "Apply a small adversarial perturbation that makes a standard classifier call it a cat.",
+              "Relabel the perturbed image as 'cat' and add it to the new dataset.",
+              "Do this for every image, so the new dataset's labels look totally wrong to a human (the pictures still look like dogs, but are labeled cat)."
+            ]},
+            {"type": "p", "html": "A model trained purely on these human-wrong labels learns to classify <strong>real, clean test images correctly</strong>. How? The adversarial perturbations injected non-robust features that point at the new (cat) label, and those non-robust features are genuinely predictive on natural data. The model latched onto exactly the imperceptible signal the perturbation planted."},
+            {"type": "quote", "html": "A dataset that is nonsense to a human can be perfectly informative to a network, because the network reads features the human cannot perceive."},
+            {"type": "p", "html": "This proves non-robust features are not noise. They carry real generalization power. Adversarial examples are simply the act of toggling those features."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Takeaways",
+      "pages": [
+        {
+          "title": "What this changes",
+          "subtitle": "A human-centric, not model-centric, view of robustness",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type": "p", "html": "The paper relocates the problem. Adversarial examples are a <strong>human-machine misalignment</strong>: the model uses predictive features that humans never evolved to see, and the adversary exploits the gap."},
+            {"type": "list", "items": [
+              "Robustness is a property we impose by restricting which features a model may use, not a bug we patch.",
+              "The accuracy-robustness trade-off is real and fundamental, because we are deliberately discarding useful (non-robust) signal.",
+              "Transferability of adversarial examples across models is explained: different models trained on the same data tend to pick up the same non-robust features.",
+              "Interpretability improves with robust models, because their gradients align with human-perceptible structure."
+            ]},
+            {"type": "p", "html": "The lasting message: if we want models that 'see' like we do, we must train them to rely only on the features we consider meaningful, and accept that this may cost some raw accuracy. Adversarial vulnerability is the price of using all the signal the data offers."}
+          ]
+        }
+      ]
+    }
+  ]
+}

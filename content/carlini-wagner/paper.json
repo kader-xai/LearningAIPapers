@@ -1,0 +1,136 @@
+{
+  "title": "Towards Evaluating the Robustness of Neural Networks",
+  "authors": "Nicholas Carlini, David Wagner",
+  "year": "2017",
+  "venue": "IEEE Symposium on Security and Privacy 2017 (arXiv:1608.04644)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "How strong is the strongest attack?",
+          "subtitle": "Building attacks to honestly measure robustness",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "A defense is only as convincing as the attack it survives. If you test a model against a weak attack and it holds up, you have learned almost nothing. This paper sets out to build the <strong>strongest possible attacks</strong>, so that surviving them is real evidence of robustness."},
+            {"type": "p", "html": "The immediate target is <em>defensive distillation</em>, a method that had been reported to reduce the success rate of existing attacks from 95% down to 0.5% and was held up as a strong defense. The authors construct three new attacks, one for each of the $\\ell_2$, $\\ell_0$, and $\\ell_\\infty$ distance metrics, and show that defensive distillation provides essentially no protection against them: their attacks succeed <strong>100%</strong> of the time on both the original and the distilled network."},
+            {"type": "p", "html": "The lasting contribution is not just breaking one defense. It is a careful, optimization-based methodology for crafting minimal-distortion adversarial examples that became the de facto benchmark for evaluating every defense that came after."},
+            {"type": "quote", "html": "We do not propose a defense; we propose attacks powerful enough that defeating them is meaningful."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Problem Setup",
+      "pages": [
+        {
+          "title": "Adversarial examples as constrained optimization",
+          "subtitle": "Find the smallest change that flips the label",
+          "pdfPages": [2, 3],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The cleanest way to state the goal is as a constrained optimization: among all perturbations $\\delta$ that cause the model to output a chosen target class $t$, find the one with the smallest size under a distance metric $D$ (such as $\\ell_2$)."},
+            {"type": "math", "tex": "\\min_{\\delta} \\; D(x, x+\\delta) \\quad \\text{such that} \\quad C(x+\\delta) = t \\;,\\; x+\\delta \\in [0,1]^n"},
+            {"type": "p", "html": "In words: minimize the distortion $D$ between the clean image $x$ and the adversarial image $x+\\delta$, subject to two constraints, that the classifier $C$ assigns the target label $t$, and that the result stays a valid image with every pixel in $[0,1]$."},
+            {"type": "p", "html": "This is hard to optimize directly because the constraint $C(x+\\delta)=t$ is highly non-linear and non-differentiable (it depends on an argmax over logits). The bulk of the paper is a sequence of design choices that turn this awkward problem into one that a gradient-based optimizer can solve well."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method: Reformulation",
+      "pages": [
+        {
+          "title": "Moving the constraint into the objective",
+          "subtitle": "A differentiable surrogate for 'is misclassified'",
+          "pdfPages": [3, 4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The first move is to relax the hard classification constraint into a soft penalty. Instead of requiring $C(x+\\delta)=t$ exactly, the authors add a term $f(x+\\delta)$ that is non-positive precisely when the image is classified as the target, and minimize a weighted sum."},
+            {"type": "math", "tex": "\\min_{\\delta} \\; \\|\\delta\\|_2 + c \\cdot f(x+\\delta)"},
+            {"type": "p", "html": "Reading this: minimize the size of the perturbation plus a constant $c$ times a surrogate $f$ that measures how far the image is from being misclassified as $t$. The constant $c$ trades off the two goals; the authors find a good $c$ by binary search, the smallest value that still yields a successful attack, which keeps the distortion minimal."},
+            {"type": "p", "html": "The choice of $f$ matters. After testing several candidates, the most effective surrogate works on the logits $Z$ rather than the softmax probabilities, comparing the target logit against the strongest competing logit:"},
+            {"type": "math", "tex": "f(x') = \\max\\!\\Big( \\max_{i \\ne t} Z(x')_i - Z(x')_t,\\; -\\kappa \\Big)"},
+            {"type": "p", "html": "In words: $f$ is the gap between the best non-target logit and the target logit. When the target already wins, the gap is negative and $f$ stops pushing once it reaches $-\\kappa$. The parameter $\\kappa$ is a <em>confidence margin</em>: larger $\\kappa$ forces the adversarial example deeper into the target region, which makes the attack transfer better to other models at the cost of more distortion."}
+          ]
+        },
+        {
+          "title": "The tanh change of variables",
+          "subtitle": "Keeping pixels valid without clipping",
+          "pdfPages": [4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The second constraint, that every pixel stays in $[0,1]$, is usually handled by clipping after each gradient step. Clipping wastes optimizer effort: the gradient may keep pushing a pixel past the boundary while clipping silently throws that work away. Carlini and Wagner instead remove the box constraint entirely with a change of variables."},
+            {"type": "math", "tex": "x'_i = \\tfrac{1}{2}\\big(\\tanh(w_i) + 1\\big)"},
+            {"type": "p", "html": "Read this as: optimize over an unconstrained variable $w$, and map it through $\\tanh$ (squashed to $[0,1]$) to get the actual pixel value $x'$. Because $\\tanh$ smoothly saturates, every value of $w$ produces a valid image automatically, and the optimizer can use a strong method like Adam over $w$ with no clipping at all. This change of variables is a large part of why the attack finds such small perturbations."},
+            {"type": "list", "items": [
+              "Surrogate $f$ on logits, not probabilities, to avoid the vanishing gradients distillation creates.",
+              "Binary search over $c$ to find the minimum-distortion success.",
+              "tanh reparameterization to satisfy the box constraint smoothly.",
+              "Adam as the inner optimizer, run for many iterations per example."
+            ]}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Three Distance Metrics",
+      "pages": [
+        {
+          "title": "L2, L0, and Linf variants",
+          "subtitle": "One framework, three notions of 'small'",
+          "pdfPages": [5, 6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Different threat models care about different notions of a small change, so the paper builds an attack for each of three metrics, all sharing the same surrogate and tanh tricks."},
+            {"type": "table", "headers": ["Metric", "What it limits", "Behaviour of the attack"], "rows": [
+              ["$\\ell_2$", "Total squared change across all pixels", "Spreads a faint, smooth perturbation over the whole image; the flagship attack."],
+              ["$\\ell_0$", "Number of pixels changed at all", "Iteratively fixes unimportant pixels and changes only a small critical set."],
+              ["$\\ell_\\infty$", "Largest change to any single pixel", "Caps every pixel's change; uses a penalty on the max to avoid the non-differentiable corner."]
+            ]},
+            {"type": "p", "html": "The $\\ell_0$ attack is built on top of the $\\ell_2$ attack: it repeatedly runs the $\\ell_2$ attack and freezes the pixels that matter least, shrinking the set of modified pixels. The $\\ell_\\infty$ attack replaces the hard max (whose gradient only touches one pixel at a time) with a smoother penalty that pushes down all pixels exceeding a shrinking threshold $\\tau$."},
+            {"type": "p", "html": "Across all three metrics, the attacks find adversarial examples with distortions far smaller than previous methods such as FGSM or the earlier L-BFGS attack, often producing changes that are visually undetectable."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Breaking defensive distillation",
+          "subtitle": "0.5% becomes 100%",
+          "pdfPages": [7, 8],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Defensive distillation works by training a second network on the soft probability outputs of a first, using a high softmax temperature. This flattens the gradients an attacker sees, so gradient-based attacks struggle, the source of the celebrated drop to a 0.5% attack success rate."},
+            {"type": "p", "html": "The C&W attacks defeat this by operating on the <em>logits</em> rather than the softmax outputs, sidestepping the flattened probabilities entirely. The result is decisive: the attacks succeed <strong>100% of the time</strong> on both undistilled and distilled networks across MNIST and CIFAR, and distillation increases the required distortion only marginally."},
+            {"type": "table", "headers": ["Network", "Prior attacks", "C&W attack"], "rows": [
+              ["Undistilled", "~95% success", "100% success"],
+              ["Defensively distilled", "~0.5% success", "100% success"]
+            ]},
+            {"type": "p", "html": "The lesson generalizes beyond distillation: a defense that merely hides or flattens gradients can look extremely robust against weak attacks while offering no real protection. Honest evaluation requires attacks that adapt to the defense, a theme the obfuscated-gradients work would formalize a year later."}
+          ]
+        },
+        {
+          "title": "Why this became the benchmark",
+          "subtitle": "Strong attacks as a measuring instrument",
+          "pdfPages": [9, 10],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "h2", "text": "Lasting impact"},
+            {"type": "list", "items": [
+              "It established that minimum-distortion attacks, not one-shot attacks, are the right yardstick for robustness.",
+              "The logit-based surrogate, binary search over $c$, and tanh reparameterization became standard tools.",
+              "The confidence parameter $\\kappa$ gave a knob for trading distortion against transferability, useful for black-box attacks.",
+              "The C&W $\\ell_2$ attack became the default sanity check: a defense that does not survive it is not considered robust."
+            ]},
+            {"type": "p", "html": "By demonstrating that a celebrated defense collapsed completely under a properly designed attack, the paper changed the standard of evidence in the field. From then on, claiming robustness meant surviving strong, adaptive, optimization-based attacks, and C&W was the attack everyone reached for first."},
+            {"type": "quote", "html": "If your defense has only been tested against weak attacks, you have not tested it at all."}
+          ]
+        }
+      ]
+    }
+  ]
+}

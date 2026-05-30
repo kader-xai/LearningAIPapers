@@ -722,3 +722,153 @@ VIZ["bert-mlm"] = function (root) {
   }).join("");
 };
 
+
+
+// ============ Batch 3 visualizations ============
+// --- residual-block (ResNet) ----------------------------------------------
+VIZ["residual-block"] = function (root) {
+  let depth = 34;
+  const ui = document.createElement("div");
+  root.appendChild(ui);
+  ui.innerHTML = `
+    <div class="controls">
+      <label>plain vs residual: skip connection lets gradients flow directly</label>
+    </div>
+    <div id="rb"></div>
+    <div style="font-size:12px;color:var(--ink-dim);margin-top:8px;font-family:var(--sans);">
+      A residual block computes F(x) + x. The identity shortcut means the layer only has to learn the <i>residual</i> F(x)=H(x)−x. If the optimal map is close to identity, the block can drive F→0 easily. This is why 152-layer ResNets train where 34-layer plain nets degrade.
+    </div>`;
+  const W = 520, H = 240;
+  const svg = svgNS("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+  const defs = svgNS("defs");
+  const m = svgNS("marker", { id: "rbar", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+  m.appendChild(svgNS("path", { d: "M0,0 L10,5 L0,10 z", fill: "#9aa3b2" })); defs.appendChild(m); svg.appendChild(defs);
+  function box(x,y,w,h,t,c){ svg.appendChild(svgNS("rect",{x,y,width:w,height:h,rx:6,fill:"#1d2230",stroke:c,"stroke-width":1.3}));
+    const e=svgNS("text",{x:x+w/2,y:y+h/2+4,"text-anchor":"middle","font-size":12,fill:"#e6e8ee","font-family":"var(--sans)"});e.textContent=t;svg.appendChild(e);}
+  function arrow(x1,y1,x2,y2,c){ svg.appendChild(svgNS("line",{x1,y1,x2,y2,stroke:c||"#9aa3b2","stroke-width":1.4,"marker-end":"url(#rbar)"})); }
+  box(200,20,120,30,"x","#7aa2ff");
+  arrow(260,50,260,70);
+  box(200,70,120,34,"weight layer","#b48cff");
+  arrow(260,104,260,120);
+  box(200,120,120,34,"ReLU · weight","#b48cff");
+  arrow(260,154,260,180);
+  svg.appendChild(svgNS("circle",{cx:260,cy:192,r:14,fill:"#1d2230",stroke:"#6ad7a3"}));
+  const plus=svgNS("text",{x:260,y:197,"text-anchor":"middle","font-size":16,fill:"#6ad7a3"});plus.textContent="+";svg.appendChild(plus);
+  // skip path
+  svg.appendChild(svgNS("path",{d:"M320 35 C 410 35, 410 192, 276 192",fill:"none",stroke:"#6ad7a3","stroke-width":1.8,"marker-end":"url(#rbar)"}));
+  const sl=svgNS("text",{x:420,y:115,"text-anchor":"middle","font-size":11,fill:"#6ad7a3","font-family":"var(--sans)",transform:"rotate(90 420 115)"});sl.textContent="identity shortcut (x)";svg.appendChild(sl);
+  arrow(260,206,260,222);
+  box(200,222,120,16,"F(x) + x","#6ad7a3");
+  root.appendChild(svg);
+};
+
+// --- batchnorm-effect -----------------------------------------------------
+VIZ["batchnorm-effect"] = function (root) {
+  let gamma = 1, beta = 0;
+  const ui = document.createElement("div");
+  root.appendChild(ui);
+  ui.innerHTML = `
+    <div class="controls">
+      <label>γ (scale): <input type="range" id="bn-g" min="0.2" max="2.5" step="0.1" value="1"> <b id="bn-gv">1.0</b></label>
+      <label>β (shift): <input type="range" id="bn-b" min="-2" max="2" step="0.1" value="0"> <b id="bn-bv">0.0</b></label>
+    </div>
+    <div id="bn"></div>
+    <div style="font-size:12px;color:var(--ink-dim);margin-top:8px;font-family:var(--sans);">
+      BN normalizes each activation over the mini-batch to mean 0, variance 1, then rescales: y = γ·x̂ + β. Normalizing stabilizes the distribution each layer sees (reduces "internal covariate shift"), letting you use higher learning rates. γ, β are learned so the layer can undo normalization if needed.
+    </div>`;
+  function gauss(){const u=Math.max(Math.random(),1e-9),v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+  const raw = Array.from({length:300},()=>2.2+1.4*gauss());
+  function redraw(){
+    document.getElementById("bn-gv").textContent=gamma.toFixed(1);
+    document.getElementById("bn-bv").textContent=beta.toFixed(1);
+    const mean=raw.reduce((a,b)=>a+b,0)/raw.length;
+    const vr=raw.reduce((a,b)=>a+(b-mean)**2,0)/raw.length;
+    const norm=raw.map(x=>(x-mean)/Math.sqrt(vr+1e-5)).map(x=>gamma*x+beta);
+    const W=520,H=170;const svg=svgNS("svg",{width:W,height:H});
+    svg.appendChild(svgNS("line",{x1:20,y1:H/2,x2:W-20,y2:H/2,stroke:"#555"}));
+    function band(arr,y,c,label){arr.forEach(x=>{const px=20+((x+6)/12)*(W-40);svg.appendChild(svgNS("circle",{cx:px,cy:y,r:2.5,fill:c,opacity:0.5}));});
+      const t=svgNS("text",{x:24,y:y-20,"font-size":11,fill:c,"font-family":"var(--sans)"});t.textContent=label;svg.appendChild(t);}
+    band(raw,52,"#f0b86e","raw activations (mean≈2.2)");
+    band(norm,120,"#7aa2ff","after BN: y = γ·x̂ + β");
+    document.getElementById("bn").innerHTML="";document.getElementById("bn").appendChild(svg);
+  }
+  document.getElementById("bn-g").addEventListener("input",e=>{gamma=+e.target.value;redraw();});
+  document.getElementById("bn-b").addEventListener("input",e=>{beta=+e.target.value;redraw();});
+  redraw();
+};
+
+// --- adversarial-perturbation (FGSM) --------------------------------------
+VIZ["adversarial-perturbation"] = function (root) {
+  let eps = 0.0;
+  const ui = document.createElement("div");
+  root.appendChild(ui);
+  ui.innerHTML = `
+    <div class="controls">
+      <label>ε (perturbation budget): <input type="range" id="ap-e" min="0" max="0.3" step="0.01" value="0"> <b id="ap-ev">0.00</b></label>
+    </div>
+    <div id="ap"></div>
+    <div style="font-size:12px;color:var(--ink-dim);margin-top:8px;font-family:var(--sans);">
+      FGSM: x_adv = x + ε·sign(∇ₓ J(θ,x,y)). A tiny step in the gradient-sign direction — imperceptible to humans — can flip the classifier's prediction. As ε grows, the true-class confidence collapses and a wrong class takes over.
+    </div>`;
+  function redraw(){
+    document.getElementById("ap-ev").textContent=eps.toFixed(2);
+    // toy: true class confidence decays with eps, adversarial class rises
+    const pTrue=Math.max(0.02, 0.97 - eps*3.4);
+    const pAdv=Math.min(0.95, 0.01 + eps*3.2);
+    const pOther=Math.max(0, 1-pTrue-pAdv);
+    const W=520,H=150;const svg=svgNS("svg",{width:W,height:H});
+    const bars=[["panda (true)",pTrue,"#6ad7a3"],["gibbon (adv)",pAdv,"#ff7b9c"],["other",pOther,"#9aa3b2"]];
+    bars.forEach((b,i)=>{const y=20+i*40;
+      svg.appendChild(svgNS("rect",{x:140,y,width:(W-180)*b[1],height:24,fill:b[2],rx:4}));
+      const l=svgNS("text",{x:130,y:y+17,"text-anchor":"end","font-size":12,fill:"#e6e8ee","font-family":"var(--sans)"});l.textContent=b[0];svg.appendChild(l);
+      const v=svgNS("text",{x:148+(W-180)*b[1],y:y+17,"font-size":11,fill:"#9aa3b2","font-family":"var(--mono)"});v.textContent=(b[1]*100).toFixed(0)+"%";svg.appendChild(v);});
+    document.getElementById("ap").innerHTML="";document.getElementById("ap").appendChild(svg);
+  }
+  document.getElementById("ap-e").addEventListener("input",e=>{eps=+e.target.value;redraw();});
+  redraw();
+};
+
+// --- seq2seq-align (attention alignment matrix) ---------------------------
+VIZ["seq2seq-align"] = function (root) {
+  const src=["The","agreement","on","the","European","Economic","Area","was","signed"];
+  const tgt=["L'","accord","sur","la","zone","économique","européenne","a","été","signé"];
+  // hand-crafted plausible soft alignment (rows=target, cols=source)
+  const A=tgt.map(()=>src.map(()=>0.04));
+  function set(t,s,v){A[t][s]=v;}
+  set(0,0,.6);set(1,1,.7);set(2,2,.6);set(3,3,.5);set(4,6,.5);set(5,5,.6);set(6,4,.6);set(7,7,.6);set(8,7,.4);set(9,8,.7);
+  A.forEach((r,i)=>{const sum=r.reduce((a,b)=>a+b,0);A[i]=r.map(v=>v/sum);});
+  const ui=document.createElement("div");root.appendChild(ui);
+  ui.innerHTML=`<div id="ssa"></div>
+    <div style="font-size:12px;color:var(--ink-dim);margin-top:8px;font-family:var(--sans);">
+      Encoder–decoder attention learns a soft alignment between source and target words — without ever being told the alignment. Bright cells show which source word each generated word attends to. Note the reordering: French "zone économique européenne" maps back across the English order.
+    </div>`;
+  const cell=30,padL=110,padT=80;
+  const W=padL+src.length*cell+20,H=padT+tgt.length*cell+10;
+  const svg=svgNS("svg",{width:W,height:H});
+  src.forEach((w,j)=>{const t=svgNS("text",{x:padL+j*cell+cell/2,y:padT-8,"font-size":11,fill:"#9aa3b2","font-family":"var(--sans)",transform:`rotate(-55 ${padL+j*cell+cell/2} ${padT-8})`});t.textContent=w;svg.appendChild(t);});
+  tgt.forEach((w,i)=>{const t=svgNS("text",{x:padL-8,y:padT+i*cell+cell/2+4,"text-anchor":"end","font-size":11,fill:"#9aa3b2","font-family":"var(--sans)"});t.textContent=w;svg.appendChild(t);
+    src.forEach((_,j)=>{svg.appendChild(svgNS("rect",{x:padL+j*cell,y:padT+i*cell,width:cell-1,height:cell-1,fill:lerpColor(A[i][j]*1.6)}));});});
+  document.getElementById("ssa").appendChild(svg);
+};
+
+// --- image-translation (pix2pix / StarGAN / CycleGAN family) --------------
+VIZ["image-translation"] = function (root) {
+  const W=600,H=170;const svg=svgNS("svg",{width:W,height:H,viewBox:`0 0 ${W} ${H}`});
+  const defs=svgNS("defs");
+  const m=svgNS("marker",{id:"itar",viewBox:"0 0 10 10",refX:8,refY:5,markerWidth:6,markerHeight:6,orient:"auto-start-reverse"});
+  m.appendChild(svgNS("path",{d:"M0,0 L10,5 L0,10 z",fill:"#9aa3b2"}));defs.appendChild(m);svg.appendChild(defs);
+  function box(x,y,w,h,t,c){svg.appendChild(svgNS("rect",{x,y,width:w,height:h,rx:8,fill:"#1d2230",stroke:c,"stroke-width":1.3}));
+    t.split("\n").forEach((ln,i)=>{const e=svgNS("text",{x:x+w/2,y:y+h/2+4+i*13-(t.split("\n").length-1)*6,"text-anchor":"middle","font-size":11,fill:"#e6e8ee","font-family":"var(--sans)"});e.textContent=ln;svg.appendChild(e);});}
+  function arrow(x1,y1,x2,y2){svg.appendChild(svgNS("line",{x1,y1,x2,y2,stroke:"#9aa3b2","stroke-width":1.4,"marker-end":"url(#itar)"}));}
+  box(20,60,110,50,"input domain X\n(edges, label map)","#7aa2ff");
+  arrow(130,85,175,85);
+  box(175,60,120,50,"Generator G\n(U-Net)","#b48cff");
+  arrow(295,85,340,85);
+  box(340,60,110,50,"output domain Y\n(photo)","#6ad7a3");
+  arrow(450,85,495,85);
+  box(495,55,90,60,"Discriminator D\n(PatchGAN)\nreal? fake?","#f0b86e");
+  const cl=svgNS("text",{x:W/2,y:150,"text-anchor":"middle","font-size":11,fill:"#9aa3b2","font-family":"var(--sans)"});
+  cl.textContent="Conditional GAN: G learns X→Y; D judges (x,y) pairs. Loss = adversarial + L1 reconstruction.";
+  svg.appendChild(cl);
+  root.appendChild(svg);
+};

@@ -1,0 +1,97 @@
+{
+  "title": "SinGAN: Learning a Generative Model from a Single Natural Image",
+  "authors": "Tamar Rott Shaham, Tali Dekel, Tomer Michaeli",
+  "year": "2019",
+  "venue": "ICCV 2019 (arXiv:1905.01164)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A whole generative model from one image",
+          "subtitle": "The pitch",
+          "pdfPages": [1],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "p", "html": "Every GAN you have heard of needs a large dataset — thousands or millions of images — to learn what a 'face' or a 'bedroom' looks like. <strong>SinGAN</strong> throws that assumption out. It learns an unconditional generative model from a <em>single</em> natural image, and then can synthesize new images that look like they belong to the same scene: same textures, same objects, same global layout, but rearranged."},
+            {"type": "p", "html": "How is that even possible? The trick is to give up on modeling whole-image semantics and instead model the <strong>internal patch statistics</strong> of that one image — the distribution of small patches at multiple scales. A natural image is full of recurring local structure, and there is enough of it inside a single image to learn from."},
+            {"type": "p", "html": "The engine that makes this work is a <strong>pyramid of GANs</strong>, each operating at a different scale, trained coarse-to-fine. Once trained, the same model supports a surprising range of tasks — random sampling, super-resolution, harmonization, editing, paint-to-image, animation — all from that one training image, with no task-specific retraining."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Key idea",
+      "pages": [
+        {
+          "title": "Internal patch statistics",
+          "subtitle": "Why one image is enough",
+          "pdfPages": [1, 2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The foundational observation, long known in texture synthesis, is that natural images have strong <strong>internal statistics</strong>: small patches recur across the image, often at multiple scales. A patch of brick wall looks like other patches of brick wall; the silhouette of one mountain echoes another. So a single image already contains a rich 'dataset' of patches to learn from."},
+            {"type": "p", "html": "SinGAN learns the <em>distribution</em> of these patches. To generate a new image, it samples new patch arrangements that are individually consistent with the training image's patch statistics but globally novel — the rocks move, the clouds rearrange, a new building appears — while everything still 'reads' as the same scene."},
+            {"type": "p", "html": "The hard part is capturing both <strong>fine texture</strong> and <strong>coarse global structure</strong> at the same time. A small patch can capture texture; it cannot capture the overall layout of a whole landscape. SinGAN's answer is to handle different scales with different networks — the multi-scale pyramid."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "A coarse-to-fine pyramid of patch-GANs",
+          "subtitle": "The architecture",
+          "pdfPages": [2, 3],
+          "viz": ["gan-game"],
+          "blocks": [
+            {"type": "p", "html": "SinGAN builds an image pyramid of the single training image: $\\{x_0, x_1, \\dots, x_N\\}$, where $x_N$ is the original full resolution and $x_0$ is a heavily downsampled, tiny version. It then trains a separate generator–discriminator pair $\\{G_n, D_n\\}$ at each level, each a small fully-convolutional <strong>patch</strong> network with a fixed, small receptive field."},
+            {"type": "p", "html": "Here is the elegant part: because the receptive field is fixed in pixels, at the <em>coarse</em> levels a patch spans a large fraction of the (tiny) image — so $G_0$ learns the <strong>global layout</strong>. At the <em>fine</em> levels the same-size patch covers only a sliver — so the higher generators learn <strong>fine texture and detail</strong>. One mechanism, different responsibilities per scale, simply because the image shrinks."},
+            {"type": "p", "html": "Generation flows top-down. The coarsest generator turns pure noise into a small image that captures the global arrangement. Each finer generator takes the upsampled output of the level below, adds its own injected noise, and predicts only the <em>residual detail</em> to add — it refines rather than redraws."},
+            {"type": "math", "tex": "\\tilde{x}_n = G_n\\big(z_n,\\; (\\tilde{x}_{n+1})\\!\\uparrow\\big) = (\\tilde{x}_{n+1})\\!\\uparrow + \\psi_n\\big(z_n + (\\tilde{x}_{n+1})\\!\\uparrow\\big)"},
+            {"type": "p", "html": "Read it as: the output at level $n$ equals the upsampled coarser image plus a learned residual. $(\\tilde{x}_{n+1})\\!\\uparrow$ is the previous (coarser) result upsampled; $z_n$ is fresh noise injected at this scale to create variation; $\\psi_n$ is the convolutional net that predicts what fine detail to add. By only learning residuals, each generator has an easy, well-scoped job."}
+          ]
+        },
+        {
+          "title": "Training the pyramid",
+          "subtitle": "Adversarial + reconstruction, one level at a time",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The pyramid is trained <strong>sequentially, coarse to fine</strong>. Level 0 is trained first; once done, its weights are frozen and level 1 trains on top of it, and so on. Each level's discriminator $D_n$ is itself a patch discriminator (a Markovian / PatchGAN-style critic) that learns to tell whether the <em>patches</em> at that scale match the patch statistics of the real image $x_n$ at that scale."},
+            {"type": "math", "tex": "\\min_{G_n} \\max_{D_n} \\; \\mathcal{L}_{adv}(G_n, D_n) + \\alpha\\, \\mathcal{L}_{rec}(G_n)"},
+            {"type": "p", "html": "Two terms. The <strong>adversarial loss</strong> $\\mathcal{L}_{adv}$ (a WGAN-GP loss over patches) pushes generated patches to be indistinguishable from real patches at that scale — this is what enables diversity. The <strong>reconstruction loss</strong> $\\mathcal{L}_{rec}$ is the safety anchor: it requires that one specific, fixed set of noise inputs reproduces the original training image exactly. Without it the model can drift; with it there is always a guaranteed path back to the real image, which also fixes the noise amplitude at each scale."},
+            {"type": "p", "html": "At test time you choose where in the pyramid to start injecting random noise. Inject noise from the <strong>coarsest</strong> level and you get large structural variation — wholly new arrangements. Inject only from a <strong>finer</strong> level (and feed the original image's coarse content) and you preserve the global layout while varying only texture. This single knob — the starting scale — is what lets one trained model serve so many applications."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Applications",
+      "pages": [
+        {
+          "title": "One model, many tasks",
+          "subtitle": "What the pyramid unlocks",
+          "pdfPages": [4, 5],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Because generation just means 'start the pyramid from some scale with some input,' a single trained SinGAN handles many tasks with no retraining — you only change what you feed in and at which level:"},
+            {"type": "list", "items": ["<strong>Random sampling</strong>: start from pure noise at the coarsest scale → diverse new images of the same scene, at arbitrary sizes and aspect ratios.", "<strong>Super-resolution</strong>: repeatedly apply the finest generator to an upsampled input, adding plausible high-frequency detail each pass.", "<strong>Harmonization</strong>: paste an object into the scene, then inject it at a fine scale so SinGAN restyles its texture to match the background.", "<strong>Editing</strong>: cut, move, or copy regions, then run the pyramid from a coarse-enough scale to seamlessly stitch the edit into consistent texture.", "<strong>Paint-to-image</strong>: feed a rough colour sketch at a coarse scale → a realistic image matching the painting's layout.", "<strong>Single-image animation</strong>: take a random walk in the noise space to produce a short looping video from one still."]},
+            {"type": "p", "html": "The unifying point: all of these are the <em>same</em> generative process, differing only in the injection scale and the initial input. SinGAN never learned any of these tasks specifically — they fall out of modeling the image's internal patch distribution."}
+          ]
+        },
+        {
+          "title": "Does it actually fool people?",
+          "subtitle": "Evaluation and takeaways",
+          "pdfPages": [5, 6],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "SinGAN is evaluated with a <strong>real-vs-fake user study</strong> on Amazon Mechanical Turk and with a <strong>single-image FID (SIFID)</strong>, a variant of the Fréchet Inception Distance adapted to compare the internal patch-feature statistics of two single images rather than two datasets."},
+            {"type": "p", "html": "In the perceptual study, generated images fooled human observers a substantial fraction of the time — confusion rates that climbed further when generation started from coarser scales (more global change but still plausible). SIFID confirmed that finer starting scales stay closer to the original's statistics while coarser ones trade fidelity for diversity, matching the intuition exactly."},
+            {"type": "list", "items": ["A single image contains enough recurring patch structure to train a real generative model — no dataset required.", "A coarse-to-fine pyramid of small patch-GANs lets one fixed-size receptive field capture global layout at coarse scales and fine texture at fine scales.", "Each generator learns only a residual on top of the upsampled coarser result, making each level's job simple and stable.", "A reconstruction loss anchors the model to the real image and fixes per-scale noise amplitude; the adversarial loss supplies diversity.", "The choice of injection scale is a single knob trading global novelty against fidelity — and it is what makes one model serve sampling, editing, harmonization, super-resolution, and animation."]}
+          ]
+        }
+      ]
+    }
+  ]
+}

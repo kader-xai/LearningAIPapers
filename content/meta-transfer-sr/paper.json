@@ -1,0 +1,92 @@
+{
+  "title": "Meta-Transfer Learning for Zero-Shot Super-Resolution",
+  "authors": "Jae Woong Soh, Sunwoo Cho, Nam Ik Cho",
+  "year": "2020",
+  "venue": "CVPR 2020 (arXiv:2002.12213)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Super-resolution that adapts at test time",
+          "subtitle": "The pitch",
+          "pdfPages": [1],
+          "blocks": [
+            {"type": "p", "html": "Deep super-resolution (SR) networks are trained on huge datasets of low-resolution / high-resolution pairs — but those pairs are almost always created with one assumption: the low-res image came from <strong>bicubic downsampling</strong>. Real photos are blurred, compressed, and noisy in unknown ways. When the actual degradation differs from bicubic, these big networks collapse, sometimes performing worse than simple interpolation."},
+            {"type": "p", "html": "One fix already existed: <strong>Zero-Shot SR (ZSSR)</strong> trains a tiny CNN from scratch on <em>just the test image</em> at run time, exploiting an image's internal patch recurrence so it adapts to that image's specific degradation. The catch — starting from random weights means thousands of gradient steps per image, which is slow."},
+            {"type": "p", "html": "This paper, <strong>MZSR</strong>, asks: what if we could keep ZSSR's adaptability but reach it in just a handful of gradient steps? The answer combines <strong>transfer learning</strong> (pre-train on bicubic data for a strong base) with <strong>meta-learning</strong> (MAML) so the network learns an initialization that is primed to adapt fast to <em>any</em> degradation. At test time, one to ten gradient steps on the single test image is enough."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "The degradation mismatch problem",
+          "subtitle": "Why big SR networks are brittle",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {"type": "p", "html": "An SR model implicitly learns to invert a specific degradation. Formally the low-res image is modeled as $y = (x \\otimes k)\\!\\downarrow_s + n$ — the high-res $x$ blurred by a kernel $k$, downsampled by factor $s$, plus noise $n$. Train on bicubic-only data and the network only learns to invert the bicubic kernel."},
+            {"type": "p", "html": "Feed it a real image whose true kernel $k$ is different — a different blur, some noise — and the learned inverse is simply wrong. The model confidently produces artifacts. This is the central fragility of supervised SR: it is excellent on its training distribution and unreliable off it, and the real world is always off it."},
+            {"type": "p", "html": "ZSSR's insight is that the test image itself is the best training data: its patches recur across scales, so you can build internal LR/HR example pairs <em>from that one image</em> using its own (estimated) degradation, then train a small network to match. That makes it robust to whatever the real kernel is — but training from scratch per image is the expensive part MZSR wants to eliminate."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Three stages: large-scale, meta-transfer, meta-test",
+          "subtitle": "Overview",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {"type": "p", "html": "MZSR has three phases. <strong>(1) Large-scale training</strong>: pre-train the SR network on a big external dataset with the standard bicubic degradation. This gives strong, general low-level image features — the transfer-learning part, a good starting point that isn't wasted."},
+            {"type": "p", "html": "<strong>(2) Meta-transfer learning</strong>: now use MAML to learn an <em>initialization</em> that can adapt quickly to many different degradation kernels. Instead of optimizing the weights to be good at one task, optimize them to be a good <em>launch point</em> for fast adaptation to <em>any</em> task. <strong>(3) Meta-test</strong>: at inference, take the test image, generate internal training pairs from it, and run just a few gradient steps from the meta-learned initialization."},
+            {"type": "p", "html": "The mental model: stage 1 builds general competence, stage 2 builds <em>adaptability</em>, stage 3 spends that adaptability on the one image in front of you. The first two happen once, offline; only the cheap third stage runs per image."}
+          ]
+        },
+        {
+          "title": "Meta-train: learning to adapt (MAML)",
+          "subtitle": "The bi-level objective",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type": "p", "html": "MAML treats each degradation kernel as a separate <em>task</em>. For task $\\mathcal{T}_i$ you have a small support set and a query set. The inner loop simulates test-time adaptation: starting from shared weights $\\theta$, take a few gradient steps on the support set to get task-adapted weights $\\theta_i'$."},
+            {"type": "math", "tex": "\\theta_i' = \\theta - \\alpha \\nabla_{\\theta}\\, \\mathcal{L}_{\\mathcal{T}_i}^{tr}(\\theta)"},
+            {"type": "p", "html": "Read it as: from the shared start $\\theta$, descend one (or a few) steps with learning rate $\\alpha$ on task $i$'s training loss. This $\\theta_i'$ is what the network <em>would</em> become after fast adaptation to that degradation."},
+            {"type": "p", "html": "The outer loop is the clever bit. We don't keep $\\theta_i'$ — we ask: <em>after</em> adapting, how well does each task do on its held-out query data? Then we update the original $\\theta$ to make that post-adaptation performance good, averaged over many tasks."},
+            {"type": "math", "tex": "\\theta \\leftarrow \\theta - \\beta \\nabla_{\\theta} \\sum_{\\mathcal{T}_i} \\mathcal{L}_{\\mathcal{T}_i}^{test}\\big(\\theta_i'\\big)"},
+            {"type": "p", "html": "Read it as: nudge the shared initialization $\\theta$ so that, across all sampled degradation tasks, a few steps of adaptation lands in a good place. Note the gradient is taken <em>through</em> the inner-loop update — we are optimizing the starting point for its <em>adaptability</em>, not its raw accuracy. The tasks are generated by sampling many different blur kernels, so $\\theta$ learns to be one step away from handling any of them."}
+          ]
+        },
+        {
+          "title": "Meta-test: a few steps on the test image",
+          "subtitle": "Zero-shot adaptation",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "At inference there is no external ground truth — just the single low-res input. Like ZSSR, MZSR builds its own training pairs <em>from that image</em>: it takes the test image as a pseudo-HR target and downsamples it (using the estimated degradation kernel) to make a matching pseudo-LR input. That self-supervised pair teaches the network this image's specific degradation."},
+            {"type": "p", "html": "Starting from the meta-learned initialization $\\theta$, MZSR takes only a <strong>few</strong> gradient steps on this single pair — the paper highlights settings as small as <strong>one step</strong>, and typically up to about ten. Because $\\theta$ was explicitly optimized to be one short hop from any degradation, those few steps are enough to specialize the network to the actual image."},
+            {"type": "p", "html": "Contrast with ZSSR, which starts from random weights and needs thousands of iterations per image. Same zero-shot, per-image adaptability — but orders of magnitude faster, because meta-learning pre-positioned the starting point."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Fast, and robust to unknown degradations",
+          "subtitle": "Numbers and takeaways",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type": "p", "html": "Across non-bicubic degradations (various blur kernels), MZSR substantially outperforms big bicubic-trained networks — which degrade badly off-distribution — and matches or beats ZSSR while using a tiny fraction of the gradient updates. The benefit shows up most strongly exactly where supervised SR fails: when the real kernel is not the training kernel."},
+            {"type": "table", "headers": ["Method", "Adapts to unknown kernel?", "Per-image cost"], "rows": [["Bicubic-trained CNN", "No — brittle off-distribution", "0 steps (but wrong)"], ["ZSSR (from scratch)", "Yes", "~thousands of steps"], ["MZSR (this paper)", "Yes", "~1–10 steps"]]},
+            {"type": "p", "html": "On standard kernel-mismatch benchmarks MZSR reports PSNR gains of roughly 1–4 dB over bicubic-trained baselines depending on the degradation, while needing only a handful of adaptation steps — often delivering comparable or better quality than ZSSR in a single step."},
+            {"type": "list", "items": ["Supervised SR networks are brittle: they invert only the degradation they trained on, and real images differ.", "Zero-shot SR fixes robustness by training on the test image itself, but is slow from a cold start.", "MZSR meta-learns an <em>initialization</em> (MAML) so that adaptation to any degradation takes just a few gradient steps.", "Transfer learning (bicubic pre-training) supplies a strong feature base; meta-learning supplies adaptability; meta-test spends it on one image.", "Net result: ZSSR-level robustness to unknown degradations at a fraction of the test-time cost — sometimes a single gradient step."]}
+          ]
+        }
+      ]
+    }
+  ]
+}

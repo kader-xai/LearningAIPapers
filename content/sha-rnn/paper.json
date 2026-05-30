@@ -1,0 +1,160 @@
+{
+  "title": "Single Headed Attention RNN: Stop Thinking With Your Head",
+  "authors": "Stephen Merity",
+  "year": "2019",
+  "venue": "arXiv preprint",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The big idea",
+          "subtitle": "A one-person, one-GPU rebellion against scale",
+          "pdfPages": [1],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2019 the field had decided that progress in language modeling meant Transformers with many attention heads, billions of parameters, and clusters of GPUs. Stephen Merity &mdash; writing alone, with a famously irreverent voice &mdash; pushes back. His thesis: maybe we reached for all that machinery before checking whether we actually needed it."
+            },
+            {
+              "type": "p",
+              "html": "His counter-proposal is the <strong>SHA-RNN</strong>: a Single Headed Attention RNN. Take a strong LSTM backbone, bolt on a <em>single</em> attention head (not eight, not sixteen), add a deliberately simple feed-forward block he calls the &lsquo;Boom&rsquo; layer, and train the whole thing on <strong>one GPU</strong> in about a day."
+            },
+            {
+              "type": "quote",
+              "html": "The SHA-RNN reaches strong byte-level results on the enwik8 benchmark &mdash; competitive with far larger, multi-head Transformer models &mdash; while being something a single researcher can actually train and tinker with."
+            },
+            {
+              "type": "p",
+              "html": "The paper is half serious model and half manifesto. The wit is the point: Merity is arguing, with jokes about Sesame-Street model names and tokenizers, that the community's reflex to throw compute at every problem deserves more scrutiny."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Argument",
+      "pages": [
+        {
+          "title": "Against scale-maximalism",
+          "subtitle": "Did we need all those heads?",
+          "pdfPages": [1, 2],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The central worry is methodological. When a bigger model trained on more compute beats a smaller one, it is tempting to credit the architecture &mdash; the many heads, the clever attention variant &mdash; when the real cause may simply be <strong>scale</strong>. If you never run the small, careful baseline, you cannot tell which it was."
+            },
+            {
+              "type": "p",
+              "html": "Merity's response is to <em>be</em> that baseline. By deliberately constraining himself to a single GPU and a single attention head, he asks: how far can an old-fashioned LSTM, modestly augmented, actually get? If the answer is &lsquo;surprisingly far,&rsquo; then much of the field's complexity may be optional."
+            },
+            {
+              "type": "p",
+              "html": "There is also an accessibility argument woven through the wit. Research that requires a data center excludes nearly everyone. A model one person can train overnight keeps the field <strong>open to individuals</strong> &mdash; and that, Merity argues, is worth defending."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Model",
+      "pages": [
+        {
+          "title": "The SHA-RNN block",
+          "subtitle": "LSTM, one attention head, and a Boom",
+          "pdfPages": [4],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Each SHA-RNN layer is built from three pieces stacked together, with layer normalization holding them steady:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<strong>An LSTM</strong> as the recurrent backbone &mdash; the workhorse that carries state across the sequence, doing most of the heavy lifting.",
+                "<strong>A single attention head</strong> that lets the current position reach back into a memory of past states, retrieving relevant context without the cost of multi-head machinery.",
+                "<strong>A Boom feed-forward layer</strong> &mdash; Merity's deliberately cheap stand-in for the Transformer's large feed-forward block."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The bet is that an LSTM already captures most of what recurrence needs, so attention can be a <em>lightweight assistant</em> rather than the entire model. One head is enough when the recurrent state is doing the rest of the work."
+            }
+          ]
+        },
+        {
+          "title": "The Boom layer",
+          "subtitle": "Expand, then add the pieces back up",
+          "pdfPages": [4, 5],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A standard Transformer feed-forward block expands a vector of size $H$ up to a much larger size (say $4H$) with one matrix and projects it back down with a second, separate matrix &mdash; two big weight matrices. Merity's &lsquo;Boom&rsquo; layer keeps the expansion but throws away the second matrix."
+            },
+            {
+              "type": "p",
+              "html": "It projects $H$ up to a vector of size $N \\\\cdot H$, then simply <strong>chops that into $N$ chunks and sums them</strong> to get back to size $H$. The &lsquo;boom&rsquo; is the explosive expansion; the collapse is free, just an addition:"
+            },
+            {
+              "type": "math",
+              "tex": "\\\\mathbf{v} \\\\in \\\\mathbb{R}^{H} \\\\;\\\\rightarrow\\\\; \\\\mathbf{u} \\\\in \\\\mathbb{R}^{N \\\\cdot H} \\\\;\\\\rightarrow\\\\; \\\\mathbf{w} = \\\\sum_{i=1}^{N} \\\\mathbf{u}_i,\\\\quad \\\\mathbf{u}_i \\\\in \\\\mathbb{R}^{H}"
+            },
+            {
+              "type": "p",
+              "html": "Read this as: expand to a big vector, slice it into $N$ equal blocks, and add the blocks together. Because there is no second weight matrix for the down-projection, the Boom layer uses roughly half the parameters and compute of the usual feed-forward block &mdash; a small, slightly cheeky efficiency win that is very much in the spirit of the paper."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Competitive on enwik8, on one GPU",
+          "subtitle": "Bits-per-character without a data center",
+          "pdfPages": [5],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The benchmark is <strong>enwik8</strong>: model the first 100 million bytes of Wikipedia at the <em>byte</em> level, scored in <strong>bits-per-character</strong> (bpc) &mdash; lower is better. Byte-level modeling sidesteps tokenizer choices entirely, which Merity, no fan of tokenizers, clearly enjoys."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "bpc", "Notes"],
+              "rows": [
+                ["SHA-RNN", "around 1.07", "approx. 52M params, single GPU, about a day"],
+                ["Large multi-head Transformers", "comparable range", "far more compute / parameters"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The headline is not that the SHA-RNN <em>wins</em> &mdash; it is that it lands in the same neighborhood as much heavier models while being trainable on hardware a single researcher owns. With one attention head and a humble LSTM, it gets most of the way there. That is the whole argument made concrete."
+            }
+          ]
+        },
+        {
+          "title": "Why this paper matters",
+          "subtitle": "A useful, funny dissent",
+          "pdfPages": [1],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "History went the other way: scale kept paying off, and Transformers won. But the SHA-RNN remains a valuable check on the field's instincts. It is a reminder to <strong>run the careful small baseline</strong> before crediting an architecture, and to ask whether complexity is doing real work or just riding along with compute."
+            },
+            {
+              "type": "p",
+              "html": "Its tone matters too. By making the case with humor &mdash; mocking model-naming fads, tokenizers, and compute-bragging &mdash; Merity made an efficiency-and-accessibility argument that people actually read and remembered. In an era of ever-larger models, the SHA-RNN is the field's most quotable footnote: a one-person, one-GPU model that asked everyone to <strong>stop thinking with their heads</strong>."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

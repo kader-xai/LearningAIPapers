@@ -1,0 +1,101 @@
+{
+  "title": "HopSkipJumpAttack: A Query-Efficient Decision-Based Attack",
+  "authors": "Jianbo Chen, Michael I. Jordan, Martin J. Wainwright",
+  "year": "2020",
+  "venue": "IEEE Symposium on Security and Privacy (S&P) 2020 (arXiv:1904.02144)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Estimate the gradient where it matters: at the boundary",
+          "subtitle": "The HopSkipJump idea in one sentence",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "HopSkipJumpAttack (HSJA) attacks the same hard-label problem but with a sharper geometric tool. Rather than optimizing a direction in a separate space, it estimates the <strong>direction of the gradient of the model's decision function right at the boundary</strong> using Monte-Carlo sampling, then combines that with a carefully sized geometric step and a binary search back to the boundary. The result was state-of-the-art query efficiency."}
+          ]
+        },
+        {
+          "title": "The hard-label setting once more",
+          "subtitle": "Labels only, judged by queries",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "As with the rest of this family, HSJA operates in the <strong>hard-label / decision-based</strong> threat model: the attacker sees only the <em>final predicted label</em> for each query &mdash; no probabilities, no gradients &mdash; and is measured by <strong>queries-to-success</strong>, the number of model evaluations needed to reach a small perturbation norm. HSJA supports both $\\ell_2$ and $\\ell_\\infty$ versions."},
+            {"type": "p", "html": "The classifier is summarized by a decision function $S(x)$ that is positive on the adversarial side and negative on the correct side; the boundary is where $S(x) = 0$. We can only observe the <em>sign</em> of $S$ &mdash; that is exactly the hard label &mdash; not its value."},
+            {"type": "quote", "html": "The whole attack is a loop: find the gradient direction at the boundary, jump along it, then hop back onto the boundary."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Three Moves: Hop, Skip, Jump",
+      "pages": [
+        {
+          "title": "Monte-Carlo gradient-direction estimation",
+          "subtitle": "Reading the boundary's tilt from sign votes",
+          "pdfPages": [5],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Standing on a point $x_t$ that sits on the decision boundary, HSJA estimates which way the boundary is tilted &mdash; the gradient direction of $S$ &mdash; by sampling many small random perturbations and asking the label oracle, for each, which side of the boundary it landed on. Perturbations that land adversarial pull the estimate one way; those that do not pull it the other. The average is a Monte-Carlo estimate of the gradient direction."},
+            {"type": "math", "tex": "\\widehat{\\nabla S}(x_t) \\approx \\frac{1}{B}\\sum_{b=1}^{B} \\phi(x_t + \\delta u_b)\\, u_b, \\qquad \\phi(z) = \\begin{cases} +1 & \\text{if } z \\text{ is adversarial} \\\\ -1 & \\text{otherwise}\\end{cases}"},
+            {"type": "p", "html": "Read: draw $B$ random unit directions $u_b$, probe a tiny step $\\delta$ along each, and let each vote $\\pm 1$ depending on whether that probe is adversarial; the weighted average points along the boundary's normal. The authors show this estimator is <em>asymptotically unbiased</em> for the true gradient direction at the boundary &mdash; which is why estimating <em>at</em> the boundary, not far from it, matters so much."}
+          ]
+        },
+        {
+          "title": "Jump along the estimated direction",
+          "subtitle": "Geometric step sizing",
+          "pdfPages": [6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "With the gradient direction in hand, HSJA takes a step in that direction to decrease the distance to the original image. The step size is set by a <strong>geometric progression</strong>: try a step, and if it overshoots off the adversarial region, shrink it geometrically until it succeeds. This decaying schedule (scaled by the current distance and iteration count) keeps moves large early for fast progress and small late for fine refinement."},
+            {"type": "math", "tex": "\\xi_t = \\frac{\\lVert x_t - x_0 \\rVert_2}{\\sqrt{t}}"},
+            {"type": "p", "html": "Read: the base step length shrinks like one over the square root of the iteration and is proportional to how far we still are from the original, so steps automatically taper as the attack converges &mdash; a principled schedule rather than hand-tuned constants."}
+          ]
+        },
+        {
+          "title": "Hop back to the boundary",
+          "subtitle": "Binary search closes the loop",
+          "pdfPages": [6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "After jumping, the point is generally no longer exactly on the boundary &mdash; it has moved into the interior. A <strong>binary search</strong> along the line between the moved point and the original snaps it back to the boundary, so the next gradient estimate is again taken right where it is unbiased. This is the move that gives the method its rhythm: hop (gradient estimate) &rarr; skip/jump (geometric step) &rarr; back to the boundary, repeat."},
+            {"type": "list", "items": [
+              "Hop: Monte-Carlo estimate of the gradient direction at the current boundary point.",
+              "Jump: step along that direction with geometrically decaying size to reduce distance.",
+              "Land back: binary search to return precisely to the boundary before the next iteration."
+            ]},
+            {"type": "quote", "html": "Always estimate the gradient exactly on the boundary, because that is the only place the sign-based estimator is unbiased; the binary search exists to keep returning you there."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Significance",
+      "pages": [
+        {
+          "title": "State-of-the-art query efficiency",
+          "subtitle": "HSJA versus Boundary Attack and OPT",
+          "pdfPages": [6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "HopSkipJump reaches comparable or smaller perturbations with substantially fewer queries than the Boundary Attack and OPT &mdash; often an order of magnitude fewer in low-query regimes &mdash; across MNIST, CIFAR-10, CIFAR-100, and ImageNet, in both $\\ell_2$ and $\\ell_\\infty$ norms, for untargeted and targeted attacks. The gains come from spending queries on an (asymptotically) unbiased gradient direction instead of a random walk, and from the principled step-size schedule."},
+            {"type": "p", "html": "The authors also study HSJA against several defenses (defensive distillation, region-based classification, adversarial training), showing the attack remains effective and is a strong tool for evaluating robustness &mdash; an attacker that needs only labels is hard to hide from."}
+          ]
+        },
+        {
+          "title": "Why this paper mattered",
+          "subtitle": "Closing the gap to white-box attacks",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "HopSkipJump pushed hard-label attacks to a level of query efficiency that made them a practical benchmark for robustness evaluation. Its theoretical contribution &mdash; an unbiased boundary gradient-direction estimator plus convergence analysis &mdash; gave the geometric intuition a firm footing."},
+            {"type": "p", "html": "Seen against its siblings: the Boundary Attack random-walks the boundary; OPT optimizes a direction by binary-search distance; Sign-OPT cheapens that with sign tests; HopSkipJump estimates the gradient direction directly at the boundary and pairs it with geometric step sizing. The arc of the whole family is a steady march toward extracting maximum information per label query."},
+            {"type": "quote", "html": "HopSkipJump: Monte-Carlo gradient-direction estimation <em>at</em> the boundary, plus geometric step sizing and binary-search re-projection &mdash; yielding state-of-the-art query efficiency in the hard-label setting."}
+          ]
+        }
+      ]
+    }
+  ]
+}

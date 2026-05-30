@@ -1,0 +1,162 @@
+{
+  "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift",
+  "authors": "Sergey Ioffe, Christian Szegedy",
+  "year": "2015",
+  "venue": "ICML 2015 (arXiv:1502.03167)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The training problem this paper attacks",
+          "subtitle": "Why deep networks were so painful to train",
+          "pdfPages": [1],
+          "viz": ["batchnorm-effect"],
+          "blocks": [
+            {"type": "p", "html": "Training a deep network is complicated by a simple fact: when you change the weights of one layer, the distribution of inputs to every layer above it changes too. Each layer is forced to continuously re-adapt to a moving target. The authors name this phenomenon <strong>internal covariate shift</strong> &mdash; the change in the distribution of a layer's inputs caused by updates to the parameters of the layers below it during training."},
+            {"type": "p", "html": "This shifting forces practitioners to use small learning rates and to be careful with parameter initialization, because a single large step can push some activations into saturated regions of nonlinearities (think of the flat tails of a sigmoid, where gradients vanish). The result is slow, fragile training that scales badly with depth."},
+            {"type": "p", "html": "Batch Normalization (BatchNorm) is a layer you insert into the network that normalizes the activations of each layer for every mini-batch, keeping their distribution stable throughout training. The payoff is dramatic: networks train with much higher learning rates, are far less sensitive to initialization, and BatchNorm itself acts as a regularizer that often removes the need for Dropout."},
+            {"type": "quote", "html": "Applied to a state-of-the-art image classification model, Batch Normalization achieves the same accuracy with 14 times fewer training steps, and beats the original model by a significant margin."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Idea",
+      "pages": [
+        {
+          "title": "Why normalizing inputs helps &mdash; and why we want it at every layer",
+          "subtitle": "Whitening is good; doing it naively is not",
+          "pdfPages": [2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "It has long been known that networks train faster when their <em>inputs</em> are whitened: linearly transformed to have zero mean and unit variance, and decorrelated. The intuition is that gradient descent works best when the loss surface is well-conditioned, and normalized inputs make it more spherical rather than a stretched, narrow valley."},
+            {"type": "p", "html": "If whitening the network's input helps, the authors reasoned, why not whiten the input to <em>every</em> internal layer? Each layer would then always see a stable, well-behaved distribution, no matter how the layers below it evolve."},
+            {"type": "p", "html": "But naive whitening inside the network is dangerous. If you simply subtract the mean of an activation as a separate step <em>outside</em> the gradient computation, the optimization can fight back: the bias term keeps growing while the normalization keeps subtracting it off, so the loss never improves even as parameters drift to infinity. The lesson is that the normalization must be part of the model &mdash; the gradient must flow <em>through</em> it."},
+            {"type": "p", "html": "Full whitening (decorrelating all activations via the covariance matrix) is also far too expensive: it requires computing a covariance matrix and its inverse square root, and differentiating through them. The authors make two simplifications that turn the idea into something practical."}
+          ]
+        },
+        {
+          "title": "Two simplifications that make it practical",
+          "subtitle": "Normalize each feature alone, over the mini-batch",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "<strong>Simplification 1: normalize each scalar feature independently.</strong> Instead of jointly whitening the whole activation vector, BatchNorm normalizes each dimension (each feature/channel) on its own to zero mean and unit variance. This drops the expensive covariance step and is good enough in practice."},
+            {"type": "p", "html": "<strong>Simplification 2: estimate the statistics from the current mini-batch.</strong> Rather than using the whole training set, BatchNorm computes the mean and variance of each feature over the examples in the current mini-batch. This makes the statistics cheap, and crucially makes them differentiable with respect to the layer's parameters, so the gradient flows through the normalization."},
+            {"type": "p", "html": "These two choices are exactly what makes BatchNorm efficient and trainable. The price is that the layer's behavior now depends on the whole mini-batch, not just a single example &mdash; a subtlety that matters at inference time, as we will see."}
+          ]
+        },
+        {
+          "title": "The normalization equations",
+          "subtitle": "Mean, variance, normalize, scale-and-shift",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Consider one feature over a mini-batch of <em>m</em> examples, with values $x_1, \\dots, x_m$. First compute the mini-batch mean:"},
+            {"type": "math", "tex": "\\mu_B = \\frac{1}{m} \\sum_{i=1}^{m} x_i"},
+            {"type": "p", "html": "Read this as: the average of the feature across the batch. Then the mini-batch variance:"},
+            {"type": "math", "tex": "\\sigma_B^2 = \\frac{1}{m} \\sum_{i=1}^{m} (x_i - \\mu_B)^2"},
+            {"type": "p", "html": "Read this as: the average squared distance of each value from the batch mean. Now normalize each value to zero mean and unit variance, with a tiny $\\epsilon$ added for numerical stability so we never divide by zero:"},
+            {"type": "math", "tex": "\\hat{x}_i = \\frac{x_i - \\mu_B}{\\sqrt{\\sigma_B^2 + \\epsilon}}"},
+            {"type": "p", "html": "Read this as: subtract the mean, divide by the standard deviation. At this point every feature has a fixed, standardized distribution &mdash; but that might be too restrictive."}
+          ]
+        },
+        {
+          "title": "The scale-and-shift: $y = \\gamma\\hat{x} + \\beta$",
+          "subtitle": "Why forcing zero-mean/unit-variance is not enough",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Forcing every layer's inputs to be exactly zero-mean and unit-variance can <em>hurt</em>. For example, normalizing the input to a sigmoid would constrain it to the near-linear region around zero, throwing away the nonlinearity. The layer should be free to undo the normalization if that is what is best."},
+            {"type": "p", "html": "So BatchNorm adds two <strong>learnable parameters per feature</strong>, a scale $\\gamma$ and a shift $\\beta$, and produces:"},
+            {"type": "math", "tex": "y_i = \\gamma \\, \\hat{x}_i + \\beta"},
+            {"type": "p", "html": "Read this as: take the normalized value, stretch it by $\\gamma$, then move it by $\\beta$. These parameters are learned by backpropagation alongside the weights."},
+            {"type": "p", "html": "The key insight: by setting $\\gamma = \\sqrt{\\sigma_B^2 + \\epsilon}$ and $\\beta = \\mu_B$, the layer can recover the original activations exactly. BatchNorm therefore never reduces what the network can represent &mdash; it only gives optimization a much easier starting point, while letting the network choose the best mean and scale for each feature."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training vs. Inference",
+      "pages": [
+        {
+          "title": "Backprop flows through the statistics",
+          "subtitle": "Normalization is part of the graph, not a side effect",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Because $\\mu_B$ and $\\sigma_B^2$ are computed from the batch, the gradient of the loss must be propagated through them, not just through $\\hat{x}$. The paper gives the full chain rule: gradients flow back to the inputs $x_i$ via three paths &mdash; directly through $\\hat{x}_i$, through the shared mean $\\mu_B$, and through the shared variance $\\sigma_B^2$."},
+            {"type": "p", "html": "This is exactly the fix for the failed naive approach: since normalization lives inside the computational graph, the optimizer can no longer 'cheat' by inflating a bias that the normalization would otherwise silently cancel. The transformation is differentiable end-to-end, so BatchNorm composes cleanly with everything else."},
+            {"type": "list", "items": [
+              "During training, each example's output depends on the other examples in its mini-batch (through the shared mean and variance).",
+              "This batch-dependence is the source of BatchNorm's regularizing noise, but it is unacceptable at inference time, where outputs must depend only on the single input."
+            ]}
+          ]
+        },
+        {
+          "title": "Inference: swap batch stats for running averages",
+          "subtitle": "Making the output deterministic per example",
+          "pdfPages": [4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "At inference, BatchNorm uses fixed population statistics &mdash; running averages of the mean and variance collected during training &mdash; so it collapses into a single deterministic affine transform of each input:"},
+            {"type": "math", "tex": "y = \\frac{\\gamma}{\\sqrt{\\mathrm{Var}[x] + \\epsilon}} \\, x + \\left( \\beta - \\frac{\\gamma \\, \\mathrm{E}[x]}{\\sqrt{\\mathrm{Var}[x] + \\epsilon}} \\right)"}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Why It Works & Results",
+      "pages": [
+        {
+          "title": "Higher learning rates and built-in regularization",
+          "subtitle": "The practical superpowers BatchNorm unlocks",
+          "pdfPages": [4],
+          "viz": ["batchnorm-effect"],
+          "blocks": [
+            {"type": "p", "html": "<strong>Higher learning rates.</strong> Without BatchNorm, a large learning rate can blow up activations or push them into saturation, where gradients die. By rescaling activations to a stable range at every layer, BatchNorm makes training robust to large steps. It also tames the effect of weight scale: scaling a layer's weights by a constant leaves the BatchNorm output unchanged, so larger weights actually produce <em>smaller</em> gradients, an automatic stabilizer."},
+            {"type": "p", "html": "<strong>Regularization.</strong> Because each example is normalized using statistics from its random mini-batch, its representation is jittered slightly depending on which other examples it is grouped with. This injected noise discourages the network from relying too heavily on any single activation, much like Dropout. In their experiments the authors were able to remove or greatly reduce Dropout when using BatchNorm."},
+            {"type": "p", "html": "<strong>Less sensitivity to initialization.</strong> Since each layer's input distribution is kept in check regardless of the scale of the weights below, careful initialization schemes become much less critical."}
+          ]
+        },
+        {
+          "title": "ImageNet results: same accuracy, 14x fewer steps",
+          "subtitle": "BatchNorm on Inception",
+          "pdfPages": [7],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The authors applied BatchNorm to a strong Inception image-classification network and trained variants that exploited its stability (higher learning rate, no Dropout, etc.). The headline results on ImageNet classification:"},
+            {"type": "table", "headers": ["Model", "Steps to match baseline", "Notes"], "rows": [
+              ["Inception (baseline)", "1.00x (reference)", "max accuracy 72.2%"],
+              ["BN-Baseline", "fewer steps", "same network plus BatchNorm"],
+              ["BN-x5", "14x fewer steps", "5x higher learning rate, Dropout removed"],
+              ["BN-x30", "still far fewer steps", "30x higher learning rate"],
+              ["BN-x5-Sigmoid", "trains successfully", "sigmoid network that previously failed to train"]
+            ]},
+            {"type": "p", "html": "Beyond speed, an ensemble of BatchNorm networks reached <strong>4.9% top-5 validation error</strong> on ImageNet, surpassing the previous best and even reported human-rater performance at the time. A striking qualitative result: a deep network with sigmoid nonlinearities, normally nearly impossible to train, trained successfully once BatchNorm stabilized its activations."},
+            {"type": "quote", "html": "Merely adding Batch Normalization yields the same accuracy as the original network in less than half the training steps; pushing the learning rates further compounds the speedup."}
+          ]
+        },
+        {
+          "title": "Takeaways",
+          "subtitle": "Why BatchNorm became a default building block",
+          "pdfPages": [8],
+          "viz": [],
+          "blocks": [
+            {"type": "h2", "text": "What to remember"},
+            {"type": "list", "items": [
+              "BatchNorm normalizes each activation over the mini-batch to zero mean and unit variance, then applies a learnable scale and shift: $y = \\gamma\\hat{x} + \\beta$.",
+              "Normalization lives inside the computational graph, so gradients flow through the batch statistics and the optimizer cannot defeat it.",
+              "It targets internal covariate shift &mdash; the shifting input distributions that make deep nets slow and fragile to train.",
+              "Benefits: much higher learning rates, faster convergence, robustness to initialization, and a regularizing effect that can replace Dropout.",
+              "Train with batch statistics; at inference use running averages of mean and variance so each example's output is deterministic.",
+              "The scale-and-shift guarantees BatchNorm can represent the identity, so it never costs the network expressive power."
+            ]},
+            {"type": "p", "html": "BatchNorm became one of the most widely used components in deep learning, an almost automatic ingredient in convolutional architectures, and it spawned a family of follow-ups (Layer Norm, Group Norm, Instance Norm) that adapt the same normalize-then-affine idea to settings where mini-batch statistics are unavailable or undesirable."}
+          ]
+        }
+      ]
+    }
+  ]
+}

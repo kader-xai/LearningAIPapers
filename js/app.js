@@ -170,19 +170,28 @@ async function renderLibrary() {
   document.getElementById("pager").innerHTML = "";
   const c = document.getElementById("content");
   if (!LIB) LIB = await fetchJSON(CONTENT + "index.json");
+  // group by category, preserving first-seen order
+  const groups = [];
+  const byCat = {};
+  LIB.papers.forEach(p => {
+    const cat = p.category || "Other";
+    if (!byCat[cat]) { byCat[cat] = []; groups.push(cat); }
+    byCat[cat].push(p);
+  });
+  const card = p => `
+    <a class="lib-card" href="#/p/${p.slug}">
+      <div class="t">${escapeHTML(p.title)}</div>
+      <div class="a">${escapeHTML(p.authors || "")}</div>
+      <div class="meta">${escapeHTML(p.year || "")} · ${escapeHTML(p.venue || "")}</div>
+    </a>`;
   c.innerHTML = `
     <h1>Learning Papers</h1>
-    <h3>A local, paragraph-by-paragraph paper reader with interactive visualizations.</h3>
-    <p>Pick a paper to start, or <a href="#/upload">add a new one</a>.</p>
-    <div class="lib-grid">
-      ${LIB.papers.map(p => `
-        <a class="lib-card" href="#/p/${p.slug}">
-          <div class="t">${escapeHTML(p.title)}</div>
-          <div class="a">${escapeHTML(p.authors || "")}</div>
-          <div class="meta">${escapeHTML(p.year || "")} · ${escapeHTML(p.venue || "")}</div>
-        </a>
-      `).join("")}
-    </div>
+    <h3>A paragraph-by-paragraph reader for ${LIB.papers.length} landmark AI papers — with the original PDF page beside every explanation and interactive visualizations.</h3>
+    <p>Pick a paper to start, or <a href="#/upload">add a new one</a>. <span class="pill">${groups.length} topics · ${LIB.papers.length} papers</span></p>
+    ${groups.map(cat => `
+      <h2 class="lib-cat">${escapeHTML(cat)} <span class="lib-cat-n">${byCat[cat].length}</span></h2>
+      <div class="lib-grid">${byCat[cat].map(card).join("")}</div>
+    `).join("")}
   `;
 }
 

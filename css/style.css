@@ -15,7 +15,7 @@
   --mono: ui-monospace, "JetBrains Mono", Menlo, monospace;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; height: 100%; }
+html, body { margin: 0; padding: 0; height: 100%; max-width: 100%; overflow-x: hidden; }
 body {
   background: var(--bg);
   color: var(--ink);
@@ -88,7 +88,11 @@ a:hover { text-decoration: underline; }
   padding: 56px 64px 80px;
   max-width: 980px;
   width: 100%;
+  min-width: 0;        /* critical: lets the 1fr grid column shrink instead of overflowing */
+  margin: 0 auto;
+  overflow-x: hidden;  /* clip any stray wide child */
 }
+#content { overflow-wrap: break-word; word-break: break-word; }
 #content { font-family: var(--serif); font-size: 18px; line-height: 1.7; }
 #content h1 {
   font-size: 34px;
@@ -195,8 +199,12 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--rule);
   border-radius: 10px;
   padding: 18px;
+  overflow-x: auto;   /* wide SVG demos scroll inside the box, never past the border */
+  max-width: 100%;
 }
 .viz:empty { display: none; }
+.viz svg { max-width: 100%; height: auto; }
+.viz > div { min-width: 0; }
 .viz h4 {
   font-family: var(--sans);
   font-size: 13px;
@@ -221,6 +229,7 @@ a:hover { text-decoration: underline; }
 #pager {
   margin-top: 56px;
   display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap;
   font-family: var(--sans); font-size: 14px;
   border-top: 1px solid var(--rule); padding-top: 18px;
 }
@@ -235,6 +244,21 @@ a:hover { text-decoration: underline; }
 #pager .spacer { flex: 1; }
 
 /* library */
+.lib-cat {
+  font-family: var(--sans) !important;
+  font-size: 14px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-2);
+  margin: 36px 0 14px !important;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; gap: 10px;
+}
+.lib-cat-n {
+  font-size: 11px; color: var(--ink-dim); background: var(--panel-2);
+  border-radius: 999px; padding: 1px 9px; letter-spacing: 0;
+}
 .lib-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px; font-family: var(--sans);

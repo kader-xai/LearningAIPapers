@@ -1,0 +1,98 @@
+{
+  "title": "Sign-OPT: A Query-Efficient Hard-label Adversarial Attack",
+  "authors": "Minhao Cheng, Simranjit Singh, Patrick Chen, Pin-Yu Chen, Sijia Liu, Cho-Jui Hsieh",
+  "year": "2020",
+  "venue": "ICLR 2020 (arXiv:1909.10773)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "You only need the sign",
+          "subtitle": "The Sign-OPT idea in one sentence",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "OPT made the hard-label attack a real optimization problem, but every gradient step was expensive because estimating the boundary distance $g(\\theta)$ required a full binary search, repeated many times. Sign-OPT's insight is that to take a good descent step you do not need the <em>value</em> of the directional derivative at all &mdash; you only need its <strong>sign</strong>, and the sign can be obtained with a single extra query per probe direction."}
+          ]
+        },
+        {
+          "title": "Same hard-label setting, same metric",
+          "subtitle": "What we are optimizing",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "We remain in the <strong>hard-label / decision-based</strong> world: the attacker queries the model and observes only the <em>final predicted label</em> &mdash; no probabilities, no gradients &mdash; and is judged by <strong>queries-to-success</strong>, the number of queries to reach a small perturbation norm."},
+            {"type": "p", "html": "Sign-OPT inherits OPT's reformulation. We still search for a direction $\\theta$ that minimizes the distance to the boundary, where that distance is"},
+            {"type": "math", "tex": "g(\\theta) = \\min_{\\lambda > 0} \\; \\lambda \\;\\; \\text{s.t.}\\;\\; f\\!\\left(x_0 + \\lambda \\tfrac{\\theta}{\\lVert\\theta\\rVert}\\right) \\neq y_0, \\qquad \\min_{\\theta} g(\\theta)"},
+            {"type": "p", "html": "Read: $g(\\theta)$ is how far you must travel along $\\theta$ before the label flips, and we want the direction that makes that distance smallest. Everything that follows is about estimating the gradient of $g$ more cheaply than OPT did."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Sign Trick",
+      "pages": [
+        {
+          "title": "Why OPT's gradient estimate is wasteful",
+          "subtitle": "Magnitude is expensive; direction is cheap",
+          "pdfPages": [4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "OPT estimates the directional derivative by computing $g(\\theta + \\beta u)$ and comparing to $g(\\theta)$. But $g$ is defined by a boundary crossing, so each value needs a binary search &mdash; many queries &mdash; just to learn a single number. Most of that precision is then thrown away the moment you take a normalized descent step."},
+            {"type": "p", "html": "The key observation: whether $g$ increased or decreased when you nudged $\\theta$ by $u$ can be decided <em>without</em> finding the new boundary distance. You only have to check one point."}
+          ]
+        },
+        {
+          "title": "One query tells you the sign",
+          "subtitle": "The single-query directional test",
+          "pdfPages": [4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Take the current boundary radius $g(\\theta)$. Now look at the perturbed direction $\\theta + \\beta u$ and evaluate the classifier at that same radius. If the point is now <em>adversarial</em>, then the boundary along $\\theta + \\beta u$ is nearer than along $\\theta$, so $g$ decreased; if it is still correctly classified, the boundary moved farther and $g$ increased. That is exactly the sign of the directional derivative &mdash; from a single query."},
+            {"type": "math", "tex": "\\text{sign}\\big(g(\\theta + \\beta u) - g(\\theta)\\big) \\;=\\; \\begin{cases} -1 & \\text{if } f\\!\\left(x_0 + g(\\theta)\\,\\tfrac{\\theta+\\beta u}{\\lVert\\theta+\\beta u\\rVert}\\right) \\neq y_0 \\\\ +1 & \\text{otherwise} \\end{cases}"},
+            {"type": "p", "html": "Read plainly: probe at the old radius but in the slightly rotated direction; one hard-label query says \"already across the boundary\" (sign $-1$, this rotation helps) or \"not yet\" (sign $+1$, this rotation hurts)."}
+          ]
+        },
+        {
+          "title": "Building a gradient from many signs",
+          "subtitle": "The Sign-OPT estimator",
+          "pdfPages": [5],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Average the sign outcomes over many random probe directions $u_q$ to assemble an estimated gradient, then descend on $\\theta$. Each random direction costs just one query (plus the one shared binary search to know $g(\\theta)$ for the current $\\theta$), so a whole gradient estimate is dramatically cheaper than OPT's."},
+            {"type": "math", "tex": "\\hat{\\nabla} g(\\theta) \\approx \\frac{1}{Q} \\sum_{q=1}^{Q} \\text{sign}\\big(g(\\theta + \\beta u_q) - g(\\theta)\\big)\\, u_q"},
+            {"type": "p", "html": "Read: each random direction $u_q$ votes with $\\pm 1$ depending on whether rotating toward it brings the boundary closer; the weighted sum points, on average, toward directions of smaller boundary distance. It is a biased estimator (signs discard magnitude) but the authors show it is good enough to descend, and overwhelmingly cheaper."},
+            {"type": "quote", "html": "Trading exact gradient magnitudes for one-bit sign votes is the whole game: a little bias in the direction, an enormous saving in queries."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Significance",
+      "pages": [
+        {
+          "title": "An order of magnitude fewer queries",
+          "subtitle": "Sign-OPT versus OPT and Boundary Attack",
+          "pdfPages": [5],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "On MNIST, CIFAR-10, and ImageNet, Sign-OPT reaches a given perturbation norm with roughly <strong>5&ndash;10&times; fewer queries than OPT</strong>, and far fewer than the Boundary Attack, often producing <em>smaller</em> final perturbations at the same query budget. The improvement compounds because cheaper gradient estimates mean more descent steps per query budget."},
+            {"type": "p", "html": "The authors also give convergence analysis for the sign-based estimator, showing that despite using only one bit per direction the iteration still converges to a stationary point of $g$. The method works for untargeted and targeted attacks and needs nothing beyond the label oracle."}
+          ]
+        },
+        {
+          "title": "Why this paper mattered",
+          "subtitle": "Making hard-label attacks practical",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Sign-OPT showed that the query cost of hard-label attacks could be cut by an order of magnitude with a single conceptual move &mdash; replace expensive distance estimates with cheap sign tests. That pushed label-only attacks from \"possible but impractical\" toward \"a realistic threat against deployed APIs.\""},
+            {"type": "p", "html": "It sits between OPT (which it accelerates) and HopSkipJump (a contemporaneous line that estimates the gradient direction directly at the boundary using Monte-Carlo sampling and adds geometric step sizing). Together they define the modern frontier of query-efficient hard-label attacks."},
+            {"type": "quote", "html": "Sign-OPT: you only need the <em>sign</em> of the directional derivative, obtainable with one extra query per probe direction &mdash; yielding far fewer queries than OPT for the same attack."}
+          ]
+        }
+      ]
+    }
+  ]
+}

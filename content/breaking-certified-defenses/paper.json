@@ -1,0 +1,108 @@
+{
+  "title": "Breaking Certified Defenses: Semantic Adversarial Examples with Spoofed Robustness Certificates",
+  "authors": "Amin Ghiasi, Ali Shafahi, Tom Goldstein",
+  "year": "2020",
+  "venue": "ICLR 2020 (arXiv:2003.08937)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "When the Certificate Lies",
+          "subtitle": "Provable robustness that proves the wrong thing",
+          "pdfPages": [1],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "<strong>Certified defenses</strong> promise something heuristic defenses cannot: a mathematical guarantee that no adversarial example exists within a given distance of the input. For each prediction they emit a <strong>certificate</strong> &mdash; a radius inside which the label is provably stable."},
+            {"type": "p", "html": "But a guarantee is only as meaningful as its assumptions. Certificates are proven against a specific <strong>threat model</strong> &mdash; usually small perturbations bounded in an $\\ell_p$ norm (every pixel changes by at most $\\epsilon$). The certificate says nothing about perturbations <em>outside</em> that ball."},
+            {"type": "quote", "html": "This paper's punchline: you can produce inputs that are <strong>visibly, semantically altered</strong> (different color, slightly shifted) yet still arrive with a <strong>valid robustness certificate</strong>. The math is correct; the guarantee is just irrelevant to how the image actually changed."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "What a Certificate Actually Guarantees",
+          "subtitle": "Reading the fine print",
+          "pdfPages": [2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "A certified classifier guarantees its prediction is constant within an $\\ell_p$ ball of radius $r$ around the input. Formally, the certificate is a promise of the form:"},
+            {"type": "math", "tex": "\\forall \\, \\delta \\; \\text{with} \\; \\| \\delta \\|_{p} \\le r : \\quad f(x + \\delta) = f(x)"},
+            {"type": "p", "html": "In words: for <em>every</em> perturbation $\\delta$ whose size is at most $r$ in the $\\ell_p$ norm, the prediction does not change. This is genuinely proven &mdash; there is no white-box or black-box attack inside that ball."},
+            {"type": "p", "html": "The hidden assumption is the choice of $\\ell_p$ and the meaning of 'size'. An $\\ell_p$ ball measures change <strong>pixel by pixel</strong>. But many perturbations that humans perceive as 'the same object' move <em>every</em> pixel by a large amount: shift the whole image one pixel right, or rotate the hue. These live far outside the certified ball, so the certificate makes no claim about them."},
+            {"type": "p", "html": "The flaw the paper exploits is the gap between <strong>perceptual similarity</strong> (does it still look like the same scene to a person?) and <strong>$\\ell_p$ distance</strong> (did the pixel values stay numerically close?). The two are not the same."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Semantic Perturbations Outside the Ball",
+          "subtitle": "Change the image in ways the norm ignores",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Instead of adding pixel noise (which the certificate is designed to resist), the attacker applies <strong>semantic transformations</strong> &mdash; changes that preserve the object's identity to a human but move the pixels a lot in $\\ell_p$ terms, landing well outside the certified ball."},
+            {"type": "list", "items": [
+              "<strong>Color / hue shifts:</strong> recolor the whole image (e.g. rotate hue in HSV). A person still recognizes the object; pixel values change enormously.",
+              "<strong>Spatial shifts and translations:</strong> move the image by a pixel or two. Perceptually trivial, but a large $\\ell_p$ distance because every edge moves.",
+              "<strong>Other identity-preserving edits</strong> that the $\\ell_p$ threat model never anticipated."
+            ]},
+            {"type": "p", "html": "The attacker optimizes the parameters of such a transformation to (a) cause a misclassification while (b) the perturbed image still receives a <strong>valid, non-trivial certificate</strong>. The result is a semantically adversarial example that the defense itself <em>vouches for</em>."},
+            {"type": "math", "tex": "x' = T_{\\theta}(x), \\qquad \\| x' - x \\|_{p} \\gg r \\quad \\text{yet} \\quad x' \\; \\text{is certified}"},
+            {"type": "p", "html": "Here $T_\\theta$ is a semantic transformation (color, shift) with parameters $\\theta$. The crafted $x'$ sits far outside the original certified ball, so the certificate computed at $x'$ describes a <em>different</em>, irrelevant neighborhood and says nothing about the visible change that was actually made."}
+          ]
+        },
+        {
+          "title": "How the Certificate Gets Spoofed",
+          "subtitle": "A true theorem about the wrong neighborhood",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "It is important to see that nothing in the certificate's proof is broken. The certifier honestly computes: 'around this input $x'$, all $\\ell_p$ perturbations up to radius $r$ keep the label.' That statement remains true."},
+            {"type": "p", "html": "The deception is in <strong>what the certificate is silent about</strong>. The semantic edit that produced $x'$ from the original $x$ is not an $\\ell_p$ perturbation within $r$; it is a large, structured move the proof never covered. So a user reading the certificate at face value &mdash; 'this prediction is provably robust' &mdash; is misled about the image's actual provenance."},
+            {"type": "quote", "html": "A correct proof about an irrelevant ball is still a misleading guarantee. Robustness is only meaningful relative to a threat model that matches real-world perturbations."},
+            {"type": "p", "html": "Concretely, the attacker searches over transformation parameters $\\theta$ to find a visibly altered image that the network both <strong>misclassifies</strong> and <strong>certifies as robust</strong> &mdash; producing the paradoxical artifact of a confidently 'certified' wrong answer on an obviously edited picture."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Implications",
+      "pages": [
+        {
+          "title": "Certified and Wrong at the Same Time",
+          "subtitle": "Demonstrating spoofed certificates",
+          "pdfPages": [5, 6],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The authors show that common certified-defense pipelines can be made to issue valid certificates for semantically perturbed images that are <strong>misclassified</strong>. The certificate radius is real and non-trivial; the image is plainly recolored or shifted; the prediction is wrong. All three at once."},
+            {"type": "p", "html": "This exposes a false sense of security. A practitioner who trusts 'certified robust' as a blanket safety label can be fooled by any adversary willing to step outside the $\\ell_p$ box &mdash; exactly the moves a real attacker would prefer, since semantic edits survive printing, cropping, and recompression."},
+            {"type": "table", "headers": ["Property of the attack image", "Status"], "rows": [
+              ["Visibly altered (color / shift)", "Yes &mdash; obvious to a human"],
+              ["Inside the certified Lp ball", "No &mdash; far outside"],
+              ["Carries a valid certificate", "Yes"],
+              ["Correctly classified", "No &mdash; misclassified"]
+            ]}
+          ]
+        },
+        {
+          "title": "The Lesson for Provable Defenses",
+          "subtitle": "Match the threat model to reality",
+          "pdfPages": [7, 8],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The paper is not an argument against certified defenses &mdash; it is a warning about <strong>interpreting them</strong>. A certificate is a conditional promise: 'safe, <em>assuming</em> the only attacks are small $\\ell_p$ perturbations.' If that assumption is wrong, the promise is hollow."},
+            {"type": "quote", "html": "Robustness certificates are only as trustworthy as their threat model. Certifying against $\\ell_p$ noise does not certify against color, geometry, or any perturbation the norm cannot see."},
+            {"type": "p", "html": "The constructive takeaway is to broaden threat models: certify against semantic transformations (color, rotation, translation) directly, and report clearly which perturbations a certificate does and does not cover. Otherwise 'provably robust' becomes a marketing phrase rather than a guarantee."}
+          ]
+        }
+      ]
+    }
+  ]
+}

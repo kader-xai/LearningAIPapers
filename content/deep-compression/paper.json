@@ -1,0 +1,137 @@
+{
+  "title": "Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding",
+  "authors": "Song Han, Huizi Mao, William J. Dally",
+  "year": "2016",
+  "venue": "ICLR 2016 (arXiv:1510.00149)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The problem: great networks are too big to deploy",
+          "subtitle": "Why model size matters on phones and embedded devices",
+          "pdfPages": [1],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Deep neural networks are powerful but enormous. A model like VGG-16 has on the order of 552 MB of parameters &mdash; far too large to fit comfortably in the on-chip memory of a phone, and expensive to download, store, and run. The real cost is often not arithmetic but <strong>memory access</strong>: fetching weights from off-chip DRAM dominates energy use on mobile hardware."},
+            {"type": "p", "html": "Deep Compression is a three-stage pipeline that shrinks a trained network by one to two orders of magnitude <strong>without losing accuracy</strong>, so large models can fit in fast on-chip SRAM and run with far less energy."},
+            {"type": "quote", "html": "Our method reduced the storage required by AlexNet by 35x, from 240MB to 6.9MB, and VGG-16 by 49x, from 552MB to 11.3MB, with no loss of accuracy."},
+            {"type": "p", "html": "The three stages are applied in sequence: (1) <strong>prune</strong> the network to remove unimportant connections; (2) <strong>quantize</strong> the surviving weights so many connections share a small set of values; and (3) apply <strong>Huffman coding</strong> to compress those values further. Each stage is designed so the next one still works, and retraining recovers any accuracy lost along the way."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Stage 1: Pruning",
+      "pages": [
+        {
+          "title": "Remove the small-magnitude weights",
+          "subtitle": "Most connections turn out to be redundant",
+          "pdfPages": [2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The first stage learns which connections matter and throws away the rest. The recipe is simple: train the network normally, then <strong>prune</strong> every weight whose magnitude falls below a threshold &mdash; small weights contribute little to the output &mdash; and finally <strong>retrain</strong> the remaining weights to recover accuracy."},
+            {"type": "list", "items": [
+              "Train the dense network to learn which connections are important.",
+              "Prune connections with weights below a magnitude threshold, turning a dense matrix into a sparse one.",
+              "Retrain the surviving weights so they compensate for the removed ones."
+            ]},
+            {"type": "p", "html": "This prune-then-retrain loop can be repeated. The result is striking: pruning removes roughly <strong>9x to 13x</strong> of the connections in AlexNet and VGG-16 with no drop in accuracy. Most of a trained network, it turns out, is dead weight."}
+          ]
+        },
+        {
+          "title": "Storing the sparse result compactly",
+          "subtitle": "Indices as small relative offsets",
+          "pdfPages": [2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "A sparse matrix is stored as (value, location) pairs. To keep the location cheap, the authors store the <strong>index difference</strong> between consecutive nonzero weights rather than absolute positions, using only a few bits (3 bits for convolutional layers, 5 for fully-connected layers)."},
+            {"type": "p", "html": "If a gap between nonzeros exceeds what those bits can encode, a zero-padding placeholder is inserted so the small index never overflows. This keeps the overhead of describing the sparsity pattern low, which matters because the indices would otherwise eat into the savings from removing weights."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Stage 2: Trained Quantization",
+      "pages": [
+        {
+          "title": "Weight sharing via a codebook",
+          "subtitle": "Many connections, few distinct values",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "After pruning, the surviving weights are still stored as full 32-bit floats. Stage 2 reduces the number of <strong>distinct</strong> values they can take. All the weights in a layer are clustered (with k-means) into a small number of groups, and every weight in a group is forced to share a single representative value &mdash; the cluster centroid. This is <strong>weight sharing</strong>."},
+            {"type": "p", "html": "Instead of storing a 32-bit value for each weight, you now store a small <strong>index</strong> into a tiny lookup table (the <strong>codebook</strong>) of centroids. The paper uses 256 shared values (8 bits) for convolutional layers and 16 shared values (4 bits) for fully-connected layers. So a weight that cost 32 bits now costs 4 or 5 bits plus a once-per-layer codebook."},
+            {"type": "p", "html": "Concretely, the compression rate from weight sharing alone is the original bit width divided by the shared bit width (plus a small codebook cost). Replacing 32-bit floats with 4-bit indices is roughly an 8x reduction in the weight payload before any other coding."}
+          ]
+        },
+        {
+          "title": "Retraining the shared weights (the codebook learns too)",
+          "subtitle": "Why quantization here does not cost accuracy",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The crucial trick that keeps accuracy intact is that the centroids are <strong>fine-tuned by gradient descent</strong>, not frozen after clustering. During retraining, the gradients of all weights that map to the same centroid are <strong>summed together</strong> and used to update that single shared value. The network thus learns the best value for each codebook entry given how it is reused across many connections."},
+            {"type": "p", "html": "Initialization of the centroids matters. The authors compare random, density-based, and <strong>linear</strong> initialization (spreading centroids evenly across the range of weights). Linear initialization works best, because it gives the large-magnitude weights &mdash; which are few but important &mdash; their own centroids rather than lumping them with the dense cluster of small weights near zero."},
+            {"type": "p", "html": "Because the shared values are retrained, trained quantization recovers full accuracy even at 4&ndash;8 bits per weight, where naive post-hoc rounding would degrade the model."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Stage 3: Huffman Coding",
+      "pages": [
+        {
+          "title": "Squeeze the last redundancy out",
+          "subtitle": "Lossless coding of indices and codebook",
+          "pdfPages": [5],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "After quantization, the weights are stored as codebook indices, and these indices are <strong>not uniformly distributed</strong> &mdash; some shared values are used far more often than others, and the sparse-index offsets are similarly skewed. Whenever symbols have a non-uniform distribution, there is redundancy that lossless entropy coding can remove."},
+            {"type": "p", "html": "<strong>Huffman coding</strong> assigns short bit-strings to frequent symbols and longer ones to rare symbols, so the average number of bits per symbol approaches the information content of the distribution. Applied to the quantized weight indices and the sparse index offsets, it gives an additional <strong>20%&ndash;30%</strong> reduction for free, with no effect on the values themselves (it is fully lossless)."},
+            {"type": "p", "html": "This stage is pure storage savings &mdash; the weights are decoded back to their exact quantized values at load time &mdash; so it never touches accuracy."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Putting the three stages together",
+          "subtitle": "35x to 49x smaller, no accuracy loss",
+          "pdfPages": [6],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The three stages compound. Pruning removes most connections; trained quantization shrinks each surviving weight to a few bits via a shared codebook; Huffman coding compresses the result. The total compression and its breakdown:"},
+            {"type": "table", "headers": ["Network", "Original size", "Compressed size", "Compression", "Top-1/Top-5 accuracy"], "rows": [
+              ["LeNet-300-100", "1070 KB", "27 KB", "40x", "no loss"],
+              ["LeNet-5", "1720 KB", "44 KB", "39x", "no loss"],
+              ["AlexNet", "240 MB", "6.9 MB", "35x", "no loss"],
+              ["VGG-16", "552 MB", "11.3 MB", "49x", "no loss"]
+            ]},
+            {"type": "p", "html": "The contribution of each stage is roughly: pruning gives ~9&ndash;13x, trained quantization adds another large factor by cutting 32-bit floats to ~5 bits, and Huffman coding contributes the final 20&ndash;30%. None of the three stages, applied in this order, sacrifices accuracy."}
+          ]
+        },
+        {
+          "title": "Why it matters: speed and energy",
+          "subtitle": "From DRAM to on-chip SRAM",
+          "pdfPages": [10],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The point of compression is not just a smaller download. Once a model is small enough to fit in fast on-chip <strong>SRAM</strong> rather than off-chip <strong>DRAM</strong>, every weight access becomes far cheaper &mdash; DRAM access can cost on the order of 100x more energy than SRAM access. Compressed models therefore run with lower latency and dramatically lower energy per inference, which is exactly what matters on battery-powered devices."},
+            {"type": "p", "html": "Deep Compression also pairs naturally with custom hardware accelerators that exploit sparsity and weight sharing directly, decoding the codebook and skipping the pruned-away connections."},
+            {"type": "h2", "text": "What to remember"},
+            {"type": "list", "items": [
+              "Three stages in order: prune small-magnitude weights, trained quantization with a shared-value codebook, then Huffman coding.",
+              "Each stage is followed (where needed) by retraining so accuracy is fully recovered.",
+              "Pruning alone removes ~9&ndash;13x of connections; quantization cuts weights to 4&ndash;8 bits; Huffman adds 20&ndash;30%.",
+              "Overall: 35x (AlexNet) to 49x (VGG-16) smaller with no loss of accuracy.",
+              "The real win is fitting models in on-chip SRAM, slashing memory-access energy on mobile and embedded hardware."
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}

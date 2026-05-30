@@ -1,0 +1,118 @@
+{
+  "title": "Obfuscated Gradients Give a False Sense of Security: Circumventing Defenses to Adversarial Examples",
+  "authors": "Anish Athalye, Nicholas Carlini, David Wagner",
+  "year": "2018",
+  "venue": "ICML 2018 (arXiv:1802.00420)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A false sense of security",
+          "subtitle": "Why so many defenses only look robust",
+          "pdfPages": [1],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "By 2018 there were many published defenses against adversarial examples, several accepted at top venues. This paper makes an uncomfortable claim: most of them do not actually make models robust. Instead they <strong>break the attacker's gradient</strong>, so that gradient-based attacks fail and the defense merely <em>looks</em> robust."},
+            {"type": "p", "html": "The authors call this phenomenon <strong>obfuscated gradients</strong>, a special case of gradient masking. They identify three distinct ways it happens, give practical techniques to circumvent each one, and apply them to the defenses presented at ICLR 2018. The result: of the nine defenses examined, they fully circumvent <strong>seven</strong> and partially circumvent one, in most cases reducing the defended model to near-zero accuracy under attack."},
+            {"type": "quote", "html": "If your gradients are useless to an attacker, the most likely explanation is not that your model is robust, but that you have hidden the gradients."},
+            {"type": "p", "html": "The deeper contribution is a checklist of warning signs and a set of adaptive attacks that have since become required practice for anyone claiming a defense works."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "Gradient masking vs. real robustness",
+          "subtitle": "A broken gradient is not a strong model",
+          "pdfPages": [2],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Gradient-based attacks like FGSM and PGD all need one thing: a useful gradient of the loss with respect to the input, telling the attacker which way to move. A defense can defeat these attacks either by being genuinely robust (the loss really is hard to increase) or by making the gradient uninformative (the attacker cannot find the direction even though it exists). The second is gradient masking, and it gives a false sense of security."},
+            {"type": "p", "html": "How do you tell the two apart? The authors offer concrete diagnostic signs that a defense relies on obfuscated gradients rather than real robustness:"},
+            {"type": "list", "items": [
+              "One-step attacks (FGSM) do better than iterative attacks (PGD), which should never happen for a truly robust model.",
+              "Black-box attacks (no gradient access) beat white-box attacks (full gradient access).",
+              "Unbounded attacks (arbitrarily large $\\epsilon$) still fail to reach 100% success.",
+              "Random sampling around an input finds adversarial examples that gradient descent could not.",
+              "Increasing the perturbation budget $\\epsilon$ does not smoothly increase attack success."
+            ]},
+            {"type": "p", "html": "Any one of these is a red flag. A genuinely robust model should get harder to attack with more attacker effort, and a larger budget should always eventually win. When the pattern is inverted, gradients are being masked."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Three Types of Obfuscation",
+      "pages": [
+        {
+          "title": "Shattered, stochastic, and vanishing gradients",
+          "subtitle": "Three ways a gradient becomes useless",
+          "pdfPages": [3],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The authors taxonomize obfuscated gradients into three mechanisms, each with its own cause and its own cure."},
+            {"type": "table", "headers": ["Type", "Cause", "Effect on the gradient"], "rows": [
+              ["Shattered gradients", "Non-differentiable or discretizing preprocessing (e.g. JPEG, quantization), or numerically wrong gradients", "Gradient is nonexistent or incorrect, pointing nowhere useful"],
+              ["Stochastic gradients", "Randomized defenses (random transforms, test-time dropout)", "Gradient is correct for one random draw but noisy in expectation"],
+              ["Exploding / vanishing gradients", "Very deep computation, e.g. unrolling many iterations of a generative model", "Gradient blows up or decays to zero through the long chain"]
+            ]},
+            {"type": "p", "html": "The insight is that each type can be defeated by giving the attacker back a usable gradient signal, rather than abandoning gradient-based attacks. The next section gives one technique per type."}
+          ]
+        },
+        {
+          "title": "BPDA and EOT: the circumvention tools",
+          "subtitle": "Approximate the missing gradient, average over randomness",
+          "pdfPages": [3, 4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "For <strong>shattered gradients</strong>, the fix is <strong>Backward Pass Differentiable Approximation (BPDA)</strong>. Suppose a defense applies a non-differentiable preprocessing $g$ before the network, and on the clean range $g(x) \\approx x$ (the transform roughly preserves the image). Then on the forward pass you run the true $g$, but on the backward pass you pretend $g$ is the identity, so the gradient flows straight through."},
+            {"type": "math", "tex": "\\nabla_x f(g(x)) \\;\\approx\\; \\nabla_x f(x) \\quad \\text{when} \\quad g(x) \\approx x"},
+            {"type": "p", "html": "In words: replace the broken or missing derivative of the preprocessing step with the derivative of the identity. More generally you can approximate $g$ on the backward pass with any differentiable function that behaves like it. This recovers a usable gradient and lets PGD proceed as normal."},
+            {"type": "p", "html": "For <strong>stochastic gradients</strong>, the fix is <strong>Expectation Over Transformation (EOT)</strong>. If the defense applies a random transform $t$ drawn from a distribution $T$, attack the <em>expected</em> model by averaging the gradient over many sampled transforms."},
+            {"type": "math", "tex": "\\nabla_x \\, \\mathbb{E}_{t \\sim T}\\big[ f(t(x)) \\big] = \\mathbb{E}_{t \\sim T}\\big[ \\nabla_x f(t(x)) \\big]"},
+            {"type": "p", "html": "Reading this: the gradient of the average equals the average of the gradients, so you estimate it by sampling several random draws of the transform and averaging their gradients. This produces a stable direction that works against the defense in expectation, defeating the randomness."},
+            {"type": "p", "html": "For <strong>exploding or vanishing gradients</strong>, typically caused by unrolling a long iterative computation, the fix is to attack the defense without differentiating through the whole chain, for example by reparameterizing the optimization or using BPDA over the iterative component so the gradient does not have to traverse every step."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Breaking the ICLR 2018 defenses",
+          "subtitle": "Seven of nine fully circumvented",
+          "pdfPages": [5, 6],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "The authors apply these tools to the non-certified defenses accepted at ICLR 2018. Of nine defenses, they find that seven rely on obfuscated gradients and fully circumvent them, and they circumvent one more partially. In most cases the defended accuracy under their adaptive attack drops to <strong>0% or near 0%</strong> within the originally claimed threat model."},
+            {"type": "p", "html": "The pattern across defenses is consistent. Input transformations and quantization fall to BPDA. Randomized defenses fall to EOT. Defenses built on long generative or iterative pipelines fall to a combination of the two. In no case did the masking translate into actual robustness once the attacker was given back a usable gradient."},
+            {"type": "p", "html": "Tellingly, the one category that survived was PGD adversarial training (Madry et al.), the defense that does <em>not</em> rely on obscuring gradients but on genuinely solving the saddle-point problem. This contrast is the paper's central evidence that real robustness and gradient masking are fundamentally different things."}
+          ]
+        },
+        {
+          "title": "How to evaluate a defense honestly",
+          "subtitle": "Adaptive attacks as a requirement, not an option",
+          "pdfPages": [7, 8],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "h2", "text": "Lasting impact"},
+            {"type": "p", "html": "This paper reset the methodology of the entire subfield. After it, evaluating a defense only against standard, non-adaptive attacks became unacceptable. A defense must be tested against an attack specifically designed with full knowledge of how the defense works, an <strong>adaptive attack</strong>, and the authors' diagnostic signs must come out the right way."},
+            {"type": "list", "items": [
+              "Always run a strong iterative attack (PGD) with many steps and random restarts.",
+              "If preprocessing is non-differentiable, attack it with BPDA, do not give up on gradients.",
+              "If the defense is randomized, attack it with EOT, averaging over the randomness.",
+              "Check the warning signs: iterative should beat one-step, white-box should beat black-box, and unbounded $\\epsilon$ should reach 100% success.",
+              "Be suspicious of any defense whose robustness disappears when you give the attacker a better gradient."
+            ]},
+            {"type": "quote", "html": "The burden of proof is on the defender to show robustness survives an attack that knows exactly how the defense works."},
+            {"type": "p", "html": "By breaking seven defenses with a small, reusable toolkit (BPDA and EOT) and by articulating clear diagnostic criteria, the paper made honest, adaptive evaluation the norm. It stands alongside C&W as a foundational statement of how the robustness community measures progress."}
+          ]
+        }
+      ]
+    }
+  ]
+}

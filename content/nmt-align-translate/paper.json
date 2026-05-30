@@ -1,0 +1,217 @@
+{
+  "title": "Neural Machine Translation by Jointly Learning to Align and Translate",
+  "authors": "Dzmitry Bahdanau, Kyunghyun Cho, Yoshua Bengio",
+  "year": "2015",
+  "venue": "ICLR 2015",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The big idea",
+          "subtitle": "Let the decoder look back at the whole source",
+          "pdfPages": [1],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Seq2seq translation squeezes an entire source sentence into a single fixed-length vector and asks the decoder to reconstruct the translation from it. This paper makes one sharp diagnosis: that fixed-length vector is a <strong>bottleneck</strong>. The longer the sentence, the more the model must cram into the same number of slots, and quality on long sentences collapses."
+            },
+            {
+              "type": "p",
+              "html": "The fix is the mechanism we now call <strong>attention</strong>. Instead of forcing one summary vector to carry everything, keep <em>all</em> of the encoder's per-word representations around. As the decoder produces each target word, it builds a fresh <strong>context vector</strong> &mdash; a weighted blend of the source representations &mdash; focusing on whichever source words are most relevant right now."
+            },
+            {
+              "type": "quote",
+              "html": "The model learns to (soft-)align and translate <em>jointly</em>: it figures out which source words to attend to at the same time as it figures out how to translate them, with no alignment supervision at all."
+            },
+            {
+              "type": "p",
+              "html": "The result matched a strong phrase-based system on English-French, and the gains were concentrated exactly where the old model failed &mdash; on <strong>long sentences</strong>. This soft-alignment idea is the direct ancestor of the attention in the Transformer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "The fixed-vector bottleneck",
+          "subtitle": "Why one summary vector isn't enough",
+          "pdfPages": [1, 2],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "In the original encoder-decoder, the encoder reads the source and hands the decoder a single vector $c$ &mdash; its last hidden state. Everything the decoder ever knows about the source must pass through that one vector. For a short sentence that is fine. For a thirty- or fifty-word sentence, it is a severe compression."
+            },
+            {
+              "type": "p",
+              "html": "The authors point to the empirical symptom: the basic encoder-decoder's performance <strong>degrades rapidly as sentences grow longer</strong>. It is being asked to remember too much in too little space, and the early parts of long sentences get crushed."
+            },
+            {
+              "type": "p",
+              "html": "The conceptual move is to stop summarizing prematurely. A human translator does not read the whole sentence, memorize a single impression, and then translate from memory with the source hidden. They glance back at the relevant words as they write. The model should be allowed to do the same."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Model",
+      "pages": [
+        {
+          "title": "A bidirectional encoder of annotations",
+          "subtitle": "One vector per source word, not one per sentence",
+          "pdfPages": [3, 4],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The encoder is a <strong>bidirectional RNN</strong>. A forward RNN reads the sentence left to right, a backward RNN reads it right to left, and for each source position $j$ their two hidden states are concatenated into an <strong>annotation</strong> $h_j$."
+            },
+            {
+              "type": "p",
+              "html": "Each annotation $h_j$ summarizes the whole sentence but with a strong focus on the words <em>around</em> position $j$, because the recurrent state nearest a word reflects it most. So instead of one vector for the sentence, the encoder produces a <strong>sequence of annotations</strong> $(h_1,\\\\dots,h_{T_x})$ &mdash; roughly one rich vector per source word &mdash; and all of them are kept for the decoder to consult."
+            }
+          ]
+        },
+        {
+          "title": "The attention mechanism, step by step",
+          "subtitle": "Score, normalize, blend",
+          "pdfPages": [4],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the heart of the paper. When the decoder is about to emit target word $i$, it does three things. First it <strong>scores</strong> how well each source annotation $h_j$ matches its current need, using its previous hidden state $s_{i-1}$:"
+            },
+            {
+              "type": "math",
+              "tex": "e_{ij} = a(s_{i-1},\\\\, h_j)"
+            },
+            {
+              "type": "p",
+              "html": "Read this as: an <strong>alignment score</strong> $e_{ij}$ measuring how relevant source word $j$ is to producing target word $i$. The scorer $a$ is a small feed-forward network trained jointly with everything else &mdash; there is no separate alignment step and no alignment labels."
+            },
+            {
+              "type": "p",
+              "html": "Second, it turns those raw scores into <strong>weights</strong> that sum to one, via a softmax over all source positions:"
+            },
+            {
+              "type": "math",
+              "tex": "\\\\alpha_{ij} = \\\\frac{\\\\exp(e_{ij})}{\\\\sum_{k=1}^{T_x} \\\\exp(e_{ik})}"
+            },
+            {
+              "type": "p",
+              "html": "Read this as: the <strong>attention weight</strong> $\\\\alpha_{ij}$ is the fraction of attention target word $i$ pays to source word $j$. A weight near 1 means &lsquo;this source word is what I care about right now.&rsquo;"
+            },
+            {
+              "type": "p",
+              "html": "Third, it forms the <strong>context vector</strong> as the weighted sum of the annotations:"
+            },
+            {
+              "type": "math",
+              "tex": "c_i = \\\\sum_{j=1}^{T_x} \\\\alpha_{ij}\\\\, h_j"
+            },
+            {
+              "type": "p",
+              "html": "Read this as: a custom summary $c_i$ built fresh for target word $i$, mostly made of the source words it is attending to. Crucially $c_i$ <strong>changes at every output step</strong> &mdash; the decoder gets a different view of the source for every word it writes."
+            }
+          ]
+        },
+        {
+          "title": "Decoding with a moving context",
+          "subtitle": "Each output word gets its own view of the source",
+          "pdfPages": [4],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The decoder is still a recurrent network, but its state and its output now depend on the step-specific context $c_i$ instead of one global vector. The probability of each target word is:"
+            },
+            {
+              "type": "math",
+              "tex": "p(y_i \\\\mid y_1,\\\\dots,y_{i-1},\\\\, x) = g(y_{i-1},\\\\, s_i,\\\\, c_i)"
+            },
+            {
+              "type": "p",
+              "html": "where the decoder state is updated as $s_i = f(s_{i-1},\\\\, y_{i-1},\\\\, c_i)$. In words: to choose the next word, look at the previous word, the decoder's running state, and the freshly computed context that points at the relevant source words."
+            },
+            {
+              "type": "p",
+              "html": "Because the whole pipeline &mdash; scorer, softmax, weighted sum &mdash; is differentiable, the network learns <strong>where to look</strong> purely from the pressure to translate well. This is &lsquo;soft&rsquo; alignment: rather than committing to one source word, the model spreads a probability distribution over all of them, which is what makes it trainable by gradient descent."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Big gains on long sentences",
+          "subtitle": "Exactly where the bottleneck used to bite",
+          "pdfPages": [6],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "On WMT'14 English-French, the attention model (RNNsearch) clearly beat the plain encoder-decoder (RNNenc), and the new model with attention matched a conventional phrase-based system &mdash; remarkable for a pure neural model in 2015."
+            },
+            {
+              "type": "table",
+              "headers": ["System", "BLEU"],
+              "rows": [
+                ["RNNenc (no attention)", "lower, drops on long sentences"],
+                ["RNNsearch-50 (attention)", "around 36 on long-sentence subsets"],
+                ["Moses phrase-based baseline", "33.30 / 35.63"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The most telling plot is BLEU versus sentence length. The plain encoder-decoder's quality <strong>falls off a cliff</strong> as sentences get longer, while the attention model stays roughly flat well past fifty words. That is direct confirmation that the fixed-vector bottleneck was the culprit, and that letting the decoder look back removes it."
+            }
+          ]
+        },
+        {
+          "title": "Attention as interpretable alignment",
+          "subtitle": "The weights line up with human intuition",
+          "pdfPages": [6, 7],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Because the attention weights $\\\\alpha_{ij}$ form a matrix over source and target positions, you can simply plot them. The result is a soft alignment map showing which source words each output word drew from."
+            },
+            {
+              "type": "p",
+              "html": "These maps agree with human intuition: mostly a near-diagonal monotonic alignment, but with sensible <strong>reorderings</strong> &mdash; for example handling adjective-noun order differences between English and French &mdash; that a rigid left-to-right model could never express. The model learned to reorder when the languages demand it, all without alignment labels."
+            },
+            {
+              "type": "p",
+              "html": "This interpretability was a bonus that made attention enormously popular: you can <em>see</em> what the model is doing."
+            }
+          ]
+        },
+        {
+          "title": "Why this paper matters",
+          "subtitle": "The seed of the Transformer",
+          "pdfPages": [1],
+          "viz": ["seq2seq-align"],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The score-softmax-blend pattern introduced here is the conceptual core of all modern attention. Three years later, &lsquo;Attention Is All You Need&rsquo; threw away the recurrent backbone entirely and kept only this mechanism, generalized into <strong>self-attention</strong> and stacked into the Transformer."
+            },
+            {
+              "type": "p",
+              "html": "Read with hindsight, this paper is the hinge between the RNN era and the Transformer era: it found the one piece of the encoder-decoder that was doing the heavy lifting, gave it a clean differentiable form, and showed it could be learned end to end. Everything from GPT to BERT inherits the idea that a model should learn, for each output, <strong>what to pay attention to</strong>."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

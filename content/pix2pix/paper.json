@@ -1,0 +1,125 @@
+{
+  "title": "Image-to-Image Translation with Conditional Adversarial Networks",
+  "authors": "Phillip Isola, Jun-Yan Zhu, Tinghui Zhou, Alexei A. Efros",
+  "year": "2017",
+  "venue": "CVPR 2017 (arXiv:1611.07004)",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "One model for many translation problems",
+          "subtitle": "The pitch",
+          "pdfPages": [1],
+          "viz": ["image-translation"],
+          "blocks": [
+            {"type": "p", "html": "Many problems in vision and graphics are really the same problem in disguise: take an input image and produce a corresponding output image. Turn a sketch into a photo, a daytime scene into night, a label map into a street view, a black-and-white photo into color, edges into a handbag. Historically each of these tasks got its own hand-engineered pipeline with its own custom loss function."},
+            {"type": "p", "html": "<strong>pix2pix</strong> argues that all of these are instances of <em>image-to-image translation</em>, and that a single recipe can solve them all. The key idea: instead of telling the network <em>how</em> to make a good output, use a <strong>conditional GAN</strong> to learn the loss itself — a second network that learns to tell real outputs from fake ones, automatically adapting to whatever makes a given task's outputs look correct."},
+            {"type": "p", "html": "The result is a general-purpose framework. The authors apply the <em>same</em> architecture and objective to a dozen different tasks and get convincing results on each, without re-tuning the loss. This page-by-page walkthrough builds up <em>why</em> a learned adversarial loss works so much better than a hand-designed one, and the two architectural tricks — the U-Net generator and the PatchGAN discriminator — that make it sharp."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Motivation",
+      "pages": [
+        {
+          "title": "Why a plain regression loss blurs",
+          "subtitle": "The problem with L1 / L2 alone",
+          "pdfPages": [1, 2],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The obvious approach is supervised regression: given input $x$ and the true output $y$, train a network $G$ to minimize the pixel distance between $G(x)$ and $y$. Use L2 (squared error) or L1 (absolute error). This works, sort of — but the outputs come out <strong>blurry</strong>."},
+            {"type": "p", "html": "The reason is subtle and important. For most translation tasks the mapping is <em>one-to-many</em>: a given edge drawing could become many plausible handbags, a label 'tree' could be many textures. When the loss asks the network to minimize average pixel error over all those plausible outputs, the <em>mathematically optimal</em> answer is to predict the average of them — and the average of many sharp images is a blur."},
+            {"type": "math", "tex": "\\mathcal{L}_{L1}(G) = \\mathbb{E}_{x,y,z}\\big[\\,\\lVert y - G(x,z) \\rVert_1\\,\\big]"},
+            {"type": "p", "html": "Read this as: 'on average, how far is each generated pixel from the true pixel.' Minimizing it pushes toward the mean output. L1 blurs less than L2 (it prefers the median, which is a bit sharper than the mean) but it still cannot invent crisp, high-frequency detail — it has no way to know <em>which</em> sharp version is acceptable, so it hedges by smearing."},
+            {"type": "p", "html": "What we actually want to say to the network is: 'make the output look like it could be a real image of this type.' That is not a fixed formula — it is exactly the kind of fuzzy, perceptual judgement that is hard to write down. So pix2pix learns it instead."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Objective",
+      "pages": [
+        {
+          "title": "The conditional GAN: a learned loss",
+          "subtitle": "Two networks playing a game",
+          "pdfPages": [2, 3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "A GAN pairs a <strong>generator</strong> $G$ that produces images with a <strong>discriminator</strong> $D$ that tries to distinguish real images from generated ones. They train against each other: $G$ tries to fool $D$, $D$ tries not to be fooled. At equilibrium $G$'s outputs are indistinguishable from real data — which is exactly the 'look real' objective we couldn't write by hand."},
+            {"type": "p", "html": "pix2pix uses a <em>conditional</em> GAN. Both networks see the input image $x$. So $D$ is not just asking 'is this a real-looking image?' but 'is this a real-looking <strong>output for this particular input</strong>?' This forces $G$'s output to actually correspond to $x$, not just be any plausible image."},
+            {"type": "math", "tex": "\\mathcal{L}_{cGAN}(G,D) = \\mathbb{E}_{x,y}[\\log D(x,y)] + \\mathbb{E}_{x,z}[\\log(1 - D(x, G(x,z)))]"},
+            {"type": "p", "html": "Read it as a tug-of-war. The first term: $D$ wants to output 1 (real) on true pairs $(x,y)$. The second term: $D$ wants to output 0 (fake) on generated pairs $(x, G(x))$, while $G$ wants to push that same term down by making $D$ output 1. We solve $G^* = \\arg\\min_G \\max_D \\mathcal{L}_{cGAN}$ — $D$ maximizes its discrimination, $G$ minimizes its own detectability."},
+            {"type": "p", "html": "Why does this beat L1? The discriminator is a <em>learned, structured</em> critic. It doesn't reward the average; it rewards outputs that match the statistics of real images — sharp edges, plausible textures — because those are what tell real from fake. The loss adapts to the task automatically."}
+          ]
+        },
+        {
+          "title": "Adversarial + L1: the best of both",
+          "subtitle": "The final objective",
+          "pdfPages": [3],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The adversarial loss alone makes <em>realistic</em> outputs, but it doesn't guarantee they match the ground truth pixel-for-pixel where they should — it could hallucinate a plausible-but-wrong colour. The blurry-but-faithful L1 loss has the opposite strength. So pix2pix simply <strong>adds them together</strong>."},
+            {"type": "math", "tex": "G^* = \\arg\\min_G \\max_D \\;\\mathcal{L}_{cGAN}(G,D) + \\lambda\\,\\mathcal{L}_{L1}(G)"},
+            {"type": "p", "html": "The intuition behind this split is elegant. L1 already does a good job capturing the <strong>low frequencies</strong> — the overall structure, the rough colours and where things go. Where it fails is the <strong>high frequencies</strong> — the crisp detail. So you let L1 handle the big picture and the GAN handle the sharpness. The authors set $\\lambda = 100$, giving L1 heavy weight for correctness while the GAN supplies the crispness."},
+            {"type": "p", "html": "A practical note on the noise $z$: in a deterministic mapping the generator tends to ignore an explicit noise input. pix2pix instead provides stochasticity through <strong>dropout</strong>, applied at both train and test time, rather than a separate noise vector. The outputs are still only mildly diverse — capturing full output diversity remained an open problem."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "U-Net generator: keep the structure",
+          "subtitle": "Skip connections matter",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "In image translation the input and output differ in surface appearance but <em>share underlying structure</em> — edges in the input line up with edges in the output. A naive encoder-decoder squeezes the input down through a bottleneck and then expands it back up; all that low-level detail has to survive the squeeze, and much of it doesn't."},
+            {"type": "p", "html": "The <strong>U-Net</strong> fixes this with <em>skip connections</em>: it directly links each encoder layer to the matching decoder layer, concatenating their feature maps. Layer $i$ in the encoder is wired to layer $n-i$ in the decoder. This lets fine-grained spatial information (where the edges are) bypass the bottleneck entirely and flow straight to the output."},
+            {"type": "p", "html": "Concretely it means the decoder doesn't have to <em>reconstruct</em> the input's structure from a compressed code — it gets handed the structure for free and only has to figure out the new appearance. The paper shows that swapping a plain encoder-decoder for the U-Net produces a dramatic jump in quality across tasks."}
+          ]
+        },
+        {
+          "title": "PatchGAN: a discriminator that thinks local",
+          "subtitle": "Modeling texture, not layout",
+          "pdfPages": [4, 5],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "Recall the division of labour: L1 already enforces correctness at the coarse, low-frequency scale. So the discriminator only needs to police the <strong>high-frequency</strong> detail — the crispness of local texture. That observation leads to a clever, efficient design."},
+            {"type": "p", "html": "Instead of judging the whole image as real or fake with a single number, the <strong>PatchGAN</strong> discriminator classifies each $N \\times N$ <em>patch</em> independently, then averages the verdicts. It runs convolutionally over the image and outputs a grid of real/fake scores, one per patch. Because each score depends only on a local region, $D$ is forced to model local texture realism rather than global layout."},
+            {"type": "p", "html": "This has two big benefits. First, far fewer parameters and it runs faster. Second, it generalizes — a patch-based critic can be applied to arbitrarily large images. The authors found a surprisingly small receptive field works best: a <strong>70×70</strong> PatchGAN gives sharp results without the tiling artifacts that come from going even more local. Whole-image discriminators offered no quality gain over this."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Evaluating images is hard — so ask humans and machines",
+          "subtitle": "Metrics",
+          "pdfPages": [5, 6],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "There is no single number that captures 'does this image look good,' so pix2pix uses two complementary evaluations. <strong>Real-vs-fake perceptual studies</strong> on Amazon Mechanical Turk: workers see a real and a generated image briefly and say which is real — the fraction of times the fake fools them is the score. And the <strong>FCN-score</strong>: run an off-the-shelf semantic segmentation network on generated street scenes; if a generated image is realistic, the classifier should label its objects correctly, so segmentation accuracy becomes a proxy for realism."},
+            {"type": "table", "headers": ["Loss", "Per-pixel acc.", "Per-class acc.", "Class IoU"], "rows": [["L1 only", "0.42", "0.15", "0.11"], ["cGAN only", "0.57", "0.22", "0.16"], ["L1 + cGAN", "0.66", "0.23", "0.17"], ["Ground truth", "0.80", "0.26", "0.21"]]},
+            {"type": "p", "html": "On the labels→photo (Cityscapes) FCN-score, the full <strong>L1 + cGAN</strong> objective beats either piece alone and approaches the ground-truth ceiling — direct evidence that the two losses are complementary, not redundant."}
+          ]
+        },
+        {
+          "title": "What it can do, and what carries over",
+          "subtitle": "Takeaways",
+          "pdfPages": [6, 7],
+          "viz": ["image-translation"],
+          "blocks": [
+            {"type": "p", "html": "With one unchanged framework the paper demonstrates: semantic labels → photo, architectural labels → facades, map ↔ aerial photo, BW → colour, edges → photo (shoes, handbags), sketch → photo, day → night, and even thermal → colour. The community quickly extended it to a flood of creative 'edges2X' demos, which is the best evidence of its generality."},
+            {"type": "list", "items": ["A learned adversarial loss removes the need to hand-design a loss per task — the discriminator <em>is</em> the loss, and it adapts automatically.", "L1 handles low-frequency correctness; the GAN handles high-frequency sharpness. Combining them gets both.", "The U-Net's skip connections let input structure flow straight to the output, so the generator only has to repaint, not rebuild.", "The PatchGAN judges local texture patches — fewer parameters, scales to any image size, and 70×0 is the sweet spot.", "The big limitation: pix2pix needs <strong>paired</strong> training data (aligned input/output pairs), which is often expensive or impossible to collect — the gap that CycleGAN would later close."]}
+          ]
+        }
+      ]
+    }
+  ]
+}
