@@ -12,10 +12,12 @@
           "subtitle": "Let the network propose its own regions",
           "pdfPages": [1],
           "blocks": [
-            {"type":"p","html":"Object detectors of the Fast R-CNN era were fast at classifying regions but bottlenecked by how they <i>found</i> those regions. Methods like Selective Search ran on the CPU and took around two seconds per image &mdash; far slower than the detection network itself. Region proposal had become the bottleneck."},
-            {"type":"p","html":"Faster R-CNN's idea is to make the proposals come from a neural network that <b>shares convolutional features with the detector</b>. This <b>Region Proposal Network (RPN)</b> looks at the same feature map the detector already computes and outputs candidate boxes nearly for free."},
+            {"type":"p","html":"<b>The question this page answers:</b> object detectors of 2014&ndash;2015 had gotten fast at <i>classifying</i> candidate boxes, but they were still slow because of how they <i>found</i> those candidate boxes in the first place. This paper removes that last bottleneck and makes detection nearly real-time."},
+            {"type":"p","html":"<b>The bottleneck, concretely.</b> A detector must first guess <i>where</i> objects might be (region proposals), then decide <i>what</i> each region is. Fast R-CNN had made the &lsquo;what&rsquo; step fast, but the &lsquo;where&rsquo; step still used <b>Selective Search</b>, a hand-engineered algorithm that runs on the CPU and takes about <b>2 seconds per image</b>. The detection network itself ran in well under a second &mdash; so the system spent most of its wall-clock time waiting for proposals it could not parallelize on the GPU."},
+            {"type":"p","html":"<b>The insight.</b> The convolutional feature map the detector already computes <i>over the whole image</i> contains everything needed to guess where objects are. So why compute proposals with a separate CPU algorithm? Faster R-CNN adds a tiny <b>Region Proposal Network (RPN)</b> that reads that same shared feature map and emits candidate boxes almost for free &mdash; in about 10 ms instead of 2 seconds."},
             {"type":"quote","html":"An RPN is a fully convolutional network that simultaneously predicts object bounds and objectness scores at each position ... sharing their full-image convolutional features with the detection network, thus enabling nearly cost-free region proposals."},
-            {"type":"p","html":"The payoff is a unified detector running at <b>5&ndash;17 fps</b> (depending on backbone) while achieving state-of-the-art accuracy: about <b>73.2% mAP on PASCAL VOC 2007</b> and <b>70.4% on VOC 2012</b>, plus strong COCO results. It became the standard two-stage detection framework."}
+            {"type":"p","html":"<b>The payoff, in numbers.</b> The unified detector runs at <b>5 fps</b> with the deep VGG-16 backbone (and ~17 fps with the small ZF backbone) while setting state-of-the-art accuracy: about <b>73.2% mAP on PASCAL VOC 2007</b> and <b>70.4% mAP on VOC 2012</b>, plus strong COCO numbers. (mAP, &lsquo;mean Average Precision,&rsquo; averages detection precision across all object classes &mdash; the standard detection score.)"},
+            {"type":"p","html":"<b>Why it mattered.</b> Faster R-CNN became <i>the</i> template for two-stage detection for years, and its <b>anchor</b> mechanism became shared vocabulary reused by SSD, RetinaNet, YOLOv2+, and many others. It was also the detection framework that ResNet plugged into to sweep the 2015 ImageNet/COCO challenges, and the baseline DETR later defined itself against."}
           ]
         }
       ]
@@ -28,10 +30,16 @@
           "subtitle": "Where the time went",
           "pdfPages": [1, 2],
           "blocks": [
-            {"type":"p","html":"The R-CNN family detects objects in two stages: first propose regions that might contain objects, then classify each region and refine its box. Fast R-CNN sped up the second stage dramatically by sharing one convolutional pass over the image and pooling features per region. But the first stage &mdash; external proposal methods like Selective Search &mdash; stayed slow and ran outside the network."},
-            {"type":"p","html":"So even a fast detector spent most of its wall-clock time waiting for proposals. The key observation behind Faster R-CNN is that the convolutional feature map computed for detection <b>already contains</b> the information needed to propose regions. Why compute proposals separately when the features are sitting right there?"},
+            {"type":"p","html":"<b>The lineage.</b> The R-CNN family detects in two stages: (1) <i>propose</i> regions that might contain an object, then (2) <i>classify</i> each region and refine its box. Understanding why proposals became the bottleneck means tracing three generations."},
+            {"type":"list","items":[
+              "<b>R-CNN (2014):</b> ~2000 Selective Search proposals per image, each cropped and pushed through a CNN <i>separately</i>. Accurate but glacial &mdash; tens of seconds per image &mdash; because the CNN ran 2000 times.",
+              "<b>Fast R-CNN (2015):</b> run the CNN <i>once</i> over the whole image, then pool features per proposal from the shared feature map (RoI pooling). The classify step dropped to a fraction of a second &mdash; a huge win.",
+              "<b>Remaining problem:</b> Fast R-CNN still got its proposals from Selective Search on the CPU (~2 s), which now dominated runtime."
+            ]},
+            {"type":"p","html":"<b>The tangible imbalance.</b> Once Fast R-CNN made detection take ~0.2 s, the ~2 s of Selective Search meant the system was idle ~90% of the time waiting for a non-GPU algorithm. Speeding up the detector further was pointless until the proposal step moved onto the GPU and shared work with the detector."},
             {"type":"h2","text":"The unification"},
-            {"type":"p","html":"By bolting a small proposal network onto the shared feature map, the two stages become one network with two heads. Proposals cost only about 10 ms, and the system trains and runs as a single model."}
+            {"type":"p","html":"<b>The key observation.</b> The shared convolutional feature map computed for detection <i>already encodes</i> where objects likely are. Faster R-CNN bolts a small proposal network directly onto that feature map, turning two separate systems into <b>one network with two heads</b> &mdash; an RPN head that proposes and a Fast R-CNN head that classifies and refines. Proposals now cost ~10 ms and the whole thing trains and runs as a single GPU model."},
+            {"type":"p","html":"<b>Trivia.</b> All four authors &mdash; Shaoqing Ren, Kaiming He, Ross Girshick, Jian Sun &mdash; are detection/CNN luminaries; Girshick authored R-CNN and Fast R-CNN, and He authored ResNet the same year. Faster R-CNN and ResNet were developed in the same lab and combined to win the 2015 challenges."}
           ]
         }
       ]
@@ -40,19 +48,21 @@
       "title": "3. Method",
       "pages": [
         {
-          "title": "The Region Proposal Network",
+          "title": "The Region Proposal Network and anchors",
           "subtitle": "A sliding window over shared features",
           "pdfPages": [3, 4],
           "blocks": [
-            {"type":"p","html":"The RPN slides a small network over the shared convolutional feature map. At each position it looks at an $n\\times n$ window, maps it to a lower-dimensional vector, and feeds that to two sibling heads: a <b>box-regression</b> head and a <b>box-classification (objectness)</b> head that scores whether the box contains an object or background."},
-            {"type":"p","html":"Because objects come in many shapes and sizes, each position uses a set of reference boxes called <b>anchors</b>. The default design uses <b>3 scales and 3 aspect ratios = 9 anchors</b> per location. The RPN does not predict boxes from scratch; it predicts <i>offsets</i> relative to these anchors, which makes the targets well-conditioned."},
+            {"type":"p","html":"<b>What the RPN is.</b> A small fully-convolutional network that slides over the shared feature map. At each spatial position it looks at an $n\\times n$ window (the paper uses $n=3$), maps that window to a lower-dimensional vector (256-d for ZF, 512-d for VGG), and feeds it to two sibling output heads: a <b>box-regression</b> head and a <b>box-classification (objectness)</b> head that scores object-vs-background. Because it is convolutional, sliding the window is just a $3\\times3$ conv applied across the whole map &mdash; one pass, no loop &mdash; which is why proposals are nearly free."},
+            {"type":"p","html":"<b>The problem anchors solve.</b> Objects come in many sizes and shapes &mdash; a pencil, a person, a bus. A single box predicted per location could only commit to one shape. The fix is to attach, at every position, a set of reference boxes of different sizes and aspect ratios called <b>anchors</b>. The RPN then predicts, for each anchor, (a) how likely it contains an object and (b) small adjustments to make it fit better."},
+            {"type":"p","html":"<b>A concrete anchor.</b> The default design uses <b>3 scales &times; 3 aspect ratios = 9 anchors</b> per position. The scales cover small/medium/large objects (areas like 128&sup2;, 256&sup2;, 512&sup2; pixels) and the ratios cover tall/square/wide shapes (1:2, 1:1, 2:1). So at one location the RPN can simultaneously consider a tall thin box, a wide flat box, and a square box at three sizes &mdash; nine guesses &mdash; and score each."},
             {"type":"list","items":[
-              "Anchors give translation-invariant references at multiple scales/ratios &mdash; no image pyramid or filter pyramid needed.",
-              "Classification head: 2 scores per anchor (object vs. not).",
-              "Regression head: 4 coordinate offsets per anchor.",
-              "For a W&times;H feature map there are W&times;H&times;9 anchors total."
+              "Anchors give <b>translation-invariant</b>, multi-scale references &mdash; no need for an image pyramid or a pyramid of differently-sized filters, which is what made earlier multi-scale detectors slow.",
+              "<b>Classification head:</b> outputs 2 scores per anchor (object vs. background), so $2k$ scores where $k=9$ anchors.",
+              "<b>Regression head:</b> outputs 4 coordinate offsets per anchor, so $4k$ numbers.",
+              "For a $W\\times H$ feature map there are $W\\cdot H\\cdot 9$ anchors total &mdash; on the order of ~20,000 for a typical image."
             ]},
-            {"type":"p","html":"This is fully convolutional, so the whole feature map is processed in one pass &mdash; that is what makes proposals nearly free."}
+            {"type":"p","html":"<b>The box parameterization.</b> The RPN does not predict absolute pixel coordinates; it predicts offsets relative to its anchor. For predicted center $(x,y)$, size $(w,h)$, anchor $(x_a,y_a,w_a,h_a)$, the targets are $t_x=(x-x_a)/w_a$, $t_y=(y-y_a)/h_a$, $t_w=\\log(w/w_a)$, $t_h=\\log(h/h_a)$. Dividing by the anchor size makes the targets scale-normalized, and the $\\log$ on width/height keeps them small and symmetric &mdash; both make the regression well-conditioned and easy to learn."},
+            {"type":"p","html":"<b>Design rationale.</b> Regressing offsets from good reference boxes is far easier than predicting boxes from scratch (the targets are small and centered), and decoupling the boxes from the feature map&rsquo;s resolution lets one feature map cover all object sizes at once &mdash; the single trick that makes the RPN both fast and accurate."}
           ]
         },
         {
@@ -60,10 +70,12 @@
           "subtitle": "A multi-task loss and shared features",
           "pdfPages": [4, 5],
           "blocks": [
-            {"type":"p","html":"Each anchor is labeled positive if it overlaps a ground-truth box well (high IoU) and negative if it overlaps poorly. The RPN is trained with a <b>multi-task loss</b> that combines objectness classification and box regression:"},
+            {"type":"p","html":"<b>Labeling the anchors.</b> Each anchor is labeled by its overlap with the ground-truth boxes, measured by <b>IoU</b> (Intersection-over-Union: the area of overlap divided by the area of union, between 0 and 1). An anchor is <b>positive</b> if its IoU with some ground-truth box exceeds 0.7 (or it is the best-matching anchor for that box), and <b>negative</b> if its IoU with every box is below 0.3. Anchors in between are ignored. Each mini-batch samples ~256 anchors from one image, kept near a 1:1 positive:negative ratio so the abundant background does not swamp training."},
+            {"type":"p","html":"<b>The multi-task loss.</b> The RPN learns objectness and box refinement jointly:"},
             {"type":"math","tex":"L(\\{p_i\\}, \\{t_i\\}) = \\frac{1}{N_{cls}} \\sum_i L_{cls}(p_i, p_i^*) + \\lambda \\frac{1}{N_{reg}} \\sum_i p_i^* L_{reg}(t_i, t_i^*)"},
-            {"type":"p","html":"Reading this: $p_i$ is the predicted objectness for anchor $i$ and $p_i^*$ its true label (1 if object); $t_i$ are the predicted box offsets and $t_i^*$ the ground-truth offsets. $L_{cls}$ is a log loss, $L_{reg}$ a smooth-L1 box loss. The $p_i^*$ factor means the regression term is active <i>only for positive anchors</i> &mdash; we only learn to refine boxes that actually contain an object. $\\lambda$ balances the two terms."},
-            {"type":"p","html":"The RPN and the Fast R-CNN detector are made to <b>share convolutional layers</b> rather than learning two separate backbones. The paper trains this with an alternating / approximate-joint scheme so both heads adapt to the same features. The detector then takes the top RPN proposals, RoI-pools each, and outputs the final class and refined box."}
+            {"type":"p","html":"<b>Reading it term by term.</b> $i$ indexes anchors in the mini-batch. $p_i$ is the predicted probability anchor $i$ is an object; $p_i^*$ is its ground-truth label (1 if positive, 0 if negative). $t_i$ is the 4-vector of predicted box offsets and $t_i^*$ the ground-truth offsets (from the parameterization on the previous page). $L_{cls}$ is the log loss over the two classes (object / not). $L_{reg}$ is a smooth-L1 (Huber) loss on the box offsets &mdash; robust to outliers, unlike plain L2. $N_{cls}$ and $N_{reg}$ normalize the two terms (by the batch size and the number of anchor locations), and $\\lambda$ (set so the two terms are roughly balanced) weights regression against classification."},
+            {"type":"p","html":"<b>The crucial $p_i^*$ factor.</b> Note the regression term is multiplied by $p_i^*$. Since $p_i^*=0$ for negative anchors, the box-regression loss is <b>active only for positive anchors</b> &mdash; we only learn to refine boxes that actually contain an object, because &lsquo;the right box for a patch of background&rsquo; is meaningless."},
+            {"type":"p","html":"<b>Sharing features between the two heads.</b> The RPN and the Fast R-CNN detector are made to <b>share the same convolutional backbone</b> rather than each learning its own &mdash; otherwise the &lsquo;nearly free&rsquo; benefit would be lost. The paper trains this with a 4-step <b>alternating optimization</b>: train the RPN; train Fast R-CNN on the RPN&rsquo;s proposals; re-train the RPN with the shared conv layers frozen; finally fine-tune the detector head. A later approximate-joint scheme trains both in one pass. The detector then takes the top-scoring RPN proposals, RoI-pools each from the shared map, and outputs the final class label and refined box."}
           ]
         }
       ]
@@ -76,9 +88,11 @@
           "subtitle": "PASCAL VOC and runtime",
           "pdfPages": [8, 9],
           "blocks": [
-            {"type":"p","html":"Replacing Selective Search with the RPN both <b>speeds up</b> detection and <b>improves</b> accuracy &mdash; the learned, detection-aware proposals are better than the generic ones. On PASCAL VOC 2007 the system reaches about <b>73.2% mAP</b>, and on VOC 2012 about <b>70.4% mAP</b>, state of the art at the time."},
-            {"type":"table","headers":["Backbone","mAP (VOC07)","Speed"],"rows":[["ZF (small)","~59.9%","~17 fps"],["VGG-16","~73.2%","~5 fps"]]},
-            {"type":"p","html":"With the lightweight ZF backbone the detector runs at <b>17 fps</b>; with the heavier, more accurate VGG-16 it runs at <b>5 fps</b>. Proposal generation drops from ~2 seconds (Selective Search) to about 10 ms, which is the entire reason the system can approach real time."}
+            {"type":"p","html":"<b>The headline result.</b> Replacing Selective Search with the RPN both <b>speeds up</b> detection and <b>improves</b> accuracy &mdash; you rarely get both at once. The learned, detection-aware proposals turn out to be <i>better</i> than the generic hand-engineered ones, because they are trained end-to-end on the same features the detector uses."},
+            {"type":"p","html":"<b>The accuracy.</b> On PASCAL VOC 2007 the system reaches about <b>73.2% mAP</b>, and on VOC 2012 about <b>70.4% mAP</b> &mdash; state of the art at the time, beating the Selective-Search-based Fast R-CNN it replaced."},
+            {"type":"table","headers":["Backbone","mAP (VOC07)","Speed","Proposal time"],"rows":[["ZF (small, 5 conv layers)","~59.9%","~17 fps","~10 ms"],["VGG-16 (deep, 13 conv layers)","~73.2%","~5 fps","~10 ms"]]},
+            {"type":"p","html":"<b>Reading the trade-off.</b> The lightweight ZF backbone runs at <b>17 fps</b> but is less accurate; the heavier VGG-16 backbone runs at <b>5 fps</b> with much higher mAP. Either way, proposal generation drops from ~2 seconds (Selective Search) to about <b>10 ms</b> &mdash; a ~200&times; speedup on that stage, which is the entire reason the system can approach real time."},
+            {"type":"p","html":"<b>Why shared features are the secret.</b> Because the RPN and detector reuse the same backbone, the only extra cost over a single forward pass is the tiny RPN head and the RoI pooling. The proposal step is no longer a separate program on the CPU but a few convolutions on the GPU, riding for free on features the detector needed anyway."}
           ]
         },
         {
@@ -86,9 +100,10 @@
           "subtitle": "COCO and ablations",
           "pdfPages": [9, 10],
           "blocks": [
-            {"type":"p","html":"The RPN also generalizes to the larger, harder <b>COCO</b> dataset, where Faster R-CNN posted strong numbers and formed the basis of competition-winning entries (combined with ResNet backbones soon after). The shared-feature design is what makes scaling the backbone worthwhile &mdash; a better backbone improves both proposals and classification at once."},
-            {"type":"p","html":"Ablations show the RPN needs far <b>fewer proposals</b> than Selective Search to hit the same recall: roughly 300 high-quality RPN proposals match or beat thousands of Selective Search boxes. Quality, not quantity, is what drives detection accuracy."},
-            {"type":"quote","html":"For the very deep VGG-16 model, our detection system has a frame rate of 5 fps ... while achieving state-of-the-art object detection accuracy."}
+            {"type":"p","html":"<b>Quality over quantity.</b> The most telling ablation: how many proposals do you need to find all the objects? Selective Search needs <b>~2000</b> proposals per image to reach high recall; the RPN matches or beats that recall with only <b>~300</b> proposals, because its proposals are learned and therefore concentrated on real objects. Fewer proposals also means the downstream detector runs faster &mdash; a compounding win."},
+            {"type":"p","html":"<b>Generalizing to COCO.</b> The RPN also transfers to the larger, harder <b>MS COCO</b> dataset (80 classes, ~330k images, stricter IoU-based evaluation), where Faster R-CNN posted strong numbers and formed the basis of competition-winning entries &mdash; notably when combined with the ResNet backbone soon after. The shared-feature design is precisely what makes scaling the backbone worthwhile: a better backbone improves <i>both</i> the proposals and the final classification at once."},
+            {"type":"quote","html":"For the very deep VGG-16 model, our detection system has a frame rate of 5 fps (including all steps) on a GPU, while achieving state-of-the-art object detection accuracy."},
+            {"type":"p","html":"<b>Ablation rationale.</b> The authors verify each piece matters: sharing the conv features (vs. two separate networks) both speeds things up and lifts mAP; using multiple anchor scales/ratios beats using a single anchor shape; and tuning $\\lambda$ in the loss has only a mild effect, showing the design is robust. Together these establish that the gains come from the architecture, not from incidental tuning."}
           ]
         }
       ]
@@ -101,13 +116,15 @@
           "subtitle": "The two-stage template",
           "pdfPages": [1],
           "blocks": [
-            {"type":"p","html":"Faster R-CNN defined the <b>two-stage detector</b> template that dominated detection for years: a shared backbone, an RPN that proposes, and a head that classifies and refines. The anchor mechanism it introduced became standard vocabulary across detection, reused by SSD, RetinaNet, and many others."},
+            {"type":"p","html":"<b>The lasting template.</b> Faster R-CNN defined the <b>two-stage detector</b> that dominated detection for years: a shared backbone, an RPN that proposes, and a head that classifies and refines. This decomposition &mdash; propose, then classify &mdash; with everything sharing one set of features became the default mental model for object detection."},
+            {"type":"p","html":"<b>The anchor legacy.</b> The anchor mechanism it introduced &mdash; tiling reference boxes of multiple scales and ratios and regressing offsets from them &mdash; became standard vocabulary, reused by single-stage detectors (SSD, RetinaNet) and later YOLO versions. The subsequent move to &lsquo;anchor-free&rsquo; detectors (FCOS, CornerNet) and to set-prediction detectors (DETR) was explicitly framed <i>in contrast</i> to Faster R-CNN&rsquo;s anchors, which shows how central the idea became."},
             {"type":"list","items":[
-              "Introduced the Region Proposal Network, generating proposals from shared conv features nearly for free.",
-              "Introduced anchors (3 scales x 3 ratios) as translation-invariant, multi-scale references.",
-              "Unified proposal + detection into one trainable network at 5-17 fps with state-of-the-art mAP.",
-              "Became the backbone of countless detectors and the baseline DETR later compared itself against."
-            ]}
+              "Introduced the <b>Region Proposal Network</b>, generating proposals from shared conv features in ~10 ms instead of ~2 s.",
+              "Introduced <b>anchors</b> (3 scales &times; 3 ratios = 9 per location) as translation-invariant, multi-scale references.",
+              "Unified proposal + detection into one trainable GPU network at 5&ndash;17 fps with state-of-the-art mAP (73.2% VOC07).",
+              "Became the backbone of countless detectors, the framework ResNet used to win the 2015 ImageNet/COCO challenges, and the baseline DETR later compared itself against."
+            ]},
+            {"type":"p","html":"<b>Context &amp; trivia.</b> Faster R-CNN extended to instance segmentation as <b>Mask R-CNN</b> (2017, He et al.) by adding a mask-prediction head &mdash; a direct descendant that won the Marr Prize. The &lsquo;5 fps&rsquo; in the title was &lsquo;real-time enough&rsquo; for 2015; single-stage detectors like YOLO and SSD soon traded a little accuracy for much higher frame rates, defining the speed-vs-accuracy axis that still organizes the detection literature today."}
           ]
         }
       ]

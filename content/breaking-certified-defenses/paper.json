@@ -13,9 +13,11 @@
           "pdfPages": [1],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "<strong>Certified defenses</strong> promise something heuristic defenses cannot: a mathematical guarantee that no adversarial example exists within a given distance of the input. For each prediction they emit a <strong>certificate</strong> &mdash; a radius inside which the label is provably stable."},
-            {"type": "p", "html": "But a guarantee is only as meaningful as its assumptions. Certificates are proven against a specific <strong>threat model</strong> &mdash; usually small perturbations bounded in an $\\ell_p$ norm (every pixel changes by at most $\\epsilon$). The certificate says nothing about perturbations <em>outside</em> that ball."},
-            {"type": "quote", "html": "This paper's punchline: you can produce inputs that are <strong>visibly, semantically altered</strong> (different color, slightly shifted) yet still arrive with a <strong>valid robustness certificate</strong>. The math is correct; the guarantee is just irrelevant to how the image actually changed."}
+            {"type": "p", "html": "<strong>Certified defenses</strong> promise something the usual heuristic defenses cannot: not just &ldquo;we tried hard and could not break it,&rdquo; but a genuine mathematical guarantee that <em>no</em> adversarial example exists within a given distance of the input. For each prediction the defense emits a <strong>certificate</strong> &mdash; a radius $r$ inside which the label is provably constant. It feels like the end of the adversarial arms race: a proof is a proof."},
+            {"type": "p", "html": "This paper shows the proof can be made to vouch for an image that is <em>obviously wrong</em>. The authors construct what they call a <strong>Shadow Attack</strong>: they produce inputs that are large and clearly altered to a human eye &mdash; recolored, with a faint colored haze laid over the object &mdash; yet still arrive carrying a <strong>valid, large robustness certificate</strong>, and are misclassified. The certificate&rsquo;s math is correct. It is simply answering a question nobody should have been comforted by."},
+            {"type": "p", "html": "The intuition for why this is possible: certificates are proven against a specific <strong>threat model</strong>, almost always small perturbations bounded in an $\\ell_p$ norm (every pixel changes by at most some tiny $\\epsilon$). The certificate is completely silent about perturbations <em>outside</em> that ball. A real attacker is not obligated to stay inside the box &mdash; so the attack steps far outside it, in a direction the certifier still happens to bless."},
+            {"type": "quote", "html": "The punchline: you can build a visibly, semantically altered image that the network <strong>misclassifies</strong> while the defense <strong>certifies it as robust with a large radius</strong>. The guarantee is technically true and practically meaningless &mdash; a &ldquo;spoofed&rdquo; certificate."},
+            {"type": "p", "html": "Figure 1 of the paper makes it vivid: a natural macaw is shown alongside a Shadow Attack version that any person still reads as a macaw, mildly tinted &mdash; but the model labels it &ldquo;bucket&rdquo; and stamps it with a certificate <em>larger</em> than the one the genuine clean image received."}
           ]
         }
       ]
@@ -29,11 +31,24 @@
           "pdfPages": [2],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "A certified classifier guarantees its prediction is constant within an $\\ell_p$ ball of radius $r$ around the input. Formally, the certificate is a promise of the form:"},
-            {"type": "math", "tex": "\\forall \\, \\delta \\; \\text{with} \\; \\| \\delta \\|_{p} \\le r : \\quad f(x + \\delta) = f(x)"},
-            {"type": "p", "html": "In words: for <em>every</em> perturbation $\\delta$ whose size is at most $r$ in the $\\ell_p$ norm, the prediction does not change. This is genuinely proven &mdash; there is no white-box or black-box attack inside that ball."},
-            {"type": "p", "html": "The hidden assumption is the choice of $\\ell_p$ and the meaning of 'size'. An $\\ell_p$ ball measures change <strong>pixel by pixel</strong>. But many perturbations that humans perceive as 'the same object' move <em>every</em> pixel by a large amount: shift the whole image one pixel right, or rotate the hue. These live far outside the certified ball, so the certificate makes no claim about them."},
-            {"type": "p", "html": "The flaw the paper exploits is the gap between <strong>perceptual similarity</strong> (does it still look like the same scene to a person?) and <strong>$\\ell_p$ distance</strong> (did the pixel values stay numerically close?). The two are not the same."}
+            {"type": "p", "html": "Start with what a certified classifier really promises. It guarantees that its prediction is constant within an $\\ell_p$ ball of radius $r$ around the input. Formally:"},
+            {"type": "math", "tex": "\\forall \\, \\delta \\;\\; \\text{with} \\;\\; \\| \\delta \\|_{p} \\le r : \\quad f(x + \\delta) = f(x)"},
+            {"type": "p", "html": "Term by term: $x$ is the input image; $f$ is the classifier; $\\delta$ is any candidate perturbation; $\\|\\delta\\|_p$ is its size measured in the $\\ell_p$ norm (e.g. $\\ell_2$ is Euclidean length, $\\ell_\\infty$ is the largest single-pixel change); and $r$ is the certified radius. The statement reads: <em>for every</em> perturbation no larger than $r$, the predicted label does not change. This is genuinely proven &mdash; no white-box or black-box attack exists inside that ball."},
+            {"type": "p", "html": "The catch hides in the phrase &ldquo;measured in the $\\ell_p$ norm.&rdquo; An $\\ell_p$ ball counts change <strong>pixel by pixel, numerically</strong>. But many edits that a human perceives as &ldquo;the same object&rdquo; move <em>every</em> pixel by a large amount. Shift the whole image one pixel to the right and every edge jumps; rotate the hue and every color value changes; lay a smooth tint over the scene and the entire image drifts. All of these have enormous $\\ell_p$ distance, so they sit far outside the certified ball, where the certificate makes no claim whatsoever."},
+            {"type": "p", "html": "So the exploitable flaw is the gap between two notions of &ldquo;close&rdquo;: <strong>perceptual similarity</strong> (does it still look like the same scene to a person?) versus <strong>$\\ell_p$ distance</strong> (did the raw pixel numbers stay close?). The whole defense is built on assuming these coincide. They do not."}
+          ]
+        },
+        {
+          "title": "Randomized Smoothing & CROWN-IBP",
+          "subtitle": "The two certified defenses under attack",
+          "pdfPages": [2, 4],
+          "viz": [],
+          "blocks": [
+            {"type": "p", "html": "The paper targets the two leading families of certified defense, so it is worth knowing roughly how each issues its certificate."},
+            {"type": "p", "html": "<strong>Randomized smoothing</strong> (Cohen et al., 2019) turns any base classifier into a certified one by adding Gaussian noise. To classify $x$, you sample many noisy copies $x + \\eta$ with $\\eta \\sim \\mathcal{N}(0, \\sigma^2 I)$ and take a majority vote. The certified $\\ell_2$ radius grows with how lopsided that vote is &mdash; the more confidently the noisy votes agree on one class, the larger the certificate:"},
+            {"type": "math", "tex": "r = \\frac{\\sigma}{2}\\left( \\Phi^{-1}(\\underline{p_A}) - \\Phi^{-1}(\\overline{p_B}) \\right)"},
+            {"type": "p", "html": "Here $\\sigma$ is the noise level; $\\underline{p_A}$ is a lower bound on the probability the smoothed classifier votes for the top class $A$; $\\overline{p_B}$ is an upper bound on the runner-up class $B$; and $\\Phi^{-1}$ is the inverse standard-normal CDF (the &ldquo;z-score&rdquo; function). The lesson to keep: <strong>the radius is large precisely when the noisy votes are overwhelmingly one class.</strong> The attack&rsquo;s job is to find a visibly altered image whose <em>noisy</em> copies still vote almost unanimously for a wrong class."},
+            {"type": "p", "html": "<strong>CROWN-IBP</strong> (Zhang et al., 2020) is a deterministic certifier for $\\ell_\\infty$ robustness. It propagates interval bounds through the network to prove that no $\\ell_\\infty$ perturbation up to $\\epsilon$ can change the output. The Shadow Attack spoofs it too, showing the weakness is not specific to one certification mechanism but to the shared $\\ell_p$ threat-model assumption."}
           ]
         }
       ]
@@ -42,20 +57,16 @@
       "title": "Method",
       "pages": [
         {
-          "title": "Semantic Perturbations Outside the Ball",
-          "subtitle": "Change the image in ways the norm ignores",
+          "title": "The Shadow Attack Objective",
+          "subtitle": "Make a big perturbation that still looks natural",
           "pdfPages": [3],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Instead of adding pixel noise (which the certificate is designed to resist), the attacker applies <strong>semantic transformations</strong> &mdash; changes that preserve the object's identity to a human but move the pixels a lot in $\\ell_p$ terms, landing well outside the certified ball."},
-            {"type": "list", "items": [
-              "<strong>Color / hue shifts:</strong> recolor the whole image (e.g. rotate hue in HSV). A person still recognizes the object; pixel values change enormously.",
-              "<strong>Spatial shifts and translations:</strong> move the image by a pixel or two. Perceptually trivial, but a large $\\ell_p$ distance because every edge moves.",
-              "<strong>Other identity-preserving edits</strong> that the $\\ell_p$ threat model never anticipated."
-            ]},
-            {"type": "p", "html": "The attacker optimizes the parameters of such a transformation to (a) cause a misclassification while (b) the perturbed image still receives a <strong>valid, non-trivial certificate</strong>. The result is a semantically adversarial example that the defense itself <em>vouches for</em>."},
-            {"type": "math", "tex": "x' = T_{\\theta}(x), \\qquad \\| x' - x \\|_{p} \\gg r \\quad \\text{yet} \\quad x' \\; \\text{is certified}"},
-            {"type": "p", "html": "Here $T_\\theta$ is a semantic transformation (color, shift) with parameters $\\theta$. The crafted $x'$ sits far outside the original certified ball, so the certificate computed at $x'$ describes a <em>different</em>, irrelevant neighborhood and says nothing about the visible change that was actually made."}
+            {"type": "p", "html": "The Shadow Attack does not add tiny pixel noise (the very thing certificates are designed to resist). It deliberately searches for a <strong>large</strong> perturbation $\\delta$ that (a) flips the label and (b) <em>looks natural enough</em> that the certifier still hands out a big certificate. The key realization: certificates do not penalize a perturbation for being large in $\\ell_p$ &mdash; they penalize it for being <em>detectable as adversarial</em>. So if you make the perturbation big but smooth, dull, and uniform across color channels, it reads to the certifier like a benign lighting change rather than an attack."},
+            {"type": "p", "html": "Concretely the attacker maximizes the misclassification loss over $\\delta$ while paying three penalties that keep $\\delta$ photographically plausible:"},
+            {"type": "math", "tex": "\\max_{\\delta} \\;\\; L_{\\text{spoof}}(x+\\delta) \\;-\\; \\lambda_{c}\\, C(\\delta) \\;-\\; \\lambda_{tv}\\, TV(\\delta) \\;-\\; \\lambda_{s}\\, \\text{Dissim}(\\delta)"},
+            {"type": "p", "html": "Reading the four pieces. <strong>$L_{\\text{spoof}}$</strong> is the attack&rsquo;s classification loss &mdash; pushing the perturbed image $x+\\delta$ to be misclassified (and, for smoothing, to be misclassified <em>even under added Gaussian noise</em>, which is what spoofs the certificate). <strong>$C(\\delta)$</strong> penalizes the overall <em>magnitude</em> of the perturbation per channel. <strong>$TV(\\delta)$</strong> is the <strong>total variation</strong> &mdash; the sum of differences between neighboring pixels; penalizing it forces $\\delta$ to be <em>smooth</em> (no high-frequency speckle, which is the tell-tale signature of an adversarial example). <strong>$\\text{Dissim}(\\delta)$</strong> penalizes the perturbation differing across the red/green/blue channels, so the change looks like a uniform tint rather than colored noise. The $\\lambda$&rsquo;s weight each penalty."},
+            {"type": "p", "html": "The combined effect is a perturbation that is large in $\\ell_p$ but perceptually reads as a gentle, smooth, single-color haze &mdash; a &ldquo;shadow&rdquo; cast over the image. To a person it is clearly the same object under a tint; to the pixel-counting norm it is huge; and crucially, to the certifier it looks robust."}
           ]
         },
         {
@@ -64,10 +75,10 @@
           "pdfPages": [3, 4],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "It is important to see that nothing in the certificate's proof is broken. The certifier honestly computes: 'around this input $x'$, all $\\ell_p$ perturbations up to radius $r$ keep the label.' That statement remains true."},
-            {"type": "p", "html": "The deception is in <strong>what the certificate is silent about</strong>. The semantic edit that produced $x'$ from the original $x$ is not an $\\ell_p$ perturbation within $r$; it is a large, structured move the proof never covered. So a user reading the certificate at face value &mdash; 'this prediction is provably robust' &mdash; is misled about the image's actual provenance."},
-            {"type": "quote", "html": "A correct proof about an irrelevant ball is still a misleading guarantee. Robustness is only meaningful relative to a threat model that matches real-world perturbations."},
-            {"type": "p", "html": "Concretely, the attacker searches over transformation parameters $\\theta$ to find a visibly altered image that the network both <strong>misclassifies</strong> and <strong>certifies as robust</strong> &mdash; producing the paradoxical artifact of a confidently 'certified' wrong answer on an obviously edited picture."}
+            {"type": "p", "html": "Why do smooth, low-saturation, channel-uniform perturbations earn <em>large</em> certificates? Recall the randomized-smoothing radius grows with how unanimously the noisy votes agree. The three penalties are precisely designed to make the perturbed image robust to the certifier&rsquo;s own Gaussian noise: a smooth, uniform tint shifts the whole image consistently, so adding noise on top still leaves nearly every sample voting for the (wrong) target class. The vote stays lopsided, $\\underline{p_A}$ stays high, and the certificate comes out <em>large</em> &mdash; often larger than the genuine image&rsquo;s."},
+            {"type": "p", "html": "It is essential to see that <strong>nothing in the certificate&rsquo;s proof is broken.</strong> The certifier honestly computes: &ldquo;around this input $x' = x+\\delta$, every $\\ell_p$ perturbation up to radius $r$ keeps the label.&rdquo; That statement is true. The deception lives entirely in <em>what the certificate is silent about</em>: the large semantic move from the original $x$ to $x'$ was never an $\\ell_p$ perturbation within $r$, so the proof never covered it. A user who reads &ldquo;certified robust&rdquo; as &ldquo;this is the right answer on a faithful image&rdquo; has been misled."},
+            {"type": "quote", "html": "A correct proof about an irrelevant ball is still a misleading guarantee. Robustness is only meaningful relative to a threat model that matches the perturbations a real adversary will actually use."},
+            {"type": "p", "html": "Operationally, the attacker runs the optimization above for a few hundred steps, tuning the $\\lambda$ penalties so the result both <strong>misclassifies</strong> and emerges with a <strong>valid, non-trivial certificate</strong> &mdash; manufacturing the paradoxical artifact of a confidently &ldquo;certified&rdquo; wrong answer on an obviously edited picture."}
           ]
         }
       ]
@@ -77,29 +88,31 @@
       "pages": [
         {
           "title": "Certified and Wrong at the Same Time",
-          "subtitle": "Demonstrating spoofed certificates",
+          "subtitle": "Spoofing randomized smoothing on CIFAR-10 and ImageNet",
           "pdfPages": [5, 6],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "The authors show that common certified-defense pipelines can be made to issue valid certificates for semantically perturbed images that are <strong>misclassified</strong>. The certificate radius is real and non-trivial; the image is plainly recolored or shifted; the prediction is wrong. All three at once."},
-            {"type": "p", "html": "This exposes a false sense of security. A practitioner who trusts 'certified robust' as a blanket safety label can be fooled by any adversary willing to step outside the $\\ell_p$ box &mdash; exactly the moves a real attacker would prefer, since semantic edits survive printing, cropping, and recompression."},
+            {"type": "p", "html": "The headline experiment attacks <strong>randomized smoothing</strong> on CIFAR-10 and ImageNet. For each test image the authors craft a Shadow Attack version, then ask the smoothed classifier to certify it. The result: the spoofed images receive certificates that are not just valid but, on average, <strong>larger than the certificates of the unmodified, correctly-classified images</strong> &mdash; while being misclassified."},
+            {"type": "p", "html": "In the paper&rsquo;s Table 1, on CIFAR-10 the mean Shadow-Attack certified radius exceeds the mean radius of the natural/correct images, and similarly on ImageNet. So a defender ranking images by &ldquo;how robust is this prediction&rdquo; would rank the <em>adversarial</em> ones as <em>more</em> trustworthy than the clean ones. The visualizations (Figure 2) show the attack images as plainly the same object under a faint colored shadow."},
             {"type": "table", "headers": ["Property of the attack image", "Status"], "rows": [
-              ["Visibly altered (color / shift)", "Yes &mdash; obvious to a human"],
-              ["Inside the certified Lp ball", "No &mdash; far outside"],
-              ["Carries a valid certificate", "Yes"],
+              ["Visibly altered (smooth color haze)", "Yes &mdash; obvious to a human"],
+              ["Inside the certified Lp ball around the original", "No &mdash; far outside"],
+              ["Carries a valid certificate", "Yes &mdash; and often larger than the clean image's"],
               ["Correctly classified", "No &mdash; misclassified"]
-            ]}
+            ]},
+            {"type": "p", "html": "An <strong>ablation</strong> (removing one component to measure its contribution) confirms each penalty matters: dropping the total-variation term makes $\\delta$ speckly and the certifier no longer cooperates; dropping the channel-similarity term lets colored noise creep in and shrinks the spoofed radius. The smoothness and color penalties are what convert a normal adversarial example into a certificate-spoofing one."}
           ]
         },
         {
-          "title": "The Lesson for Provable Defenses",
+          "title": "Spoofing CROWN-IBP & The Lesson",
           "subtitle": "Match the threat model to reality",
-          "pdfPages": [7, 8],
+          "pdfPages": [7],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "The paper is not an argument against certified defenses &mdash; it is a warning about <strong>interpreting them</strong>. A certificate is a conditional promise: 'safe, <em>assuming</em> the only attacks are small $\\ell_p$ perturbations.' If that assumption is wrong, the promise is hollow."},
+            {"type": "p", "html": "The same idea spoofs <strong>CROWN-IBP</strong>, the deterministic $\\ell_\\infty$ certifier. The attacker simply constrains $\\delta$ to stay within the small $\\ell_\\infty$ budget the certifier checks while still applying the smoothness and color penalties, again producing misclassified images that emerge certified. That the trick generalizes across a randomized certifier and a deterministic one shows the weakness is in the <em>shared assumption</em>, not in any single proof technique."},
+            {"type": "p", "html": "The paper is emphatically <strong>not</strong> an argument against certified defenses &mdash; it is a warning about how to <em>interpret</em> them. A certificate is a conditional promise: &ldquo;safe, <em>assuming</em> the only attacks are small $\\ell_p$ perturbations.&rdquo; When that assumption fails, the promise is hollow, and worse, it is actively misleading because it wears the authority of a proof."},
             {"type": "quote", "html": "Robustness certificates are only as trustworthy as their threat model. Certifying against $\\ell_p$ noise does not certify against color, geometry, or any perturbation the norm cannot see."},
-            {"type": "p", "html": "The constructive takeaway is to broaden threat models: certify against semantic transformations (color, rotation, translation) directly, and report clearly which perturbations a certificate does and does not cover. Otherwise 'provably robust' becomes a marketing phrase rather than a guarantee."}
+            {"type": "p", "html": "The constructive takeaway is to broaden threat models &mdash; certify against semantic transformations (recoloring, translation, rotation, blur) directly &mdash; and to <em>report clearly</em> which perturbations a certificate does and does not cover. Within this collection the paper sits beside the test-time attacks (FGSM, PGD, the adversarial patch) and the unrestricted-adversarial line of work: all of them escape the tidy $\\ell_p$ ball, and all of them argue that &ldquo;provably robust&rdquo; means nothing until you pin down <em>provably robust against what</em>."}
           ]
         }
       ]

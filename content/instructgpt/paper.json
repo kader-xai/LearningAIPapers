@@ -11,14 +11,16 @@
           "title": "Aligning LLMs to human intent with RLHF",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "GPT-3 was extraordinarily capable but frequently <i>unhelpful</i> in practice — it might invent plausible-sounding answers, refuse to follow a stated style, or output harmful content. The base objective (predict the next token of internet text) doesn't optimize for 'be useful to the person asking.'" },
-            { "type": "p", "html": "<b>InstructGPT</b> is the recipe that turned GPT-3 into something usable as a chat assistant. Three stages, applied on top of a pre-trained base model:" },
+            { "type": "p", "html": "<b>The problem.</b> GPT-3 was trained on one objective: predict the next word of internet text. That makes it brilliant at <i>continuing</i> text, but 'continue the most likely internet text' is not the same as 'be helpful to the person asking.' So GPT-3 would happily invent plausible-sounding falsehoods, ignore explicit instructions about style or length, and produce toxic content — because the most likely continuation of a prompt is often none of the things a user actually wants." },
+            { "type": "p", "html": "<b>An analogy for the mismatch.</b> Imagine hiring someone who has read the entire internet but was only ever rewarded for predicting what comes next on a web page. Ask them a question and they might give you a real answer, a list of related questions, an ad, or a forum flame war — whatever statistically tends to follow such a question online. They have the knowledge but not the <i>intent</i> to assist. InstructGPT supplies the missing intent." },
+            { "type": "p", "html": "<b>The recipe (three stages, on top of a pre-trained base):</b>" },
             { "type": "list", "items": [
-              "<b>Supervised fine-tuning (SFT)</b> on human-written demonstrations of helpful responses.",
-              "<b>Reward model (RM)</b> trained on human preference comparisons between pairs of model outputs.",
-              "<b>Reinforcement learning</b> using PPO against the reward model to fine-tune the SFT model."
+              "<b>Supervised fine-tuning (SFT)</b>: train on human-written examples of good responses, so the model learns the basic shape of helpful answers.",
+              "<b>Reward modeling (RM)</b>: have humans rank multiple model outputs, and train a separate model to predict those rankings — a learned proxy for human preference.",
+              "<b>Reinforcement learning (PPO)</b>: optimize the SFT model to score highly under the reward model, while a leash (a KL penalty) keeps it from drifting too far."
             ]},
-            { "type": "p", "html": "Result: a 1.3B-parameter InstructGPT model is <b>preferred to the 175B GPT-3</b> by human labelers in 85% of comparisons. Alignment beats scale, by a lot." }
+            { "type": "p", "html": "<b>The headline result.</b> Labelers prefer the <b>1.3B-parameter InstructGPT</b> over the <b>175B GPT-3</b> in about 85% of head-to-head comparisons — despite InstructGPT having 100x fewer parameters. Alignment, it turns out, buys more usable quality than raw scale." },
+            { "type": "p", "html": "<b>Why it is in the collection.</b> This is the paper that turned raw GPT-3 into something you would actually want to talk to. ChatGPT is the same recipe applied to GPT-3.5; every major chat model since uses some descendant of RLHF." }
           ]
         }
       ]
@@ -30,33 +32,40 @@
           "title": "Step 1: Supervised fine-tuning (SFT)",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "Collect ~13,000 prompts (sampled from the OpenAI API user submissions, plus labeler-written prompts). For each prompt, a human contractor writes a demonstration of the desired output. Fine-tune the base GPT-3 on these (prompt → demonstration) pairs with standard supervised learning." },
-            { "type": "p", "html": "This already produces a much more usable model than the base — but it's bottlenecked on how much demonstration data you can collect (expensive), and demonstrations only capture one possible good answer per prompt." }
+            { "type": "p", "html": "<b>The goal of this step.</b> Teach the base model the basic <i>format</i> of being helpful — that a question expects a direct answer, that 'write a poem about X' expects a poem, and so on. This is the cheapest, most direct signal to give first." },
+            { "type": "p", "html": "<b>The data.</b> About 13,000 prompts — sampled from real OpenAI API user submissions plus prompts written by hired labelers. For each prompt, a human contractor writes a <b>demonstration</b>: the ideal response they would want the model to give." },
+            { "type": "p", "html": "<b>A concrete example.</b> Prompt: <i>'Explain the moon landing to a 6-year-old.'</i> The base GPT-3 might continue with another exam-style question, because that is what often follows such a sentence online. The human demonstration instead writes a short, simple, child-friendly explanation. Fine-tuning on thousands of such (prompt, demonstration) pairs with standard supervised learning shifts the model toward producing the demonstration rather than a generic continuation." },
+            { "type": "p", "html": "<b>Why this is not enough on its own.</b> Two limits. First, demonstrations are <b>expensive</b> — a human has to write each one. Second, a demonstration captures only <i>one</i> good answer; it gives the model no information about which of two plausible answers is <i>better</i>. To teach relative quality cheaply you need comparisons, which is the next step." }
           ]
         },
         {
-          "title": "Step 2: Reward modeling (RM)",
+          "title": "Step 2: Reward modeling (RM) and the Bradley-Terry loss",
           "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "Sample multiple completions from the SFT model for each of ~33,000 prompts. Human labelers <i>rank</i> the completions from best to worst." },
-            { "type": "p", "html": "Train a separate reward model (initialized from a smaller pre-trained LM, 6B parameters in the paper) on these pairwise comparisons. The loss is the Bradley-Terry pairwise ranking loss:" },
-            { "type": "math", "tex": "\\mathcal{L}(\\theta) = -\\mathbb{E}_{(x, y_w, y_l)}\\!\\left[\\log\\sigma\\!\\left(r_\\theta(x, y_w) - r_\\theta(x, y_l)\\right)\\right]" },
-            { "type": "p", "html": "where $y_w$ is the preferred (winning) completion and $y_l$ is the rejected (losing) one. The reward model learns to assign higher scalar scores to responses humans prefer." },
-            { "type": "p", "html": "Comparisons are dramatically cheaper to collect than demonstrations and yield much higher-quality signal because they capture relative preferences across many possible answers." }
+            { "type": "p", "html": "<b>The idea.</b> Instead of asking humans to <i>write</i> good answers, ask them to <i>judge</i> answers — which is far cheaper and yields a richer signal. For each of ~33,000 prompts, sample several completions from the SFT model and have a labeler rank them from best to worst." },
+            { "type": "p", "html": "<b>A concrete example.</b> Prompt: <i>'Give me a tip for sleeping better.'</i> The model produces (A) 'Avoid screens an hour before bed and keep a consistent schedule.' (B) 'Just don't sleep.' (C) 'idk google it.' A labeler ranks A > B > C. From a ranking of $K$ answers you extract every pair: A beats B, A beats C, B beats C." },
+            { "type": "p", "html": "<b>The model.</b> Train a separate <b>reward model</b> $r_\\theta(x, y)$ — initialized from a 6B pre-trained LM with the final word-prediction head replaced by a head that outputs a single scalar 'how good is this' score for a prompt $x$ and completion $y$. It is trained on the pairwise comparisons using the Bradley-Terry ranking loss:" },
+            { "type": "math", "tex": "\\mathcal{L}(\\theta) = -\\mathbb{E}_{(x, y_w, y_l) \\sim D}\\left[\\log \\sigma\\big(r_\\theta(x, y_w) - r_\\theta(x, y_l)\\big)\\right]" },
+            { "type": "p", "html": "Reading it term by term: $x$ is the prompt; $y_w$ is the completion the human ranked higher (the <i>winner</i>); $y_l$ is the lower-ranked one (the <i>loser</i>); $D$ is the dataset of such comparison triples. $r_\\theta(x, y)$ is the reward model's scalar score. The difference $r_\\theta(x,y_w) - r_\\theta(x,y_l)$ is how much more the model scores the winner over the loser; $\\sigma$ is the logistic sigmoid, turning that difference into a probability in $(0,1)$; $\\log \\sigma(\\cdot)$ is large (close to 0) when the winner scores higher and very negative when it scores lower. The leading minus sign and expectation mean: <i>minimize</i> this, i.e. push the model to assign the winner a higher score than the loser on every pair." },
+            { "type": "p", "html": "<b>Why ranking beats rating.</b> Asking a human for an absolute score ('rate this 7/10') is noisy — different labelers calibrate differently. Asking 'which of these two is better?' is far more consistent, and the Bradley-Terry loss only ever looks at <i>differences</i> of scores, so it never needs an absolute scale. Comparisons are also cheaper than demonstrations, so you get far more signal per dollar." }
           ]
         },
         {
-          "title": "Step 3: RL fine-tuning with PPO",
+          "title": "Step 3: RL fine-tuning with PPO and the KL leash",
           "pdfPages": [5, 6, 7],
           "blocks": [
-            { "type": "p", "html": "Now fine-tune the SFT model using Proximal Policy Optimization (PPO), treating the reward model's score as the reward. At each step:" },
+            { "type": "p", "html": "<b>The goal.</b> Now actually optimize the model to produce responses the reward model scores highly. The reward model is a <i>differentiable stand-in</i> for a human judge, so you can use reinforcement learning: treat the model as a policy that generates completions (actions) and gets the reward model's score as its reward." },
+            { "type": "p", "html": "<b>The loop, one step at a time:</b>" },
             { "type": "list", "items": [
-              "Sample a prompt $x$ and generate a completion $y$ from the policy $\\pi$.",
-              "Score it: $r = r_\\theta(x, y)$.",
-              "Add a per-token KL penalty against the SFT policy: $r' = r - \\beta \\log(\\pi(y|x) / \\pi_{\\text{SFT}}(y|x))$. This keeps the RL-tuned model close to the SFT model so it doesn't drift into adversarial regions that exploit the reward model.",
-              "Take a PPO gradient step."
+              "Sample a prompt $x$ and generate a completion $y$ from the current policy $\\pi_\\phi$.",
+              "Score it with the frozen reward model: $r_\\theta(x, y)$.",
+              "Apply a per-token KL penalty against the SFT model, then take a Proximal Policy Optimization (PPO) gradient step on $\\phi$ to increase the expected penalized reward."
             ]},
-            { "type": "p", "html": "Optionally, mix in a small amount of the original pre-training loss (PPO-ptx variant) to retain core LM capabilities." }
+            { "type": "p", "html": "<b>The objective being maximized:</b>" },
+            { "type": "math", "tex": "\\text{objective}(\\phi) = \\mathbb{E}_{(x,y) \\sim \\pi_\\phi}\\!\\left[\\, r_\\theta(x,y) - \\beta \\log\\frac{\\pi_\\phi(y \\mid x)}{\\pi^{\\text{SFT}}(y \\mid x)} \\right] + \\gamma\\, \\mathbb{E}_{x \\sim D_{\\text{pretrain}}}\\!\\left[\\log \\pi_\\phi(x)\\right]" },
+            { "type": "p", "html": "Reading it term by term: $\\pi_\\phi$ is the model being trained (the RL <i>policy</i>); $r_\\theta(x,y)$ is the reward-model score we want to push up. The middle term is the <b>KL penalty</b>: $\\pi_\\phi(y|x)$ is how likely the new model is to produce $y$, $\\pi^{\\text{SFT}}(y|x)$ how likely the original SFT model was; the log-ratio measures how far the policy has drifted from SFT, and $\\beta$ sets the strength of the leash. The last term is the <b>PPO-ptx</b> addition: $\\gamma$ times the original pre-training log-likelihood on pre-training data $D_{\\text{pretrain}}$, which preserves general capability." },
+            { "type": "p", "html": "<b>Why the KL leash is essential.</b> The reward model is only an approximation of human preference, trained on finite data. Left unconstrained, the policy will <b>reward-hack</b> — find weird, degenerate outputs (repetitive phrases, exploitative patterns) that the reward model mistakenly scores high but humans would hate. The KL term penalizes straying far from the sensible SFT model, keeping the policy in the region where the reward model's judgments are still trustworthy. Without it, the model 'wins the game' while producing nonsense." },
+            { "type": "p", "html": "<b>Why mix in pre-training (the ptx term).</b> Pure RL optimization for the reward signal causes the model to forget general skills — an 'alignment tax' that shows up as drops on standard NLP benchmarks. Mixing a little of the original next-token objective back in (PPO-ptx) recovers most of that lost capability while keeping the alignment gains." }
           ]
         }
       ]
@@ -65,17 +74,18 @@
       "title": "4. Results",
       "pages": [
         {
-          "title": "Human preference: InstructGPT beats GPT-3 at much smaller scale",
+          "title": "Small + aligned beats huge + raw",
           "pdfPages": [8, 9, 10],
           "blocks": [
-            { "type": "p", "html": "Headline finding: <b>InstructGPT 1.3B is preferred to GPT-3 175B</b> in 85% of head-to-head comparisons by labelers, even though it has 100× fewer parameters." },
-            { "type": "p", "html": "Other measured improvements:" },
+            { "type": "p", "html": "<b>The headline.</b> Human labelers prefer <b>InstructGPT 1.3B over GPT-3 175B</b> in roughly 85% of comparisons, and prefer it over a 175B GPT-3 given a few-shot prompt in ~71%. A model 100x smaller wins because it was trained to do what people want." },
+            { "type": "p", "html": "<b>Other measured improvements:</b>" },
             { "type": "list", "items": [
-              "More truthful: 2× as likely to be truthful as GPT-3 on TruthfulQA.",
-              "Less toxic: ~25% reduction in toxic generations on RealToxicityPrompts.",
-              "Better instruction following: stronger compliance with explicit constraints (length, style, format)."
+              "<b>More truthful</b>: about 2x as likely to give truthful, informative answers as GPT-3 on the TruthfulQA benchmark.",
+              "<b>Less toxic</b>: roughly 25% fewer toxic generations on RealToxicityPrompts when asked to be respectful.",
+              "<b>Better instruction following</b>: markedly higher compliance with explicit constraints on length, format, and style.",
+              "<b>Generalizes to held-out labelers</b>: the gains hold for human raters who did not produce the training data, so the model learned 'be helpful' rather than memorizing one annotator's taste."
             ]},
-            { "type": "p", "html": "Tradeoff: small alignment tax on academic NLP benchmarks (the model loses ~1-2 points on things like SQuAD because it's optimized for instruction following, not benchmark-style completion). The PPO-ptx variant mitigates this." }
+            { "type": "p", "html": "<b>The honest cost — the alignment tax.</b> Pure PPO InstructGPT loses a point or two on some academic benchmarks (e.g. SQuAD-style tasks) because it is optimized for open-ended helpfulness, not benchmark-style completion. The PPO-ptx variant (mixing in pre-training) largely closes that gap, recovering benchmark performance while keeping the preference gains — showing the tax is mitigable, not fundamental." }
           ]
         }
       ]
@@ -84,11 +94,12 @@
       "title": "5. Impact",
       "pages": [
         {
-          "title": "Why RLHF is now the default",
+          "title": "Why RLHF became the default",
           "pdfPages": [11, 12],
           "blocks": [
-            { "type": "p", "html": "InstructGPT is the technical foundation under ChatGPT (released Nov 2022, applying the same recipe to a tuned GPT-3.5). Every major frontier chat model since uses some variant of RLHF (or its modern descendants — DPO, RLAIF, Constitutional AI)." },
-            { "type": "p", "html": "Bigger picture: this paper shifted the field's attention from <i>capability</i> to <i>alignment</i>. The pre-trained base is the substrate; the human-feedback loop is what makes it useful and safe. Modern post-training pipelines spend an order of magnitude more effort here than was customary before this paper." }
+            { "type": "p", "html": "<b>The direct line to ChatGPT.</b> ChatGPT (November 2022) is the InstructGPT recipe applied to a GPT-3.5 base, with dialogue-shaped data. The three-stage SFT → reward model → PPO pipeline is what turned a research curiosity into a product hundreds of millions of people use." },
+            { "type": "p", "html": "<b>The descendants.</b> Every frontier chat model since uses some variant of human-feedback alignment. The technique family has since branched: <b>DPO</b> (Direct Preference Optimization) skips the explicit reward model and optimizes the preference data directly; <b>RLAIF</b> and <b>Constitutional AI</b> replace some human labels with AI-generated preferences guided by written principles. All trace back to the framing in this paper." },
+            { "type": "p", "html": "<b>The conceptual shift.</b> Before InstructGPT, progress meant <i>capability</i> — bigger models, more data. This paper reframed the bottleneck as <i>alignment</i>: the pre-trained base is the raw substrate, and the human-feedback loop is what makes it useful and safe. Modern model development now spends an order of magnitude more effort on this post-training stage than was customary before 2022." }
           ]
         }
       ]

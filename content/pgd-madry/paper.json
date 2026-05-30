@@ -13,10 +13,11 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Earlier work proposed many attacks and many defenses, but lacked a precise statement of what 'a robust model' even means. This paper gives one. It casts adversarial robustness as a single, clean optimization problem, a min-max (saddle point) objective, and uses that lens to organize both attacks and defenses."},
-            {"type": "p", "html": "From the formulation two things follow. First, the right attack to study is a strong first-order one: <strong>Projected Gradient Descent (PGD)</strong>, which the authors argue is essentially the strongest attack that uses only gradient information. Second, training against that attack, <strong>PGD adversarial training</strong>, produces models that are genuinely robust to a wide range of first-order adversaries, not just the one they were trained on."},
-            {"type": "p", "html": "The resulting MNIST and CIFAR-10 models held up under intense scrutiny and became the standard robust baselines for years, in stark contrast to the many defenses that were broken shortly after publication."},
-            {"type": "quote", "html": "A precise definition turns a collection of tricks into a problem you can actually solve."}
+            {"type": "p", "html": "<strong>The point of this page:</strong> before this paper, the field had a pile of attacks and a pile of defenses but no precise statement of what &ldquo;a robust model&rdquo; even <em>means</em>. This paper supplies that definition and, from it, derives both the attack worth studying and the defense that actually works."},
+            {"type": "p", "html": "Shared vocabulary (recurring across this collection). An <strong>adversarial example</strong> is an input nudged by a tiny perturbation $\\delta$ so the model misclassifies it while a human sees no change. The <strong>threat model</strong> is the allowed set of perturbations &mdash; here, an <strong>$\\ell_\\infty$ ball</strong> of radius $\\epsilon$, meaning every pixel may move by at most $\\epsilon$ in either direction (a uniform per-pixel budget). The complementary <strong>$\\ell_2$</strong> ball would instead cap the total Euclidean length of $\\delta$. <strong>Robust accuracy</strong> is the fraction of inputs still classified correctly <em>after</em> the strongest allowed attack."},
+            {"type": "p", "html": "<strong>The two big claims.</strong> First, the right attack to study is a strong first-order one: <strong>Projected Gradient Descent (PGD)</strong>, which the authors argue is essentially the strongest attack that uses only gradient information &mdash; the &ldquo;universal first-order adversary.&rdquo; Second, training against that attack (<strong>PGD adversarial training</strong>) produces models genuinely robust to a whole class of first-order adversaries, not just the one they trained on."},
+            {"type": "p", "html": "<strong>Why it matters.</strong> The resulting MNIST and CIFAR-10 models survived an open public attack challenge and became the standard robust baselines for years &mdash; in stark contrast to the many defenses (see the obfuscated-gradients paper) that were broken within days of publication. A precise definition turned a collection of tricks into a problem you can actually solve and measure."},
+            {"type": "quote", "html": "These methods ... suggest a concrete security guarantee that protects against any adversary."}
           ]
         }
       ]
@@ -27,14 +28,15 @@
         {
           "title": "A min-max problem",
           "subtitle": "Train against the worst case inside a small ball",
-          "pdfPages": [2, 3],
+          "pdfPages": [3, 4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Ordinary training minimizes the average loss over the data. Robust training asks for something stronger: the model should do well even if an adversary is allowed to perturb each input within an allowed set $\\mathcal{S}$ (for example, an $\\ell_\\infty$ ball of radius $\\epsilon$). This is a game with two players, and it is written as a nested min-max."},
-            {"type": "math", "tex": "\\min_{\\theta} \\; \\mathbb{E}_{(x,y)\\sim \\mathcal{D}} \\Big[ \\max_{\\delta \\in \\mathcal{S}} \\; L(\\theta, x+\\delta, y) \\Big]"},
-            {"type": "p", "html": "Reading the equation from the inside out: the inner $\\max_{\\delta}$ is the <strong>attacker</strong>, who picks the worst perturbation $\\delta$ within the allowed set $\\mathcal{S}$ to make the loss as large as possible. The outer $\\min_{\\theta}$ is the <strong>defender</strong>, who tunes the network weights $\\theta$ to make even that worst case small, averaged over the data distribution $\\mathcal{D}$."},
-            {"type": "p", "html": "This single expression unifies the whole field. The inner maximization defines what counts as a strong attack. The outer minimization defines what counts as a good defense. Everything reduces to solving, or approximately solving, this saddle-point problem."},
-            {"type": "p", "html": "Crucially, the gradient of the outer problem can be obtained, via Danskin's theorem, by first finding a maximizer $\\delta^\\star$ of the inner problem and then differentiating the loss at $x+\\delta^\\star$. So a good defense reduces to (a) solving the inner max well and (b) doing standard SGD on the result."}
+            {"type": "p", "html": "<strong>The intuition.</strong> Ordinary training minimizes the <em>average</em> loss over the data &mdash; it asks the model to do well on the inputs it actually sees. Robust training demands something stronger: do well even when an adversary is allowed to first nudge each input by up to $\\epsilon$. It is a two-player game, and the cleanest way to write it is a nested min-max (a <em>saddle-point</em> problem)."},
+            {"type": "p", "html": "<strong>A concrete analogy.</strong> Picture a fencing coach (the defender) training a student (the model). An ordinary coach drills against the average opponent. The robust coach insists the student win even against the <em>toughest</em> opponent the rules permit (the inner attacker). The student gets good not by memorizing one opponent but by beating the hardest one available at every step."},
+            {"type": "math", "tex": "\\min_{\\theta} \\; \\rho(\\theta), \\qquad \\rho(\\theta) = \\mathbb{E}_{(x,y)\\sim \\mathcal{D}} \\Big[ \\max_{\\delta \\in \\mathcal{S}} \\; L(\\theta, x+\\delta, y) \\Big]"},
+            {"type": "p", "html": "<strong>Term by term, inside out:</strong> $\\delta$ is the perturbation; $\\mathcal{S}$ is the allowed set (the $\\ell_\\infty$ ball of radius $\\epsilon$); $L(\\theta, x+\\delta, y)$ is the loss of the network with weights $\\theta$ on the perturbed input $x+\\delta$ with true label $y$. The inner $\\max_{\\delta \\in \\mathcal{S}}$ is the <strong>attacker</strong>, choosing the worst $\\delta$ to make the loss as large as possible. $\\mathbb{E}_{(x,y)\\sim\\mathcal{D}}$ averages that worst-case loss over the data distribution $\\mathcal{D}$. The outer $\\min_\\theta$ is the <strong>defender</strong>, tuning the weights so even that worst case is small."},
+            {"type": "p", "html": "<strong>Why this single expression unifies the field.</strong> The inner maximization <em>defines</em> what a strong attack is (find a high-loss point in the ball). The outer minimization <em>defines</em> a good defense (make the worst case small). Every attack paper is trying to solve the inner problem better; every defense paper is trying to solve the outer one. They are two halves of one equation."},
+            {"type": "p", "html": "<strong>The key technical enabler: Danskin's theorem.</strong> It says the gradient of a max is the gradient evaluated at the maximizer. So to get a descent direction for the whole saddle-point objective you just (a) find a maximizer $\\delta^\\star$ of the inner problem, then (b) compute $\\nabla_\\theta L(\\theta, x+\\delta^\\star, y)$ &mdash; ordinary backprop at the attacked point. This is what makes the outer minimization plain SGD on adversarial examples. It also tells you the <em>better your inner attack, the more valid your training gradient</em>."}
           ]
         }
       ]
@@ -45,29 +47,33 @@
         {
           "title": "Projected Gradient Descent",
           "subtitle": "Multi-step FGSM that stays inside the ball",
-          "pdfPages": [3, 4],
+          "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The inner maximization, find the worst perturbation in $\\mathcal{S}$, is non-concave, but it can be tackled well with iterative gradient ascent. PGD takes repeated small gradient-sign steps (like FGSM) and, after each step, <em>projects</em> back onto the allowed set so the perturbation never escapes the ball."},
+            {"type": "p", "html": "<strong>The problem.</strong> The inner maximization &mdash; find the worst $\\delta$ in the ball &mdash; is non-concave (no clean closed form). But we can climb it with iterative gradient ascent. PGD takes repeated small gradient-sign steps (each one an FGSM move) and, crucially, <em>projects</em> back onto the allowed ball after every step so the perturbation never escapes the budget."},
+            {"type": "p", "html": "<strong>Relation to FGSM.</strong> FGSM (Goodfellow et&nbsp;al., also in this collection) takes a single big step of size $\\epsilon$. PGD is FGSM run many times with a <em>small</em> step $\\alpha$ and a clip after each. One step is a crude linear guess; many small steps follow the curvature of the loss surface to a much higher-loss point."},
             {"type": "math", "tex": "x^{t+1} = \\Pi_{x + \\mathcal{S}}\\Big( x^t + \\alpha \\, \\text{sign}\\big(\\nabla_x L(\\theta, x^t, y)\\big) \\Big)"},
-            {"type": "p", "html": "In words: from the current point $x^t$, take a step of size $\\alpha$ in the sign-of-the-gradient direction (the FGSM move), then apply the projection $\\Pi_{x+\\mathcal{S}}$ that clips the result back into the allowed $\\ell_\\infty$ ball of radius $\\epsilon$ around the original $x$. Repeat for several iterations."},
-            {"type": "p", "html": "PGD is therefore just FGSM run many times with a smaller step and a clip after each step. A second key detail is <strong>random restarts</strong>: the perturbation is initialized at a random point inside the ball, and the whole procedure is run from several random starts, keeping the most damaging result. This helps escape the many shallow local maxima of the loss surface."},
+            {"type": "p", "html": "<strong>Term by term:</strong> $x^t$ is the perturbed image at iteration $t$; $\\nabla_x L$ is the gradient of the loss with respect to the input pixels (which way to push each pixel to raise the loss); $\\text{sign}(\\cdot)$ keeps only the direction $\\pm 1$ of each component (the $\\ell_\\infty$-optimal direction); $\\alpha$ is the step size; and $\\Pi_{x+\\mathcal{S}}$ is the <strong>projection</strong> that clips the result back into the $\\epsilon$-ball around the original $x$ (any pixel that drifted more than $\\epsilon$ from its starting value is snapped back to the boundary)."},
+            {"type": "p", "html": "<strong>Random restarts &mdash; the second key detail.</strong> The loss surface inside the ball has many local maxima. To avoid getting stuck in a weak one, PGD initializes $\\delta$ at a <em>random</em> point inside the ball and runs the whole procedure from several such starts, keeping the most damaging (highest-loss) result. Without random starts, the attack is noticeably weaker &mdash; and a defense evaluated without them can look falsely robust."},
             {"type": "list", "items": [
-              "Start at a random point inside the $\\epsilon$-ball around $x$.",
-              "Repeat: take an FGSM-style step of size $\\alpha$, then project back into the ball.",
-              "Run from several random restarts and keep the worst-case (highest-loss) example."
+              "Start at a <strong>random</strong> point inside the $\\epsilon$-ball around $x$ (not at $x$ itself).",
+              "Repeat $k$ times: take an FGSM-style step of size $\\alpha$, then <strong>project</strong> back into the ball.",
+              "Run from several random restarts and keep the worst-case (highest-loss) example.",
+              "Typical settings: MNIST $\\epsilon = 0.3$, $\\alpha = 0.01$, 40 steps; CIFAR-10 $\\epsilon = 8/255$, $\\alpha = 2/255$, 7&ndash;20 steps."
             ]}
           ]
         },
         {
           "title": "Why PGD is the 'universal' first-order adversary",
-          "subtitle": "Many local maxima, but they all have similar loss",
-          "pdfPages": [4, 5],
+          "subtitle": "Many local maxima, but they all reach similar loss",
+          "pdfPages": [5],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The authors run PGD from a large number of random starting points and examine the loss values it reaches. The striking empirical finding is that, although the inner problem has a huge number of distinct local maxima, they nearly all attain <strong>similar loss values</strong>, and that value is close to the global maximum PGD can find."},
-            {"type": "p", "html": "This matters because it means PGD reliably approximates the inner maximization. There is no hidden, far stronger first-order attack waiting to be discovered: any method that only uses gradients of the loss is essentially bounded by what PGD achieves. For this reason the paper calls PGD the <em>universal</em> first-order adversary."},
-            {"type": "p", "html": "The practical payoff: if you train to be robust against PGD, you are training to be robust against the whole class of first-order attacks at once. Robustness to PGD is therefore strong evidence of robustness in general, not merely robustness to one particular attack."}
+            {"type": "p", "html": "<strong>The question this page settles:</strong> if the inner problem has many local maxima, how do we know PGD isn't stopping at a weak one &mdash; leaving a far stronger gradient attack undiscovered? The authors answer it empirically."},
+            {"type": "p", "html": "<strong>The experiment.</strong> They run PGD from a large number of random starting points (10<sup>5</sup>+ restarts on MNIST and CIFAR) and record the loss value each run converges to. The striking finding: although the runs land on many <em>distinct</em> local maxima, those maxima nearly all reach <strong>about the same loss value</strong>, and that value is close to the best PGD ever finds. The histogram of final losses is tightly clustered, not spread out."},
+            {"type": "p", "html": "<strong>Why this is the crucial result.</strong> If all local maxima have similar loss, then PGD &mdash; which finds <em>a</em> local maximum &mdash; reliably approximates the global inner maximum. There is no hidden, dramatically stronger first-order attack waiting in some unexplored corner. Any method that uses only the loss gradient is essentially bounded by what PGD achieves. The authors therefore call PGD the <strong>universal first-order adversary</strong>."},
+            {"type": "p", "html": "<strong>The practical payoff.</strong> Train to resist PGD and you are, in effect, training against the entire class of first-order attacks at once. Robustness to a strong PGD attack is therefore meaningful evidence of robustness in general &mdash; not just robustness to one specific attack. This is precisely the guarantee that one-step FGSM training lacked, and why FGSM-trained models could be broken by stronger iterative attacks."},
+            {"type": "p", "html": "<strong>Caveat &amp; context.</strong> &ldquo;Universal&rdquo; means within the first-order (gradient-only) class and within the chosen $\\ell_\\infty$ ball. It is not a formal proof of robustness &mdash; the certified-robustness papers (PixelDP, randomized smoothing) pursue provable guarantees. But empirically it set the bar: a defense that does not survive a well-tuned, multi-restart PGD attack is not considered robust."}
           ]
         }
       ]
@@ -81,9 +87,16 @@
           "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "To solve the outer minimization, the authors use ordinary SGD, but on each batch they first replace every clean input with a PGD adversarial version, then take a gradient step on the loss of those hardened inputs. Danskin's theorem justifies this: differentiating at an inner maximizer gives a valid descent direction for the saddle-point objective."},
-            {"type": "p", "html": "This is FGSM adversarial training taken to its proper conclusion. Goodfellow et al. trained on one-step FGSM examples; that defense was later shown to be weak because the model could overfit to the single step. Training on the much stronger multi-step PGD examples produces a genuinely robust model."},
-            {"type": "p", "html": "A practical observation from the paper: robustness benefits from larger model <strong>capacity</strong>. A network that is big enough to fit clean data may be too small to fit the harder, adversarially perturbed distribution. Wider networks reach substantially higher robust accuracy, so capacity is part of the recipe."}
+            {"type": "p", "html": "<strong>The recipe.</strong> To solve the outer minimization, use ordinary SGD &mdash; but on each minibatch, first replace every clean input with its PGD adversarial version, then take the gradient step on the loss of those <em>hardened</em> inputs. Danskin's theorem (from the saddle-point page) guarantees this is a valid descent direction for the full min-max objective, <em>provided the inner attack is strong</em>."},
+            {"type": "p", "html": "<strong>How this differs from FGSM training.</strong> Goodfellow et&nbsp;al. trained on one-step FGSM examples. That defense proved weak: the model learned to defeat the single linear step (a phenomenon later called <em>gradient masking</em>) without becoming truly robust &mdash; a multi-step attack still broke it. Training on the much stronger multi-step PGD examples closes that loophole, which is why this is the version that actually works."},
+            {"type": "p", "html": "<strong>The capacity finding.</strong> A second practical lesson: robustness needs <em>bigger models</em>. The adversarial data distribution is harder to fit than the clean one &mdash; the decision boundary must be more complicated to separate every $\\epsilon$-ball correctly. A network just big enough for clean data is too small for robust training. The authors show that progressively wider networks reach progressively higher robust accuracy; capacity is part of the recipe, not an afterthought."},
+            {"type": "p", "html": "<strong>An observed side effect.</strong> Robustly trained models have more <em>interpretable</em> input gradients &mdash; the saliency maps actually resemble the object. This hint (robust features look human-meaningful) is exactly the thread the &ldquo;robust vs. non-robust features&rdquo; paper later picks up and develops."},
+            {"type": "list", "items": [
+              "Outer loop: standard SGD on $\\theta$.",
+              "Inner loop: replace each input with its PGD adversarial version before computing the loss.",
+              "Use more model capacity than clean training requires.",
+              "Random restarts in the inner PGD make the training attack &mdash; and thus the defense &mdash; stronger."
+            ]}
           ]
         },
         {
@@ -92,20 +105,22 @@
           "pdfPages": [6, 7, 8],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "On MNIST, the PGD-trained model reaches roughly <strong>89% accuracy</strong> against a strong $\\ell_\\infty$ PGD adversary at $\\epsilon = 0.3$ (out of $1.0$), while standard models drop to near zero. On CIFAR-10, robustness is harder: the model holds around <strong>45-47% accuracy</strong> against PGD at $\\epsilon = 8/255$, again versus essentially zero for an undefended network."},
-            {"type": "table", "headers": ["Dataset", "Threat ($\\ell_\\infty$)", "Robust accuracy", "Standard model under attack"], "rows": [
+            {"type": "p", "html": "<strong>The headline numbers.</strong> On MNIST, the PGD-trained model reaches about <strong>89% accuracy</strong> against a strong $\\ell_\\infty$ PGD adversary at $\\epsilon = 0.3$ (pixels in $[0,1]$), while an undefended model drops to near 0%. CIFAR-10 is much harder: the model holds around <strong>45&ndash;47% accuracy</strong> against PGD at $\\epsilon = 8/255$, again versus essentially 0% for an undefended network."},
+            {"type": "table", "headers": ["Dataset", "Threat ($\\ell_\\infty$)", "Robust accuracy", "Undefended model under attack"], "rows": [
               ["MNIST", "$\\epsilon = 0.3$", "~89%", "~0%"],
               ["CIFAR-10", "$\\epsilon = 8/255$", "~45-47%", "~0%"]
             ]},
-            {"type": "p", "html": "To test these claims honestly, the authors released the trained models and launched a public <em>robustness challenge</em>, inviting anyone to attack them. Unlike many contemporary defenses that fell within days, the PGD-trained models held up well, which is why they became the standard robust baselines and the reference point for later work."},
+            {"type": "p", "html": "<strong>How to read the CIFAR number.</strong> 45&ndash;47% can look unimpressive next to 89% on MNIST, but it is dramatic: an undefended CIFAR model is fooled essentially 100% of the time, so the defended model is correct on nearly half of attacked images that previously all flipped. CIFAR is harder because its images are richer and the $\\epsilon$-balls overlap more between classes &mdash; perfect robust accuracy is genuinely difficult here, and 45% remained a competitive baseline for years."},
+            {"type": "p", "html": "<strong>The honest-evaluation move.</strong> To test the claim without fooling themselves, the authors <em>released the trained models</em> and launched a public <strong>robustness challenge</strong>, inviting anyone to attack them with any method. Unlike the wave of contemporary defenses that collapsed within days (catalogued in the obfuscated-gradients paper), the PGD-trained models held up &mdash; the best external attacks only modestly lowered the reported robust accuracy."},
             {"type": "h2", "text": "What this paper established"},
             {"type": "list", "items": [
-              "A precise saddle-point definition of robustness that unifies attacks and defenses.",
-              "PGD as the strong, multi-step, restart-based first-order attack to evaluate against.",
-              "The argument that PGD is the 'universal' first-order adversary, so robustness to it is broadly meaningful.",
-              "PGD adversarial training plus higher capacity as a defense that genuinely works.",
-              "A public challenge methodology that set a new bar for honest evaluation."
-            ]}
+              "A precise <strong>saddle-point definition</strong> of robustness that unifies attacks (inner max) and defenses (outer min).",
+              "<strong>PGD</strong> as the strong, multi-step, random-restart first-order attack to evaluate against.",
+              "The empirical argument that PGD is the <strong>universal first-order adversary</strong>, so resisting it is broadly meaningful.",
+              "<strong>PGD adversarial training</strong> plus higher model capacity as a defense that genuinely works.",
+              "A <strong>public-challenge</strong> methodology that raised the bar for honest robustness evaluation."
+            ]},
+            {"type": "p", "html": "<strong>Legacy.</strong> PGD adversarial training is still, years later, the most reliable empirical defense and the reference point every new defense is compared against. Together with FGSM (the mechanism), C&amp;W (the strong measuring attack), and obfuscated gradients (the broken-defense autopsy), this paper is the &ldquo;defense&rdquo; cornerstone of the adversarial-robustness story in this collection."}
           ]
         }
       ]

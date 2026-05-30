@@ -11,33 +11,62 @@
           "title": "A smaller BERT that keeps 97% of its quality",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "BERT-Base is 110M parameters and runs slowly enough that real-time, on-device, and high-throughput deployments often can't use it. DistilBERT compresses BERT-Base by 40% (to ~66M parameters), runs 60% faster, and retains <b>97%</b> of BERT's language understanding capabilities on GLUE." },
-            { "type": "p", "html": "The technique is <b>knowledge distillation</b> (Hinton et al.): train a smaller 'student' model to mimic a larger 'teacher.' Applied here at the pre-training stage, not just at fine-tuning — which is the key contribution." }
+            { "type": "p", "html": "<b>The problem.</b> BERT works astonishingly well, but it is heavy. BERT-Base has 110M parameters; BERT-Large has 340M. Running one forward pass means pushing your text through 12 (or 24) Transformer layers. That is fine on a research GPU, but it is a deal-breaker for a phone keyboard that must autocomplete in milliseconds, a search backend answering millions of queries per second, or a browser extension that has to fit in a few hundred megabytes of RAM. The paper opens by noting a worrying trend: state-of-the-art NLP models had been growing exponentially in size, and that growth makes them progressively harder to deploy and more expensive (in compute and energy) to run." },
+            { "type": "p", "html": "<b>The idea in one sentence.</b> Train a <i>small</i> model to imitate a <i>large</i> pre-trained one, so you keep most of the quality at a fraction of the cost. The small model is the <b>student</b>; the original BERT is the <b>teacher</b>. This is <b>knowledge distillation</b> (Hinton et al., 2015), and DistilBERT's contribution is applying it during <i>pre-training</i> (not just fine-tuning), producing a general-purpose compact model you can fine-tune on anything just like real BERT." },
+            { "type": "p", "html": "<b>The result, concretely.</b> DistilBERT has 6 layers instead of 12, about <b>66M parameters</b> (a 40% reduction from BERT-Base's 110M), runs about <b>60% faster</b> at inference, and still retains <b>97%</b> of BERT-Base's score on the GLUE language-understanding benchmark. The whole model was pre-trained on 8 16GB V100 GPUs in roughly 90 hours — cheap by 2019 standards, where the original RoBERTa took a day on 1024 GPUs." },
+            { "type": "quote", "html": "we show that it is possible to reduce the size of a BERT model by 40%, while retaining 97% of its language understanding capabilities and being 60% faster." },
+            { "type": "p", "html": "<b>Why this mattered.</b> DistilBERT was one of the first models to make the BERT recipe genuinely practical for production. It shipped inside Hugging Face's Transformers library, so a generation of engineers met distillation through it. The trade-off it offers — give up a couple of GLUE points, get a model that is half the size and dramatically cheaper to serve — turned out to be exactly the trade-off most real products want." }
           ]
         }
       ]
     },
     {
-      "title": "2. Method",
+      "title": "1. Knowledge distillation",
       "pages": [
         {
-          "title": "Architecture",
+          "title": "What knowledge distillation actually is",
           "pdfPages": [2],
           "blocks": [
-            { "type": "p", "html": "Start with BERT-Base (12 layers, 12 heads, hidden 768). DistilBERT keeps the same hidden dimension and number of heads but <b>halves the number of layers</b> to 6. Token-type embeddings and the pooler are removed (rarely used downstream). The student is initialized by taking every other layer of the teacher." }
+            { "type": "p", "html": "<b>The intuition first.</b> Suppose you train a small model from scratch on labeled data, where each example has one correct answer (a <i>hard label</i>). The model only ever learns &ldquo;this image is a dog&rdquo; — a single 1 with zeros everywhere else. But a big, well-trained teacher knows much more than the right answer: shown a picture of a husky, it might output 90% dog, 8% wolf, 1.5% cat, 0.5% car. Those small probabilities encode real knowledge — that huskies look a bit like wolves and not at all like cars. Distillation trains the student to reproduce the teacher's <i>entire</i> probability distribution, so each training example carries far more information than a one-hot label." },
+            { "type": "p", "html": "<b>A concrete language example.</b> In BERT's masked-language task, the input might be &ldquo;I want a cup of [MASK].&rdquo; The single correct token could be <code>coffee</code>. But a good teacher assigns meaningful probability to <code>tea</code>, <code>water</code>, <code>milk</code>, and near-zero to <code>spaghetti</code>. That spread — &ldquo;these are all plausible drinks&rdquo; — is the &ldquo;dark knowledge&rdquo; the student gets to copy. Training on hard labels alone would only ever say <code>coffee</code> is right and everything else is equally wrong." },
+            { "type": "h2", "text": "The distillation (soft-target) loss" },
+            { "type": "math", "tex": "\\mathcal{L}_{\\text{ce}} = -\\sum_i t_i \\, \\log s_i" },
+            { "type": "p", "html": "Here $s_i$ is the <b>student's</b> predicted probability for token $i$ in the vocabulary, and $t_i$ is the <b>teacher's</b> probability for that same token (the &ldquo;soft target&rdquo;). The sum runs over the whole vocabulary, so the loss is small only when the student's full distribution matches the teacher's full distribution — not just its top choice. This is ordinary cross-entropy, but with the teacher's soft probabilities in place of a one-hot label." },
+            { "type": "h2", "text": "Softmax temperature" },
+            { "type": "math", "tex": "p_i = \\frac{\\exp(z_i / T)}{\\sum_j \\exp(z_j / T)}" },
+            { "type": "p", "html": "$z_i$ is the raw logit (pre-softmax score) for token $i$; $T$ is the <b>temperature</b>. With $T = 1$ this is the normal softmax. With $T > 1$ the exponentials are flattened, so the probability mass spreads out and those informative small probabilities (<code>tea</code>, <code>water</code>) become large enough to actually teach the student. The <i>same</i> temperature $T$ is applied to both teacher and student during training; at inference time it is set back to 1. Hinton's insight was that the gradient signal hidden in those soft probabilities is the whole point, and a low temperature would crush it back toward one-hot." },
+            { "type": "p", "html": "<b>Why it works.</b> Soft targets act like a much richer, lower-variance supervision signal: they tell the student about the geometry of the answer space, not just the single right answer. Empirically this lets a small model reach accuracy it could never reach training on hard labels alone, because the teacher has effectively pre-digested the hard parts of the data for it." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. DistilBERT method",
+      "pages": [
+        {
+          "title": "Student architecture and initialization",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "<b>The design question.</b> If you want a model that is both smaller and faster, what do you cut? DistilBERT's answer is deliberate and based on the authors' profiling: the costly thing about a Transformer is the <i>number of layers</i> (depth), far more than the width of each layer. So they keep BERT-Base's hidden dimension (768) and number of attention heads, and instead <b>halve the depth from 12 layers to 6</b>." },
+            { "type": "p", "html": "<b>What gets removed.</b> Two components are dropped: the <b>token-type (segment) embeddings</b> and the <b>pooler</b> (the dense+tanh layer BERT applies to the <code>[CLS]</code> token). The authors note these have little impact on most downstream tasks. They also observe that variations on the last dimension of the tensor (the hidden size) have a smaller effect on compute efficiency than variations in depth — which is why the savings come from removing layers, not from making layers thinner." },
+            { "type": "p", "html": "<b>The initialization trick.</b> A 6-layer student could be initialized randomly, but DistilBERT does something smarter: it takes <b>every other layer</b> of the 12-layer teacher to initialize the student's 6 layers. Because teacher and student share the same width, the teacher's weight matrices fit exactly, giving the student a strong warm start that already contains useful structure. The authors explicitly credit this initialization as important — it leverages the common dimensionality between the two networks." },
+            { "type": "table", "headers": ["Model", "Parameters", "Inference time (CPU, full STS-B)"], "rows": [["ELMo", "180M", "895 s"], ["BERT-Base", "110M", "668 s"], ["DistilBERT", "66M", "410 s"]] },
+            { "type": "p", "html": "<b>Engineering notes.</b> DistilBERT also borrows the best-practice training tricks that RoBERTa had recently shown matter: very large batches (up to ~4000 examples) using gradient accumulation, dynamic masking, and removing the Next Sentence Prediction objective. These don't shrink the model but they make distillation training efficient and high-quality." }
           ]
         },
         {
-          "title": "Triple loss",
-          "pdfPages": [2, 3],
+          "title": "The triple training loss",
+          "pdfPages": [3],
           "blocks": [
-            { "type": "p", "html": "Training mixes three losses:" },
+            { "type": "p", "html": "<b>Why three losses?</b> Matching only the teacher's output probabilities works, but you can squeeze out more quality by also asking the student to (a) get the actual answer right, and (b) build internal representations that point in the same directions as the teacher's. DistilBERT combines all three signals." },
             { "type": "list", "items": [
-              "<b>Distillation loss</b> $\\mathcal{L}_{\\text{ce}}$: cross-entropy between the student's and teacher's softmax outputs over the masked tokens, with a temperature $T$ to soften both distributions. The student learns the teacher's <i>distribution over the vocabulary</i>, not just the argmax — much more information per training example than hard labels.",
-              "<b>Masked LM loss</b> $\\mathcal{L}_{\\text{mlm}}$: the standard BERT MLM objective, using ground-truth tokens.",
-              "<b>Cosine embedding loss</b> $\\mathcal{L}_{\\text{cos}}$: align the directions of student and teacher hidden states. Helps the student match the teacher's internal representations, not just outputs."
+              "<b>Distillation loss</b> $\\mathcal{L}_{\\text{ce}}$ — the soft-target cross-entropy from the previous page. The student matches the teacher's full softmax over the vocabulary at each masked position, at temperature $T$. This is where the &ldquo;dark knowledge&rdquo; transfers.",
+              "<b>Masked-LM loss</b> $\\mathcal{L}_{\\text{mlm}}$ — the standard BERT objective using the <i>true</i> masked token as a hard label. This anchors the student to the ground truth so it doesn't merely inherit the teacher's mistakes.",
+              "<b>Cosine-embedding loss</b> $\\mathcal{L}_{\\text{cos}}$ — aligns the <i>direction</i> of the student's hidden-state vectors with the teacher's at corresponding layers. The student is pushed to think internally like the teacher, not just to produce the same final answer."
             ]},
-            { "type": "math", "tex": "\\mathcal{L} = \\alpha \\mathcal{L}_{\\text{ce}} + \\beta \\mathcal{L}_{\\text{mlm}} + \\gamma \\mathcal{L}_{\\text{cos}}" }
+            { "type": "math", "tex": "\\mathcal{L} = \\alpha \\, \\mathcal{L}_{\\text{ce}} + \\beta \\, \\mathcal{L}_{\\text{mlm}} + \\gamma \\, \\mathcal{L}_{\\text{cos}}" },
+            { "type": "p", "html": "The total loss is a weighted sum. $\\mathcal{L}_{\\text{ce}}$ is the soft-target distillation term, $\\mathcal{L}_{\\text{mlm}}$ is the supervised masked-language term, and $\\mathcal{L}_{\\text{cos}}$ is the hidden-state alignment term; $\\alpha$, $\\beta$, $\\gamma$ are scalar weights chosen to balance them. The first two operate on the output distribution; the third operates on the intermediate representations, which is what makes the student's whole forward pass mimic the teacher rather than only its final layer." },
+            { "type": "p", "html": "<b>Why this combination wins.</b> $\\mathcal{L}_{\\text{ce}}$ gives rich, dense gradient (the teacher's nuance). $\\mathcal{L}_{\\text{mlm}}$ guards against blindly copying teacher errors. $\\mathcal{L}_{\\text{cos}}$ regularizes the geometry so that downstream fine-tuning — which often probes intermediate layers — still works on the student. An ablation in the paper (Table 4) confirms all three help; removing the cosine and MLM terms degrades the GLUE macro-score." }
           ]
         }
       ]
@@ -46,25 +75,29 @@
       "title": "3. Experiments",
       "pages": [
         {
-          "title": "GLUE and inference speed",
+          "title": "GLUE, SQuAD, and inference speed",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "On GLUE (9 NLU benchmarks averaged), DistilBERT scores 77.0 vs BERT-Base's 79.5 — a 2.5 point gap, or 97% of BERT's score retained." },
-            { "type": "p", "html": "Inference: 60% faster than BERT-Base on a single CPU; even larger speedup on mobile. Memory footprint shrinks from ~440MB to ~250MB." },
-            { "type": "p", "html": "On SQuAD 1.1, DistilBERT gets F1 86.2 vs BERT-Base's 88.5 — within 2.3 points. After task-specific fine-tuning with another distillation step on top, the gap narrows further." }
+            { "type": "p", "html": "<b>General language understanding (GLUE).</b> GLUE is a suite of nine sentence- and sentence-pair classification tasks (sentiment, entailment, paraphrase, acceptability, etc.) averaged into one number. DistilBERT scores a macro-average of <b>77.0</b> versus BERT-Base's <b>79.5</b> — a gap of only 2.5 points, which is the &ldquo;97% of performance&rdquo; headline. On several individual tasks (e.g. STS-B, MRPC) DistilBERT is within a point of BERT; it lags most on the smaller, harder tasks like CoLA." },
+            { "type": "table", "headers": ["Model", "GLUE macro", "Parameters"], "rows": [["ELMo", "68.7", "180M"], ["BERT-Base", "79.5", "110M"], ["DistilBERT", "77.0", "66M"]] },
+            { "type": "p", "html": "<b>Downstream tasks.</b> On IMDb sentiment classification, DistilBERT reaches <b>92.8%</b> accuracy vs BERT-Base's 93.5% — within 0.7%. On SQuAD 1.1 question answering (extract the answer span from a passage), DistilBERT gets <b>F1 86.2</b> vs BERT-Base's 88.5, within 2.3 points. The authors also show a second distillation step <i>during fine-tuning</i> on SQuAD (distilling from a BERT already fine-tuned on SQuAD) narrows the gap further, to F1 86.9 — distillation stacks." },
+            { "type": "p", "html": "<b>Speed and footprint — the real selling point.</b> DistilBERT is about <b>60% faster</b> than BERT-Base. On CPU over the full STS-B dataset it runs in 410 s vs BERT's 668 s (and ELMo's 895 s). The on-device story is starker: the authors benchmark a question-answering model on an iPhone 7 Plus and find DistilBERT is <b>71% faster</b> than BERT, with the whole model (including tokenizer vocabulary) weighing in around 207 MB — small enough to ship inside a mobile app." },
+            { "type": "p", "html": "<b>The takeaway.</b> The trade is lopsided in the user's favor: you give up roughly 2–3 percentage points of accuracy and receive a model that is 40% smaller, 60% faster on server CPU, and ~71% faster on a phone. For the large majority of products, that is an easy trade." }
           ]
         }
       ]
     },
     {
-      "title": "4. Impact",
+      "title": "4. Related work and impact",
       "pages": [
         {
-          "title": "Why distillation became standard",
-          "pdfPages": [5],
+          "title": "Where DistilBERT sits and why distillation became standard",
+          "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "DistilBERT was an inflection point for practical NLP deployments. It made BERT-class quality accessible at edge-device latencies and budgets, and established knowledge distillation as a first-class compression technique for Transformers." },
-            { "type": "p", "html": "Direct descendants and analogs: TinyBERT, MobileBERT, MiniLM, ALBERT (a different compression approach via parameter sharing), and the modern wave of distilled instruction-tuned models (DistilGPT-2, Alpaca's distillation-from-GPT-3.5 lineage, Llama-distillation methods)." }
+            { "type": "p", "html": "<b>The compression landscape.</b> Three broad families of techniques attack model size. <b>Quantization</b> stores weights in fewer bits (e.g. int8 instead of float32). <b>Pruning</b> removes weights or whole attention heads judged unimportant. <b>Distillation</b> — DistilBERT's choice — trains a fresh smaller architecture to imitate the big one. The families are complementary: you can distill, then quantize, then prune the same model." },
+            { "type": "p", "html": "<b>The key novelty.</b> Earlier task-specific distillation (e.g. Tang et al. distilling BERT into a BiLSTM) produced a model that could only do <i>one</i> task. DistilBERT distills during <b>pre-training</b>, so the output is a general-purpose encoder you fine-tune on any task — exactly like BERT itself. That is what made it broadly reusable rather than a one-off." },
+            { "type": "p", "html": "<b>Direct descendants.</b> A wave of compact Transformers followed, each pushing the frontier differently: <b>TinyBERT</b> (distilling attention matrices and embeddings too), <b>MobileBERT</b> (a bottleneck architecture for phones), <b>MiniLM</b> (distilling self-attention relations), and the orthogonal <b>ALBERT</b> (parameter sharing across layers rather than distillation). On the generative side the same recipe produced DistilGPT-2, and the modern practice of distilling from large instruction-tuned models (the lineage behind Alpaca, and Llama-distillation methods) is a direct conceptual heir." },
+            { "type": "p", "html": "<b>Connection to this collection.</b> DistilBERT only exists because of BERT (its teacher and architectural template) and the distillation idea from Hinton et al. It is the practical bookend to the BERT story: BERT proved the quality, DistilBERT proved you could deploy it. Read alongside Deep Compression (Han et al.) for the pruning/quantization side of the same deployment problem." }
           ]
         }
       ]

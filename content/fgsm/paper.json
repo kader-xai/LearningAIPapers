@@ -13,10 +13,29 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Neural networks that achieve human-level accuracy on image classification can be fooled by perturbations so small that a person cannot see them. Add a carefully chosen pattern to a clear photo of a panda, scaled down to a level below the threshold of human perception, and a state-of-the-art classifier will confidently call it a gibbon. The image looks unchanged to us, yet the model's answer changes completely."},
-            {"type": "p", "html": "When these <em>adversarial examples</em> were first reported, the leading explanation blamed the extreme nonlinearity of deep networks together with insufficient regularization: the models were thought to carve out strange, isolated pockets of misclassification. This paper argues the opposite. The real culprit is that modern networks behave too <strong>linearly</strong> in very high-dimensional input spaces."},
-            {"type": "p", "html": "From that single idea the authors derive a fast, closed-form recipe for generating adversarial examples, explain why the same perturbation transfers across different models, and show how to fold adversarial examples back into training as a regularizer that makes the network more robust."},
-            {"type": "quote", "html": "Adversarial examples are not mysterious flaws of individual exotic models; they are a generic consequence of high-dimensional linear behaviour."}
+            {"type": "p", "html": "<strong>The point of this page:</strong> a neural network that matches human accuracy on photographs can be fooled by a change so small your eye cannot detect it. Understanding <em>why</em> that happens is the whole story of this paper, and the answer turns out to be surprisingly mundane."},
+            {"type": "p", "html": "First, the shared vocabulary you will need for every adversarial-examples paper in this collection. An <strong>adversarial example</strong> is an input that has been altered by a tiny, deliberately chosen amount so that a model misclassifies it, even though a human still sees the original. The alteration is called the <strong>perturbation</strong> and is usually written $\\delta$ (delta). The <strong>threat model</strong> spells out the rules of the game: how big the perturbation may be, whether the attacker can see the model's internals (<em>white-box</em>) or only its outputs (<em>black-box</em>), and what counts as success. The size limit is measured with a <strong>norm</strong>: the $\\ell_\\infty$ norm $\\|\\delta\\|_\\infty$ caps how far <em>any single pixel</em> may move (a uniform per-pixel budget), while the $\\ell_2$ norm $\\|\\delta\\|_2$ caps the total Euclidean length of the change (lots of tiny edits or a few larger ones, as long as the overall length stays small)."},
+            {"type": "p", "html": "<strong>Concrete example.</strong> Take a clean photo of a panda that a top classifier labels &ldquo;panda&rdquo; with 58% confidence. Add a faint, structured pattern whose every pixel moves by at most $\\epsilon = 0.007$ (about 2 levels out of 255 &mdash; below what you can see). The new image is visually identical to the panda, yet the network now says &ldquo;gibbon&rdquo; with 99.3% confidence. That single example, which appears in Figure&nbsp;1 of the paper, became the field's defining picture."},
+            {"type": "p", "html": "When these examples were first reported (Szegedy et&nbsp;al., 2014), the leading explanation blamed the <em>extreme nonlinearity</em> of deep networks together with insufficient regularization: the models were thought to carve out strange, isolated pockets of misclassification scattered through input space. This paper argues the opposite. The real culprit is that modern networks behave too <strong>linearly</strong> in very high-dimensional input spaces."},
+            {"type": "p", "html": "From that one idea the authors derive three things at once: a fast, closed-form recipe for generating adversarial examples (FGSM), an explanation for why the same perturbation transfers across different models, and a way to fold adversarial examples back into training as a regularizer that hardens the network."},
+            {"type": "quote", "html": "We argue instead that the primary cause of neural networks' vulnerability to adversarial perturbation is their linear nature."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Introduction & Related Work",
+      "pages": [
+        {
+          "title": "What we knew before this paper",
+          "subtitle": "A generic, intriguing, and dangerous flaw",
+          "pdfPages": [1, 2],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "<strong>The question this page answers:</strong> how surprising were adversarial examples in 2014, and what made them more than a curiosity? The answer is that they were both <em>generic</em> (every model had them) and <em>transferable</em> (the same fooling image worked across models), which turned an academic oddity into a security problem."},
+            {"type": "p", "html": "Szegedy et&nbsp;al. (2014) had reported several puzzling facts. A wide range of models &mdash; including state-of-the-art neural networks &mdash; misclassify these almost-imperceptibly perturbed images. A model trained from scratch with a different architecture, or on a different subset of the training data, frequently misclassifies the <em>same</em> adversarial example. This cross-model transfer is what makes black-box attacks possible: you do not need the victim's weights, only a stand-in model."},
+            {"type": "p", "html": "The early intuition was that deep nets are so nonlinear that they sprinkle low-probability &ldquo;adversarial pockets&rdquo; densely through the input space, like rational numbers among the reals &mdash; everywhere, but vanishingly rare to hit by chance. That story explained the existence of the pockets but not why a single cheap linear direction reliably finds them, nor why they transfer. The authors set out to replace it with a simpler, more predictive account."},
+            {"type": "p", "html": "<strong>Why it matters.</strong> If a near-invisible change can flip a self-driving car's read of a stop sign or a malware filter's verdict, robustness is no longer optional. And because the flaw is generic and transferable, fixing one model does not protect the next. The field needed a mechanism it could reason about &mdash; which is exactly what the linear explanation provides."}
           ]
         }
       ]
@@ -25,17 +44,21 @@
       "title": "The Linear Explanation",
       "pages": [
         {
-          "title": "Why linearity is enough to cause trouble",
-          "subtitle": "Many small coordinate changes add up to one large output change",
-          "pdfPages": [2],
+          "title": "Why linearity alone causes trouble",
+          "subtitle": "Many tiny coordinate changes add up to one huge output change",
+          "pdfPages": [2, 3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Consider the simplest possible model: a linear function of the input. If we perturb an input $x$ by a vector $\\delta$, the change in the dot product with a weight vector $w$ is $w^\\top \\delta$. Even if every individual entry of $\\delta$ is tiny, there are thousands of entries, and their contributions all line up if we choose $\\delta$ to point in the same direction as $w$."},
+            {"type": "p", "html": "<strong>The intuition first.</strong> Forget deep networks for a moment and look at the simplest model imaginable: a linear unit that scores an input by a dot product with a weight vector. The surprising claim is that <em>even this trivial model</em> already has adversarial examples in high dimensions &mdash; so we do not need nonlinearity to explain the phenomenon at all."},
+            {"type": "p", "html": "<strong>A concrete analogy.</strong> Imagine 1000 people each nudge a long table by 1 millimetre. Individually nobody can see a 1&nbsp;mm push. But if they all push the <em>same way</em>, the table slides a full metre. Pixels are the people; the weight vector decides the &ldquo;same way.&rdquo; A per-pixel change too small to see, summed over thousands of pixels that all push the score in one direction, becomes a large change in the score."},
+            {"type": "p", "html": "Start with the clean activation. Perturb the input $x$ by a vector $\\delta$ and feed it through the weight vector $w$:"},
             {"type": "math", "tex": "w^\\top (x + \\delta) = w^\\top x + w^\\top \\delta"},
-            {"type": "p", "html": "Read aloud: the perturbed activation equals the clean activation plus an extra term $w^\\top \\delta$. We are free to make that extra term as large as we like, even under a tight per-pixel budget, by aligning $\\delta$ with the sign of $w$."},
-            {"type": "p", "html": "Suppose we cap the size of each pixel change at $\\epsilon$ (an $\\ell_\\infty$ constraint, meaning $\\|\\delta\\|_\\infty \\le \\epsilon$). The most damaging choice is $\\delta = \\epsilon \\, \\text{sign}(w)$. Then the activation grows by $\\epsilon \\sum_i |w_i|$, which equals $\\epsilon$ times the dimension $m$ times the average weight magnitude."},
-            {"type": "math", "tex": "\\delta = \\epsilon \\, \\text{sign}(w) \\;\\Rightarrow\\; w^\\top \\delta = \\epsilon \\sum_i |w_i|"},
-            {"type": "p", "html": "The key observation: this extra activation <strong>grows linearly with the dimension $m$</strong>, but the size of the perturbation $\\|\\delta\\|_\\infty$ does not grow at all. In high dimensions a perturbation invisible to a human can still swing the output by a huge margin. That is the whole mechanism, and it requires no nonlinearity whatsoever."}
+            {"type": "p", "html": "<strong>Term by term:</strong> $w^\\top(x+\\delta)$ is the model's score on the perturbed input; $w$ is the weight vector (one number per input dimension); $x$ is the clean input and $\\delta$ the perturbation, both vectors in $\\mathbb{R}^m$ where $m$ is the number of pixels/features; $w^\\top x$ is the original clean score; and the extra term $w^\\top \\delta$ is the entire effect of the attack. The attacker's whole job is to make that one extra term as large as possible."},
+            {"type": "p", "html": "Now impose the budget. Cap every pixel's change at $\\epsilon$, i.e. require $\\|\\delta\\|_\\infty \\le \\epsilon$. Subject to that box constraint, the most damaging $\\delta$ points each coordinate in the same direction as the corresponding weight &mdash; that is, $\\delta = \\epsilon\\,\\text{sign}(w)$:"},
+            {"type": "math", "tex": "\\delta = \\epsilon \\, \\text{sign}(w) \\;\\Rightarrow\\; w^\\top \\delta = \\epsilon \\sum_{i=1}^{m} |w_i|"},
+            {"type": "p", "html": "<strong>Term by term:</strong> $\\text{sign}(w)$ is a vector of $\\pm 1$ giving the best direction to move each coordinate; multiplying by $\\epsilon$ spends the full budget on every pixel; $\\sum_i |w_i|$ is the sum of the weight magnitudes. If the average magnitude is $\\bar{m}_w$ and there are $m$ dimensions, this equals $\\epsilon \\, m \\, \\bar{m}_w$."},
+            {"type": "p", "html": "<strong>The punchline.</strong> The extra score $\\epsilon \\, m \\, \\bar{m}_w$ <em>grows with the dimension $m$</em>, but the perturbation size $\\|\\delta\\|_\\infty = \\epsilon$ does not grow at all. The paper's own numbers: with a problem of dimension 16 (a tiny image) the attack already adds a noticeable amount; scale to a real image with thousands of pixels and an invisible per-pixel change produces an output swing large enough to flip the decision. No nonlinearity required."},
+            {"type": "p", "html": "<strong>Why this matters for the rest of the field.</strong> This is the conceptual seed for every attack that follows. C&amp;W, PGD, and the rest are all, at heart, smarter ways of finding a direction $\\delta$ that maximizes the damage term under a norm budget. FGSM is just the one-step, linearized answer."}
           ]
         }
       ]
@@ -45,35 +68,71 @@
       "pages": [
         {
           "title": "The Fast Gradient Sign Method",
-          "subtitle": "One gradient step, taken in sign space",
+          "subtitle": "One gradient step, snapped to sign space",
           "pdfPages": [3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Real networks are not perfectly linear, but they are piecewise linear (ReLUs, maxout) or close to it, so the same intuition applies locally. To push the loss up as fast as possible under an $\\ell_\\infty$ budget, replace the weight vector $w$ from the toy example with the <strong>gradient of the loss with respect to the input</strong>. This gives the Fast Gradient Sign Method (FGSM)."},
-            {"type": "math", "tex": "x_{adv} = x + \\epsilon \\, \\text{sign}\\!\\big(\\nabla_x J(\\theta, x, y)\\big)"},
-            {"type": "p", "html": "Reading the equation: take the clean input $x$, compute the gradient of the loss $J$ with respect to the input (holding the trained weights $\\theta$ and true label $y$ fixed), keep only the <em>sign</em> of each component, scale by the budget $\\epsilon$, and add it on. Every pixel moves by exactly $\\pm\\epsilon$ in the direction that increases the loss."},
-            {"type": "p", "html": "Why the sign rather than the raw gradient? Under an $\\ell_\\infty$ constraint the optimal move is to spend the full budget $\\epsilon$ on every coordinate; the sign tells us which way to spend it. This makes FGSM a single backward pass: no iteration, no inner optimization. It is fast precisely because it is the linearized, closed-form solution."},
+            {"type": "p", "html": "<strong>The idea.</strong> Real networks are not exactly linear, but with ReLU and maxout units they are <em>piecewise</em> linear, so the toy intuition holds locally. The only change we make is to swap the fixed weight vector $w$ from the linear example for the thing that plays its role in a real network: the <strong>gradient of the loss with respect to the input</strong>. That gradient says which way to nudge each pixel to increase the model's error. The result is the <strong>Fast Gradient Sign Method (FGSM)</strong>."},
+            {"type": "math", "tex": "x_{\\text{adv}} = x + \\epsilon \\, \\text{sign}\\!\\big(\\nabla_x J(\\theta, x, y)\\big)"},
+            {"type": "p", "html": "<strong>Term by term:</strong> $x$ is the clean input; $J(\\theta, x, y)$ is the training loss (cross-entropy) for parameters $\\theta$, input $x$, and true label $y$; $\\nabla_x J$ is the gradient of that loss with respect to the <em>input pixels</em> (not the weights) &mdash; a vector the same shape as the image pointing toward higher loss; $\\text{sign}(\\cdot)$ keeps only the direction $\\pm 1$ of each component and throws away the magnitude; $\\epsilon$ is the per-pixel budget; and $x_{\\text{adv}}$ is the finished adversarial image. Every pixel moves by exactly $\\pm\\epsilon$ toward higher loss."},
+            {"type": "p", "html": "<strong>Why the sign and not the raw gradient?</strong> Because the budget is an $\\ell_\\infty$ box. Inside a box, the point that maximizes a linear function is a corner: you spend the full $\\epsilon$ on every coordinate. The sign of the gradient tells you which corner. Using the raw gradient magnitude would waste budget on pixels with large gradients while under-using pixels with small ones &mdash; suboptimal under $\\ell_\\infty$. So &ldquo;sign&rdquo; is not a hack; it is the exact closed-form optimum of the linearized problem."},
             {"type": "list", "items": [
-              "Cost: one forward and one backward pass per example.",
-              "Budget: controlled by a single scalar $\\epsilon$ (the $\\ell_\\infty$ radius).",
-              "Direction: the steepest-ascent direction of the loss, snapped to the cube's corners."
-            ]}
+              "<strong>Cost:</strong> one forward and one backward pass per example &mdash; no inner loop. This is why it is &ldquo;fast.&rdquo;",
+              "<strong>Budget:</strong> a single scalar $\\epsilon$, the $\\ell_\\infty$ radius (e.g. 0.007 for the panda, 0.25 on MNIST).",
+              "<strong>Direction:</strong> steepest ascent of the loss, snapped to the corners of the $\\ell_\\infty$ cube."
+            ]},
+            {"type": "p", "html": "<strong>Trivia &amp; context.</strong> FGSM is deliberately <em>weak</em> as an attack &mdash; a single linearized step. Its value is conceptual and methodological: it is the canonical baseline and the literal first iteration of stronger iterative attacks. Take FGSM, run it for many small steps and project back into the budget after each, and you get PGD (Madry et&nbsp;al.) &mdash; another paper in this collection."}
+          ]
+        },
+        {
+          "title": "The panda becomes a gibbon",
+          "subtitle": "Figure 1, read in detail",
+          "pdfPages": [3],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "<strong>The most famous figure in adversarial ML.</strong> Figure&nbsp;1 lays out three images side by side: the clean panda, the perturbation, and their sum. It is worth reading like a recipe because every adversarial-examples talk since has reused it."},
+            {"type": "table", "headers": ["Image", "What it is", "Model's verdict"], "rows": [
+              ["$x$", "Clean panda photo", "&ldquo;panda&rdquo;, 57.7% confidence"],
+              ["$\\text{sign}(\\nabla_x J)$", "The perturbation: a sign map, shown amplified so you can see it", "&ldquo;nematode&rdquo;, 8.2% (meaningless on its own)"],
+              ["$x + 0.007\\,\\text{sign}(\\nabla_x J)$", "Sum &mdash; looks identical to the panda", "&ldquo;gibbon&rdquo;, 99.3% confidence"]
+            ]},
+            {"type": "p", "html": "<strong>Reading the numbers.</strong> The perturbation is scaled by $\\epsilon = 0.007$. Because images are stored as 8-bit values (0&ndash;255), and $0.007 \\times 255 \\approx 1.8$, every pixel moves by less than two intensity levels &mdash; truly below the threshold of human perception. Yet the model's confidence in the <em>wrong</em> class is 99.3%, far higher than its 57.7% confidence in the correct one. The model is not just wrong; it is far more sure of the wrong answer."},
+            {"type": "p", "html": "<strong>Why the middle image is gibberish.</strong> The perturbation by itself is not a picture of anything; it is the sign of a gradient. Its &ldquo;nematode&rdquo; label is incidental. The whole effect comes from <em>adding</em> it to the panda, where it pushes the score along the one direction the linear analysis predicted."},
+            {"type": "p", "html": "<strong>Why confidence rises smoothly.</strong> Because the model is locally linear, sliding $\\epsilon$ from small to large makes the wrong-class logit climb monotonically. A genuine &ldquo;isolated pocket&rdquo; story would predict erratic, non-monotone behaviour. The smooth climb is direct evidence for the linear explanation."}
           ]
         },
         {
           "title": "Empirical evidence for linearity",
           "subtitle": "High error rates from a single cheap step",
-          "pdfPages": [3, 4],
+          "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "If adversarial examples really arose from a single linear direction, then perturbing along that one direction should be enough to fool the model, and the model's response should change smoothly as we slide $\\epsilon$ from negative to positive. The authors confirm both predictions."},
-            {"type": "p", "html": "On MNIST, a shallow softmax classifier reaches an error rate of about <strong>99%</strong> on FGSM examples with $\\epsilon = 0.25$, and a maxout network is fooled around <strong>89%</strong> of the time with $\\epsilon = 0.25$. On CIFAR-10 a convolutional maxout network has an error of about <strong>87%</strong> at $\\epsilon = 0.1$. These are large numbers from a single, cheap, linearized step."},
-            {"type": "table", "headers": ["Setting", "Attack", "Error on adversarial inputs"], "rows": [
-              ["MNIST softmax, $\\epsilon=0.25$", "FGSM", "~99%"],
-              ["MNIST maxout, $\\epsilon=0.25$", "FGSM", "~89%"],
-              ["CIFAR-10 maxout, $\\epsilon=0.1$", "FGSM", "~87%"]
+            {"type": "p", "html": "<strong>The test.</strong> If adversarial examples really arise from a single linear direction, then one cheap step along that direction should fool the model at high rates, and the effect should grow predictably with $\\epsilon$. The authors run FGSM across several models and report the error rates."},
+            {"type": "table", "headers": ["Setting", "Attack", "Error on adversarial inputs", "Avg. confidence when wrong"], "rows": [
+              ["MNIST shallow softmax, $\\epsilon=0.25$", "FGSM", "~99.9%", "79.3%"],
+              ["MNIST maxout net, $\\epsilon=0.25$", "FGSM", "~89.4%", "97.6%"],
+              ["CIFAR-10 conv. maxout, $\\epsilon=0.1$", "FGSM", "~87.2%", "96.6%"]
             ]},
-            {"type": "p", "html": "The model is also highly <em>confident</em> in its wrong answers, which is exactly what a linear model does: as you move further along the adversarial direction, the logit for the wrong class keeps climbing. A genuinely nonlinear, pocket-of-error story would not produce this smooth, monotone behaviour."}
+            {"type": "p", "html": "<strong>How to read this.</strong> A single linearized step pushes error rates near 90&ndash;100% on standard models, and &mdash; the telling part &mdash; the model is <em>highly confident</em> when wrong (96&ndash;98% on the maxout nets). High confidence in error is the linear signature: as you move along the adversarial direction, the wrong logit just keeps growing."},
+            {"type": "p", "html": "<strong>Figure 4 (the sweep).</strong> The paper plots error and average confidence as $\\epsilon$ ranges over positive and negative values. The curves are smooth and roughly monotone &mdash; exactly what a locally linear model predicts, and inconsistent with rare, isolated error pockets."},
+            {"type": "p", "html": "<strong>Why it matters.</strong> These numbers established FGSM as a serious, cheap threat and made the linear explanation credible: a story is only as good as its predictions, and this one predicted both the high error and the high confidence."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Linear Models & RBF Networks",
+      "pages": [
+        {
+          "title": "Linear models fail, RBF units resist",
+          "subtitle": "What kind of model is naturally robust?",
+          "pdfPages": [4, 5],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "<strong>The question:</strong> if linearity is the disease, is there a model class that is naturally immune? The authors contrast ordinary linear/softmax models (vulnerable, as predicted) with <strong>radial basis function (RBF) networks</strong>, and find a revealing trade-off."},
+            {"type": "p", "html": "An RBF unit does not respond to a dot product; it responds to <em>distance</em>. Its activation is high only when the input is close to a learned template and decays as you move away. So an RBF unit confidently says &ldquo;yes&rdquo; only in a small neighborhood and says &ldquo;I don't recognize this&rdquo; (low confidence) everywhere else &mdash; the opposite of a linear unit, which extrapolates a confident answer arbitrarily far from the data."},
+            {"type": "p", "html": "<strong>The result.</strong> A shallow RBF network is far more resistant to adversarial examples: on MNIST it kept an error rate of only about 55.4% under FGSM at $\\epsilon = 0.25$, and crucially it had <em>low confidence</em> (around 1.2%) on the examples it did get wrong &mdash; it knew it was out of its depth. The catch: RBF networks are hard to optimize and generalize poorly on clean data, which is why nobody uses them at scale. Robustness here comes bundled with a big accuracy and trainability cost."},
+            {"type": "p", "html": "<strong>The lesson the paper draws.</strong> Models are vulnerable precisely because they are <em>too linear</em> and extrapolate confident answers into regions with no training data. A model that refuses to be confident far from the data (like RBF) is safer but weaker. The open challenge &mdash; build something that keeps deep nets' accuracy while gaining RBF-like locality &mdash; is essentially the agenda the later certified-robustness papers pick up."}
           ]
         }
       ]
@@ -84,12 +143,13 @@
         {
           "title": "Why one model's attacks fool another",
           "subtitle": "The shared linear direction generalizes across models",
-          "pdfPages": [5],
+          "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "A striking and dangerous property is <strong>transferability</strong>: an adversarial example crafted to fool one network often fools a completely different network, trained with a different architecture or even a different training set, that has never seen the attack."},
-            {"type": "p", "html": "The linear view explains this cleanly. Different models trained on the same task learn similar weight directions because they are fitting the same data. FGSM points along the sign of the gradient, which is governed by those weights, so the adversarial direction discovered on model A is close to a direction that also raises the loss of model B. The attack does not exploit a quirk of one network; it exploits a property of the data and the linear-ish solutions all such networks converge to."},
-            {"type": "p", "html": "The practical consequence is severe: an attacker need not have access to the target model at all. They can train their own substitute, generate adversarial examples on it, and expect many of them to transfer. This is the basis of black-box attacks against deployed systems."}
+            {"type": "p", "html": "<strong>The phenomenon.</strong> An adversarial example crafted to fool network A often also fools network B &mdash; a different architecture, trained on different data, that has never seen the attack. This is <strong>transferability</strong>, and it is what turns adversarial examples from a white-box curiosity into a real-world black-box threat."},
+            {"type": "p", "html": "<strong>The linear view explains it cleanly.</strong> Different models trained on the same task are fitting the same data, so they learn similar weight directions &mdash; their decision boundaries point roughly the same way. FGSM moves along the sign of the gradient, which is governed by those weights. So the direction that raises model A's loss is close to a direction that raises model B's loss too. The attack exploits a property of the <em>data and the family of linear-ish solutions</em>, not a quirk of one network."},
+            {"type": "p", "html": "<strong>The numbers.</strong> The paper reports that adversarial examples generated for a maxout network transferred to a different model (e.g. a softmax or a separately trained net) and caused misclassification a large fraction of the time, with the two models frequently <em>agreeing on the same wrong class</em> &mdash; strong evidence that they are aligned along the same adversarial directions, not failing randomly."},
+            {"type": "p", "html": "<strong>The practical consequence.</strong> An attacker does not need access to the target model. They train their own substitute, generate FGSM examples on it, and many transfer to the victim. This is the foundation of practical black-box attacks against deployed systems and a recurring theme across the decision-based and query-efficient attack papers in this collection."}
           ]
         }
       ]
@@ -100,35 +160,56 @@
         {
           "title": "Training on the attack itself",
           "subtitle": "FGSM as a regularizer baked into the loss",
-          "pdfPages": [4, 5],
+          "pdfPages": [6, 7],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "If adversarial examples come from a predictable linear direction, we can generate them on the fly during training and force the model to classify them correctly. The authors introduce an <strong>adversarial training</strong> objective that mixes the loss on clean inputs with the loss on their FGSM-perturbed versions."},
+            {"type": "p", "html": "<strong>The idea.</strong> If adversarial examples come from a predictable direction, generate them on the fly during training and force the model to label them correctly. The authors mix the loss on clean inputs with the loss on their FGSM-perturbed versions &mdash; <strong>adversarial training</strong>."},
             {"type": "math", "tex": "\\tilde{J}(\\theta, x, y) = \\alpha \\, J(\\theta, x, y) + (1 - \\alpha)\\, J\\big(\\theta,\\, x + \\epsilon \\, \\text{sign}(\\nabla_x J(\\theta,x,y)),\\, y\\big)"},
-            {"type": "p", "html": "In words: the training loss is a weighted blend of the ordinary loss and the loss on the adversarial example regenerated at every step, with $\\alpha$ (e.g. $0.5$) setting the balance. Because the perturbation is recomputed each iteration as the weights change, the model is always trained against a fresh, current attack rather than a fixed set."},
-            {"type": "p", "html": "This acts as a regularizer that penalizes the model for changing its prediction under small input shifts. On MNIST it lowered the maxout network's error on FGSM examples from roughly 89% to under 18%, and slightly improved clean test accuracy as well. The defense is not perfect, but it demonstrates that robustness can be trained in rather than hoped for."},
-            {"type": "quote", "html": "Adversarial training can be viewed as minimizing the worst-case error within a small box around each training point, an idea the later min-max formulations make precise."}
+            {"type": "p", "html": "<strong>Term by term:</strong> $\\tilde{J}$ is the new training objective; the first term $\\alpha\\,J(\\theta,x,y)$ is the ordinary loss on the clean example; the second term is the loss on the FGSM example $x + \\epsilon\\,\\text{sign}(\\nabla_x J)$ regenerated <em>at the current weights</em> every step; $\\alpha \\in [0,1]$ (the paper uses 0.5) balances the two. Because the perturbation is recomputed each iteration as $\\theta$ changes, the model is always trained against a fresh, current attack rather than a stale fixed set."},
+            {"type": "p", "html": "<strong>What it does intuitively.</strong> The extra term penalizes the model for changing its answer inside a small box around each training point. It is a data-dependent regularizer that flattens the loss surface in the input directions an attacker would exploit &mdash; teaching the net to ignore the very directions linearity made dangerous."},
+            {"type": "p", "html": "<strong>The result.</strong> On MNIST, adversarial training cut the maxout network's FGSM error from about 89.4% down to roughly 17.9%, and even slightly <em>improved</em> clean test error (the regularizer helps generalization). The defense is not bulletproof &mdash; it mainly hardens against the one-step attack it trains on &mdash; but it proved robustness can be <em>trained in</em> rather than hoped for."},
+            {"type": "quote", "html": "Adversarial training can be seen as minimizing the worst case error when the data is perturbed by an adversary."},
+            {"type": "p", "html": "<strong>Context.</strong> That sentence is the seed of the min-max formulation Madry et&nbsp;al. later make precise, and adversarial training with a strong inner attack (PGD) remains, years on, the most reliable empirical defense. Nearly every robust-training method descends from this objective."}
           ]
         }
       ]
     },
     {
-      "title": "Takeaways",
+      "title": "Generalization & Alternatives",
       "pages": [
+        {
+          "title": "Why adversarial examples generalize, and what else might explain them",
+          "subtitle": "A direction in space, not a set of points",
+          "pdfPages": [7, 8, 9],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "<strong>The key reframing.</strong> The reason an adversarial example transfers, and the reason it generalizes across small changes to the image, is that what matters is a <em>direction</em> in input space, not a precise point. Any input that has a large enough component along the adversarial direction $\\text{sign}(\\nabla_x J)$ gets misclassified. There is a whole half-space of adversarial inputs, which is why they are easy to find and easy to transfer &mdash; not rare pockets, but a vast aligned region."},
+            {"type": "p", "html": "<strong>Generalized FGSM.</strong> The authors note the method extends naturally to other norms (an $\\ell_2$ version normalizes the gradient instead of taking its sign) and to <em>targeted</em> attacks, where you descend the loss for a chosen target class instead of ascending it for the true class &mdash; making the panda be called &ldquo;gibbon&rdquo; specifically rather than just &ldquo;not panda.&rdquo;"},
+            {"type": "p", "html": "<strong>Alternative hypotheses, and why the authors reject them.</strong> Two competing stories existed: (1) ensembling or averaging many models would wash adversarial examples out &mdash; but they don't, because the models share the same linear directions; (2) generative or unsupervised pretraining would fix it &mdash; but the vulnerability persists. The evidence keeps pointing back to linearity as the root cause."},
+            {"type": "list", "items": [
+              "Adversarial examples occupy broad, aligned <em>regions</em>, not isolated points &mdash; explaining both transfer and robustness of the attack to noise.",
+              "Ensembling provides little protection: members share adversarial directions.",
+              "RBF-style locality resists attacks but sacrifices accuracy and trainability.",
+              "Linear models with high enough dimension are themselves vulnerable &mdash; depth is not the cause."
+            ]},
+            {"type": "p", "html": "<strong>Why it matters.</strong> &ldquo;A direction, not a point&rdquo; is the mental model that makes the rest of the literature tractable: it tells you attacks will transfer, that defenses must flatten whole regions (not memorize points), and that simply adding random noise won't save you."}
+          ]
+        },
         {
           "title": "What FGSM established",
           "subtitle": "A mechanism, a benchmark attack, and a defense",
-          "pdfPages": [6],
+          "pdfPages": [9],
           "viz": ["adversarial-perturbation"],
           "blocks": [
             {"type": "h2", "text": "Why this paper matters"},
             {"type": "list", "items": [
-              "It reframed adversarial examples as a consequence of high-dimensional linearity, not exotic nonlinearity, giving the field a usable mental model.",
-              "It introduced FGSM, a one-step closed-form attack that remains the canonical baseline and the building block of stronger iterative attacks.",
-              "It explained transferability, which makes black-box attacks practical and raises the stakes for deployed models.",
-              "It introduced adversarial training, the seed of nearly every robust-training method that followed."
+              "It reframed adversarial examples as a consequence of high-dimensional <strong>linearity</strong>, not exotic nonlinearity &mdash; giving the field a usable, predictive mental model.",
+              "It introduced <strong>FGSM</strong>, a one-step closed-form attack that is still the canonical baseline and the building block of stronger iterative attacks (PGD).",
+              "It explained <strong>transferability</strong>, which makes practical black-box attacks possible and raises the stakes for any deployed model.",
+              "It introduced <strong>adversarial training</strong>, the seed of nearly every robust-training method that followed."
             ]},
-            {"type": "p", "html": "FGSM is deliberately weak as an attack: it takes a single linearized step. Its importance is conceptual and methodological. By showing that a trivial, cheap procedure could reliably break confident classifiers, it forced the community to treat robustness as a first-class objective and set the agenda for the stronger attacks (C&W, PGD) and rigorous evaluations (obfuscated gradients) that followed."}
+            {"type": "p", "html": "<strong>The lasting irony.</strong> FGSM is a weak attack on purpose &mdash; one linearized step. Its importance is that something this trivial could reliably break confident, accurate classifiers. That forced the community to treat robustness as a first-class objective and set the agenda for the stronger attacks (C&amp;W, PGD), the rigorous evaluation methodology (obfuscated gradients), and the analyses of what features models actually use (robust vs. non-robust features) that fill out the rest of this collection."},
+            {"type": "p", "html": "<strong>A common misconception.</strong> People often say adversarial examples prove networks &ldquo;don't really understand&rdquo; images. The linear explanation is more humbling and more useful: the networks behave exactly as their math dictates, and the flaw is a property of fitting linear-ish functions in high dimensions &mdash; a problem we can analyze, attack, and partly defend against, rather than a mystical failure."}
           ]
         }
       ]

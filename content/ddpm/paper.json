@@ -5,42 +5,63 @@
   "venue": "NeurIPS 2020 — arXiv:2006.11239",
   "sections": [
     {
-      "title": "Abstract",
+      "title": "Abstract & Introduction",
       "pages": [
         {
           "title": "Generate by reversing a noising process",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "<b>Forward process</b>: start with a real image $x_0$ and add a small amount of Gaussian noise. Repeat $T$ times. After enough steps, the image is indistinguishable from pure noise." },
-            { "type": "p", "html": "<b>Reverse process</b>: start from pure noise $x_T \\sim \\mathcal{N}(0, I)$ and learn to gradually remove noise step by step, producing a sample $x_0$ that looks like real data." },
-            { "type": "p", "html": "DDPM shows that both the forward and reverse processes can be written as Markov chains of Gaussian transitions, that the reverse-process parameters reduce to predicting <i>the noise that was added at each step</i>, and that the resulting loss is a remarkably simple weighted denoising MSE." },
-            { "type": "quote", "html": "We present high quality image samples using diffusion probabilistic models. ... a 256×256 sample matching the visual quality of GANs while remaining a likelihood-based model." }
+            { "type": "p", "html": "<b>The problem.</b> Generative modeling asks: after seeing many real images, produce new ones from the same distribution. GANs (in this collection) do it with an unstable adversarial game; VAEs do it with a single latent code but tend to blur. DDPM proposes a third route that is both stable to train and produces GAN-quality samples — by learning to <b>undo a gradual corruption process</b>." },
+            { "type": "p", "html": "<b>The intuition / analogy.</b> Imagine slowly dripping ink into a glass of water until the image dissolves into a uniform cloud — that is the easy direction, pure physics, no learning. Now imagine being able to run the film <i>backwards</i>: starting from the cloud and watching it re-condense into a crisp picture. DDPM trains a neural network to perform exactly that reverse step. Generation becomes: start from random noise, then take many tiny denoising steps until a clean image emerges." },
+            { "type": "list", "items": [
+              "<b>Forward process</b> (fixed, no learning): take a real image $x_0$ and add a little Gaussian noise. Repeat $T$ times (the paper uses $T=1000$). After enough steps the image is indistinguishable from pure $\\mathcal{N}(0,I)$ noise.",
+              "<b>Reverse process</b> (learned): start from pure noise $x_T\\sim\\mathcal{N}(0,I)$ and remove a little noise at a time, step by step, until you reach a clean sample $x_0$.",
+              "<b>The surprise</b>: the whole reverse process collapses to one simple task — at each step, a network just <i>predicts the noise that was added</i> — trained with a plain mean-squared-error loss."
+            ]},
+            { "type": "quote", "html": "We present high quality image synthesis results using diffusion probabilistic models, a class of latent variable models inspired by considerations from nonequilibrium thermodynamics." },
+            { "type": "p", "html": "<b>Why it mattered.</b> The headline result was that diffusion models could finally match GANs on image quality (CIF-10 FID of 3.17) while remaining a stable, likelihood-flavored model with no adversarial training and no mode collapse. This paper is the technical foundation of the 2022–2024 image-generation explosion: Stable Diffusion, DALL·E 2, Imagen, Midjourney, and video models like Sora and Veo are all descendants." }
           ],
           "viz": ["diffusion-forward-reverse"]
+        },
+        {
+          "title": "Where diffusion sits among generative models",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "<b>The intuition.</b> Before judging the math, it helps to see why this design is attractive. Each of the prior families had a defining weakness: GANs train via a saddle-point game that is unstable and prone to <b>mode collapse</b> (generating only a few kinds of output); VAEs optimize a clean likelihood bound but the single-step Gaussian decoder produces soft, averaged samples. Diffusion keeps the VAE's principled, likelihood-based objective <i>and</i> reaches GAN-level sharpness, by replacing one hard generation step with hundreds of easy ones." },
+            { "type": "p", "html": "<b>The key reframing.</b> A diffusion model is a <b>latent-variable model</b> $p_\\theta(x_0)=\\int p_\\theta(x_{0:T})\\,dx_{1:T}$, where the latents $x_1,\\dots,x_T$ are noisier and noisier versions of the data, all the same dimensionality as $x_0$. In VAE language: it is a very deep hierarchical VAE whose <i>encoder is fixed</i> (the forward noising chain, with no learnable parameters) rather than learned. All the learning goes into the decoder — the reverse chain." },
+            { "type": "p", "html": "<b>Why split generation into many steps.</b> Asking a network to jump from pure noise to a photorealistic face in one shot is hard (that is the GAN/VAE decoder's job, and it is where they struggle). Asking it to make an image <i>slightly</i> less noisy is easy, and a near-Gaussian step is provably enough when each noise increment $\\beta_t$ is tiny. Stacking many easy steps yields a powerful generator from simple parts — the central bet of the paper." },
+            { "type": "p", "html": "<b>Context.</b> The diffusion idea traces to Sohl-Dickstein et al. (2015) and connects to score-based generative models (Song &amp; Ermon). DDPM's contribution was making it <i>work</i> at high quality, largely through the simplified noise-prediction objective and the right network/parameterization choices covered on the following pages." }
+          ]
         }
       ]
     },
     {
-      "title": "2. Background",
+      "title": "2. Background — the two Markov chains",
       "pages": [
         {
-          "title": "Forward (noising) process",
-          "pdfPages": [2, 3],
+          "title": "The forward (noising) process and its closed form",
+          "pdfPages": [2],
           "blocks": [
-            { "type": "p", "html": "A fixed Markov chain that gradually corrupts the data:" },
-            { "type": "math", "tex": "q(x_t | x_{t-1}) = \\mathcal{N}(x_t;\\; \\sqrt{1-\\beta_t}\\, x_{t-1},\\; \\beta_t I)" },
-            { "type": "p", "html": "$\\beta_t$ is a small variance schedule (linearly from $10^{-4}$ to $0.02$ over $T=1000$ steps). Important closed-form: you can sample $x_t$ at any timestep $t$ directly from $x_0$:" },
-            { "type": "math", "tex": "q(x_t | x_0) = \\mathcal{N}(x_t;\\; \\sqrt{\\bar\\alpha_t}\\, x_0,\\; (1-\\bar\\alpha_t) I),\\quad \\bar\\alpha_t = \\prod_{s=1}^t (1 - \\beta_s)" },
-            { "type": "p", "html": "So during training, you don't need to simulate the chain step by step — you sample a random $t$, sample noise, and produce $x_t$ in one shot." }
+            { "type": "p", "html": "<b>The goal.</b> Define a fixed, parameter-free way to turn any image into noise, gradually, so that we have a well-defined process for the network to learn to reverse." },
+            { "type": "p", "html": "<b>The single forward step.</b> The forward process $q$ is a Markov chain that adds a little Gaussian noise at each step:" },
+            { "type": "math", "tex": "q(x_t \\mid x_{t-1}) = \\mathcal{N}\\big(x_t;\\; \\sqrt{1-\\beta_t}\\, x_{t-1},\\; \\beta_t I\\big)" },
+            { "type": "p", "html": "<b>Reading every symbol.</b> $x_{t-1}$ is the image at the previous step; $x_t$ is the slightly noisier next one. $\\beta_t\\in(0,1)$ is the <b>variance schedule</b> — how much noise to inject at step $t$ — set small and increasing linearly from $\\beta_1=10^{-4}$ to $\\beta_T=0.02$ over $T=1000$ steps. The factor $\\sqrt{1-\\beta_t}$ shrinks the signal a touch so the variance stays bounded; $\\beta_t I$ is the added isotropic noise. Crucially there is <i>nothing to learn</i> here." },
+            { "type": "p", "html": "<b>The closed-form shortcut (the trick that makes training cheap).</b> You do <i>not</i> have to simulate the chain step by step. Because composing Gaussians gives a Gaussian, you can jump to <i>any</i> timestep $t$ directly from the clean image $x_0$:" },
+            { "type": "math", "tex": "q(x_t \\mid x_0) = \\mathcal{N}\\big(x_t;\\; \\sqrt{\\bar\\alpha_t}\\, x_0,\\; (1-\\bar\\alpha_t) I\\big), \\qquad \\alpha_t = 1-\\beta_t,\\;\\; \\bar\\alpha_t = \\prod_{s=1}^{t}\\alpha_s" },
+            { "type": "p", "html": "<b>Reading it.</b> $\\alpha_t = 1-\\beta_t$ is the fraction of signal kept at step $t$; $\\bar\\alpha_t$ is the cumulative product — the fraction of the original signal surviving all the way to step $t$. As $t\\to T$, $\\bar\\alpha_t\\to 0$, so $x_T$ is essentially pure $\\mathcal{N}(0,I)$ noise. The practical payoff: to make a training example at timestep $t$ you sample one noise vector $\\epsilon\\sim\\mathcal{N}(0,I)$ and set $x_t=\\sqrt{\\bar\\alpha_t}\\,x_0+\\sqrt{1-\\bar\\alpha_t}\\,\\epsilon$ — a single operation, no chain to unroll." }
           ]
         },
         {
-          "title": "Reverse (denoising) process",
-          "pdfPages": [3, 4],
+          "title": "The reverse (denoising) process and the variational bound",
+          "pdfPages": [2, 3],
           "blocks": [
-            { "type": "p", "html": "The reverse process is also Markov, parameterized by a neural network:" },
-            { "type": "math", "tex": "p_\\theta(x_{t-1} | x_t) = \\mathcal{N}(x_{t-1};\\; \\mu_\\theta(x_t, t),\\; \\Sigma_\\theta(x_t, t))" },
-            { "type": "p", "html": "If $\\beta_t$ is small, this reverse step is also approximately Gaussian, so the Gaussian parameterization is justified." }
+            { "type": "p", "html": "<b>The goal.</b> The forward process destroys information; we need to learn to put it back. That learned reverse chain is the actual generative model." },
+            { "type": "p", "html": "<b>The single reverse step.</b> The reverse process is also a Markov chain, but Gaussian with <i>learned</i> parameters, run from $x_T$ back to $x_0$:" },
+            { "type": "math", "tex": "p_\\theta(x_{t-1} \\mid x_t) = \\mathcal{N}\\big(x_{t-1};\\; \\mu_\\theta(x_t, t),\\; \\Sigma_\\theta(x_t, t)\\big)" },
+            { "type": "p", "html": "<b>Reading it.</b> Given the current noisy image $x_t$ and the timestep $t$, a neural network outputs the mean $\\mu_\\theta(x_t,t)$ and covariance $\\Sigma_\\theta(x_t,t)$ of where the slightly-cleaner $x_{t-1}$ should be. The chain starts at $p(x_T)=\\mathcal{N}(0,I)$. The <b>key justification</b>: when each forward step's $\\beta_t$ is tiny, the true reverse conditional is itself approximately Gaussian — so a Gaussian parameterization is not a crude hack but a good approximation." },
+            { "type": "p", "html": "<b>How we train it: the variational bound.</b> As in a VAE, we cannot maximize $\\log p_\\theta(x_0)$ directly, so we maximize a lower bound (minimize its negative). The bound decomposes over timesteps into a sum of KL divergences:" },
+            { "type": "math", "tex": "\\mathbb{E}_q\\!\\left[ \\underbrace{D_{\\mathrm{KL}}\\big(q(x_T\\mid x_0)\\,\\|\\,p(x_T)\\big)}_{L_T} + \\sum_{t>1} \\underbrace{D_{\\mathrm{KL}}\\big(q(x_{t-1}\\mid x_t,x_0)\\,\\|\\,p_\\theta(x_{t-1}\\mid x_t)\\big)}_{L_{t-1}} - \\underbrace{\\log p_\\theta(x_0\\mid x_1)}_{L_0} \\right]" },
+            { "type": "p", "html": "<b>Reading it.</b> $L_T$ has no learnable parameters (it just checks that $x_T$ is noise) and is essentially zero. Each $L_{t-1}$ compares the network's reverse step $p_\\theta(x_{t-1}\\mid x_t)$ against the <b>true posterior</b> $q(x_{t-1}\\mid x_t,x_0)$ — which is available in closed form (another Gaussian) precisely because we condition on the original $x_0$. $L_0$ is the final reconstruction term. The whole objective is a sum of Gaussian-vs-Gaussian KLs, each of which is just a squared difference of means — there is no adversary and no high-variance sampling, which is why training is stable." }
           ]
         }
       ]
@@ -49,26 +70,31 @@
       "title": "3. The simple objective",
       "pages": [
         {
-          "title": "Predict the noise",
-          "pdfPages": [4, 5],
+          "title": "Predict the noise: from KL to L_simple",
+          "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "Starting from the variational lower bound and applying clever reparameterization, the loss reduces to:" },
-            { "type": "math", "tex": "L_{\\text{simple}}(\\theta) = \\mathbb{E}_{t, x_0, \\epsilon}\\!\\left[\\|\\epsilon - \\epsilon_\\theta(\\sqrt{\\bar\\alpha_t}\\, x_0 + \\sqrt{1-\\bar\\alpha_t}\\, \\epsilon,\\; t)\\|^2\\right]" },
-            { "type": "p", "html": "Read it as: sample a clean image, sample a timestep, sample noise, build the noisy image, ask a neural network to predict the noise that was added. Train to minimize MSE." },
-            { "type": "p", "html": "The network $\\epsilon_\\theta(x_t, t)$ is typically a U-Net with timestep conditioning. The same network handles every $t$ — timestep is just an additional input." }
+            { "type": "p", "html": "<b>The problem.</b> The per-step KL term $L_{t-1}$ asks the network's mean $\\mu_\\theta(x_t,t)$ to match the true posterior mean. That works, but DDPM's central practical insight is a reparameterization that turns this into something far simpler and better-conditioned: instead of predicting the cleaned image, <b>predict the noise</b>." },
+            { "type": "p", "html": "<b>The reparameterization.</b> Recall $x_t = \\sqrt{\\bar\\alpha_t}\\,x_0+\\sqrt{1-\\bar\\alpha_t}\\,\\epsilon$. If the network can guess the noise $\\epsilon$ that was mixed in, it implicitly knows $x_0$, and the reverse-step mean follows in closed form:" },
+            { "type": "math", "tex": "\\mu_\\theta(x_t, t) = \\frac{1}{\\sqrt{\\alpha_t}}\\left( x_t - \\frac{\\beta_t}{\\sqrt{1-\\bar\\alpha_t}}\\, \\epsilon_\\theta(x_t, t) \\right)" },
+            { "type": "p", "html": "<b>Reading it.</b> $\\epsilon_\\theta(x_t,t)$ is the network's prediction of the injected noise. The formula simply subtracts a scaled version of that predicted noise from the current image and renormalizes — so the network never has to output a full image, only a noise estimate of the same shape." },
+            { "type": "p", "html": "<b>The simplified loss.</b> Substituting this into the KL terms and then <i>dropping the time-dependent weighting</i> (the paper found the unweighted version trains better and acts as a useful emphasis on harder, noisier steps) yields the famous objective:" },
+            { "type": "math", "tex": "L_{\\text{simple}}(\\theta) = \\mathbb{E}_{t,\\,x_0,\\,\\epsilon}\\left[ \\big\\| \\epsilon - \\epsilon_\\theta\\big(\\sqrt{\\bar\\alpha_t}\\, x_0 + \\sqrt{1-\\bar\\alpha_t}\\, \\epsilon,\\; t\\big) \\big\\|^2 \\right]" },
+            { "type": "p", "html": "<b>Reading it as a recipe.</b> (1) Sample a clean image $x_0$ from the dataset. (2) Sample a timestep $t$ uniformly from $\\{1,\\dots,T\\}$. (3) Sample noise $\\epsilon\\sim\\mathcal{N}(0,I)$. (4) Build the noisy image $x_t$ in one shot. (5) Ask the network to predict $\\epsilon$, and minimize the mean-squared error. That is the entire training loop (the paper's Algorithm 1) — strikingly close to a denoising autoencoder, and nothing like a GAN's delicate balancing act." },
+            { "type": "p", "html": "<b>The network.</b> $\\epsilon_\\theta(x_t,t)$ is a <b>U-Net</b> (an encoder-decoder with skip connections, plus self-attention at lower resolutions) conditioned on the timestep $t$ via a Transformer-style sinusoidal positional embedding. A single set of weights handles every timestep — $t$ is just an extra input — so the model size does not grow with $T$." }
           ]
         },
         {
-          "title": "Sampling",
-          "pdfPages": [6],
+          "title": "Sampling — running the chain backwards",
+          "pdfPages": [4],
           "blocks": [
-            { "type": "p", "html": "To generate: start with $x_T \\sim \\mathcal{N}(0, I)$. For $t = T, T-1, \\ldots, 1$:" },
+            { "type": "p", "html": "<b>The goal.</b> Turn the trained noise-predictor into an image generator (the paper's Algorithm 2)." },
+            { "type": "p", "html": "<b>The procedure.</b> Start from pure noise $x_T\\sim\\mathcal{N}(0,I)$. Then for $t=T, T-1, \\dots, 1$, take one ancestral-sampling step:" },
             { "type": "list", "items": [
-              "Predict the noise $\\hat\\epsilon = \\epsilon_\\theta(x_t, t)$.",
-              "Compute the mean $\\mu_\\theta$ in closed form from $\\hat\\epsilon$ and $x_t$.",
-              "Sample $x_{t-1} \\sim \\mathcal{N}(\\mu_\\theta, \\Sigma_t)$."
+              "Predict the noise: $\\hat\\epsilon = \\epsilon_\\theta(x_t, t)$.",
+              "Compute the reverse-step mean $\\mu_\\theta(x_t,t)=\\tfrac{1}{\\sqrt{\\alpha_t}}\\big(x_t - \\tfrac{\\beta_t}{\\sqrt{1-\\bar\\alpha_t}}\\hat\\epsilon\\big)$.",
+              "Draw the next, cleaner image $x_{t-1} = \\mu_\\theta(x_t,t) + \\sigma_t z$, with fresh $z\\sim\\mathcal{N}(0,I)$ for $t>1$ and $z=0$ at the final step. DDPM fixes $\\sigma_t^2=\\beta_t$ (or the posterior variance $\\tilde\\beta_t$) rather than learning it."
             ]},
-            { "type": "p", "html": "After $T$ steps you have $x_0$, your sample. The slow part: $T = 1000$ neural network forward passes per sample. Later work (DDIM, classifier-free guidance, Karras schedulers) cut this to 20-50 steps." }
+            { "type": "p", "html": "<b>The cost / the catch.</b> After $T$ such steps you have a sample $x_0$. The downside is speed: $T=1000$ steps means <b>1000 sequential network forward passes per image</b> — orders of magnitude slower than a GAN's single pass. This is the one place diffusion clearly loses, and it motivated a wave of follow-up acceleration work: DDIM (deterministic, non-Markovian sampling in 20–50 steps), distillation, and modern fast solvers (DPM-Solver, Karras schedulers)." }
           ]
         }
       ]
@@ -77,24 +103,39 @@
       "title": "4. Experiments",
       "pages": [
         {
-          "title": "Image quality and FID",
-          "pdfPages": [7, 8, 9],
+          "title": "Image quality, FID, and the design ablations",
+          "pdfPages": [5, 6],
           "blocks": [
-            { "type": "p", "html": "On CIFAR-10 unconditional generation, DDPM achieves <b>FID 3.17</b> — at the time, the best result among likelihood-based models and competitive with state-of-the-art GANs (StyleGAN: 3.86, BigGAN: 14.7 on CIFAR-10 unconditional)." },
-            { "type": "p", "html": "On LSUN bedrooms and CelebA-HQ at 256×256, DDPM produces samples that are visually comparable to GANs (sharp, coherent), without the mode-collapse failure modes." }
+            { "type": "p", "html": "<b>The headline numbers.</b> On <b>CIFAR-10</b> unconditional generation, DDPM reaches an <b>FID of 3.17</b> and an Inception Score of <b>9.46</b> — at publication, the best FID among likelihood-based models and competitive with strong GANs (FID is the Fréchet Inception Distance; <i>lower is better</i>, as it measures how far generated-image statistics sit from real ones)." },
+            { "type": "table", "headers": ["Model (CIFAR-10, unconditional)", "FID (lower better)", "IS (higher better)"],
+              "rows": [
+                ["DDPM ($L_{\\text{simple}}$)", "3.17", "9.46"],
+                ["StyleGAN2 + ADA (GAN)", "~3.0", "~9.7"],
+                ["Prior likelihood-based models", "> 3.17", "lower"]
+              ]},
+            { "type": "p", "html": "<b>High resolution.</b> On <b>LSUN</b> (church, bedroom) and <b>CelebA-HQ</b> at $256\\times256$, DDPM produces samples that are visually comparable to GANs — sharp and globally coherent — but <i>without</i> the mode-collapse and training-instability pathologies that plague adversarial training. The model simply covers the data distribution because its likelihood-based objective rewards doing so." },
+            { "type": "p", "html": "<b>The crucial ablation.</b> The paper compares the full variational bound $L$ against the simplified, unweighted $L_{\\text{simple}}$, and finds $L_{\\text{simple}}$ gives <i>better sample quality</i> despite being a worse log-likelihood. The down-weighting of small-$t$ (low-noise) terms that $L_{\\text{simple}}$ implies turns out to focus the network on the perceptually important high-noise steps. They also confirm that <b>predicting $\\epsilon$ beats predicting $\\mu$ directly or predicting $x_0$</b> — the noise parameterization is what makes the method shine." },
+            { "type": "p", "html": "<b>Progressive generation.</b> Because sampling reveals the image coarse-to-fine, DDPM can show a striking 'progressive decoding' visualization: large-scale structure (pose, layout) is decided in the early, high-noise steps and fine detail (texture, edges) is filled in near the end — mirroring the autoregressive idea but over noise scales rather than pixels." }
           ]
         }
       ]
     },
     {
-      "title": "5. Impact",
+      "title": "5. Impact & legacy",
       "pages": [
         {
           "title": "The diffusion era",
-          "pdfPages": [10],
+          "pdfPages": [6],
           "blocks": [
-            { "type": "p", "html": "DDPM made diffusion models competitive with GANs for the first time on quality, and they came with several big advantages: stable training (no minimax), strong likelihoods, easy conditioning, and natural multi-modality." },
-            { "type": "p", "html": "Direct descendants: improved DDPMs (cosine schedule, learned variance), classifier-free guidance, latent diffusion (Stable Diffusion), score-based models, consistency models, rectified flow. DDPM is the technical foundation of the image-generation explosion of 2022-2024 — DALL·E 2, Imagen, Stable Diffusion, Midjourney, Sora, Veo." }
+            { "type": "p", "html": "<b>Why it changed the field.</b> DDPM was the moment diffusion models became competitive with GANs on quality, and they arrived with a bundle of structural advantages that the GAN (earlier in this collection) never had:" },
+            { "type": "list", "items": [
+              "<b>Stable training</b>: a simple MSE regression objective, no minimax game, no balancing two networks — runs of training reliably converge.",
+              "<b>Full distribution coverage</b>: no mode collapse, because the likelihood-based bound penalizes ignoring parts of the data.",
+              "<b>Easy conditioning</b>: text, class labels, or other images can steer generation, later via classifier and classifier-free guidance.",
+              "<b>The cost</b>: slow, multi-step sampling — the main weakness, since addressed by faster samplers and distillation."
+            ]},
+            { "type": "p", "html": "<b>Direct descendants.</b> Improved DDPM (cosine noise schedule, learned variances), classifier-free guidance, score-based SDE formulations, latent diffusion (operating in a compressed VAE latent space — the basis of Stable Diffusion), consistency models, and rectified flow all build directly on this work." },
+            { "type": "p", "html": "<b>The lineage in this collection.</b> DDPM is best understood sitting between the two papers around it: it inherits the <b>variational lower bound</b> and latent-variable framing from the VAE (it is a deep hierarchical VAE with a fixed encoder), and it dethrones the <b>GAN</b> on the very metric — sample quality — that GANs had owned since 2015. It is the technical foundation of the 2022–2024 generative-image explosion: DALL·E 2, Imagen, Stable Diffusion, Midjourney, and video models like Sora and Veo." }
           ]
         }
       ]

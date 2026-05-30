@@ -13,18 +13,34 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Most adversarial attacks assume the attacker is generous with information: they read the model's gradients (white-box) or at least its output probabilities / confidence scores (score-based). Real deployed systems rarely hand those out. A face-recognition API or a content filter typically returns just one thing: the final decision. This paper studies the harshest realistic setting, which the authors call <strong>decision-based</strong> attacks."}
+            {"type": "p", "html": "Imagine you want to fool a face-recognition gate, a content-moderation filter, or a fraud detector. In a research paper you would be handed the model's gradients and could compute exactly which pixels to nudge. In the real world you get almost nothing: you upload an image and the system replies with a single word &mdash; <em>accepted</em> or <em>rejected</em>, <em>cat</em> or <em>dog</em>. No probabilities, no confidence, no internal weights. This paper asks the uncomfortable question: <strong>is even that one word enough to break the model?</strong> The answer is yes."},
+            {"type": "p", "html": "The authors organize attacks into three tiers by how much information the attacker is granted. Understanding this ladder is the key to the whole black-box-attack literature."},
+            {"type": "table", "headers": ["Attack class", "What the attacker sees", "Realistic?"], "rows": [
+              ["Gradient-based (white-box)", "Full model, gradients $\\nabla_x$", "Only if you own the model"],
+              ["Score-based (soft-label)", "Output probabilities / logits", "Some APIs leak these"],
+              ["Decision-based (hard-label)", "Only the final predicted label", "Almost every deployed system"]
+            ]},
+            {"type": "p", "html": "<strong>Decision-based</strong> is the harshest and most realistic of the three. The paper's contribution is the <strong>Boundary Attack</strong>: a remarkably simple algorithm that, using only those one-word answers, finds adversarial perturbations as small as those found by strong white-box attacks like Carlini &amp; Wagner."},
+            {"type": "quote", "html": "The core difficulty: the only thing the model tells you is which side of the decision boundary you are on. Everything else must be inferred by repeatedly probing that boundary."}
           ]
         },
         {
           "title": "What 'hard-label / decision-based' means",
-          "subtitle": "The shared setup for this family of attacks",
+          "subtitle": "The shared setup for this whole family of attacks",
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "In the <strong>hard-label</strong> or <strong>decision-based</strong> setting the attacker can query the model with any input and sees only the <em>final predicted label</em> &mdash; no probabilities, no logits, no gradients. You learn one bit of structure per query: \"is this point classified the way I want, or not?\" This is the hardest black-box setting precisely because the signal is so impoverished; you cannot even tell whether a change made the model <em>slightly</em> more or less confident, only whether it flipped the decision."},
-            {"type": "p", "html": "Because every query costs money, time, or risks detection, the natural success metric for this whole family of attacks is <strong>queries-to-success</strong>: how many model evaluations are needed to reach a small perturbation norm (typically measured in $\\ell_2$). A good attack finds a tiny, often imperceptible perturbation while spending as few queries as possible."},
-            {"type": "quote", "html": "The core difficulty: the only thing the model tells you is which side of the decision boundary you are on. Everything else must be inferred by repeatedly probing that boundary."}
+            {"type": "p", "html": "Every paper in this collection &mdash; Boundary Attack, OPT, Sign-OPT, HopSkipJump &mdash; lives in the same world, so it is worth nailing down once. In the <strong>hard-label</strong> (= decision-based) setting the attacker may feed the model any input $x$ and receives back only the predicted class label $c(x)$. That is it. You learn exactly one bit of structure per query: <em>is this point classified the way I want, or not?</em>"},
+            {"type": "p", "html": "Contrast this with the score-based setting, where a query returns a real-valued probability vector. There you can tell whether a tiny change made the model <em>slightly</em> more or less confident, which is almost a numerical gradient. In the hard-label setting that signal is gone: the output is a flat step function that jumps only when you cross the <strong>decision boundary</strong> (the surface where the predicted class changes). Almost every small change leaves the label untouched and tells you nothing."},
+            {"type": "math", "tex": "\\text{adversarial} \\iff c(x) \\neq y_{\\text{orig}} \\quad (\\text{untargeted}) \\quad \\text{or} \\quad c(x) = y_{\\text{target}} \\quad (\\text{targeted})"},
+            {"type": "p", "html": "Reading this term by term: $c(x)$ is the model's predicted label for input $x$; $y_{\\text{orig}}$ is the true class of the clean image; $y_{\\text{target}}$ is a class the attacker wants the model to output. An <strong>untargeted</strong> attack just needs <em>any</em> wrong label; a <strong>targeted</strong> attack must hit one specific chosen label. Both conditions are checkable with a single query &mdash; that is the only handle the attacker has."},
+            {"type": "p", "html": "Because every query costs money, latency, or risks tripping an anomaly detector, the natural success metric for this entire family is <strong>queries-to-success</strong>: how many model evaluations are needed to drive the perturbation size (usually the $\\ell_2$ norm) below some small threshold. A good attack finds a tiny, often imperceptible perturbation while spending as few queries as possible. Keep that metric in mind &mdash; it is the scoreboard every later paper competes on."},
+            {"type": "list", "items": [
+              "<b>Boundary Attack</b> (this paper): random-walk along the boundary. Reliable but query-hungry ($10^5$&ndash;$10^6$).",
+              "<b>OPT</b>: reframe as a smooth optimization over directions; use binary search + zeroth-order gradients.",
+              "<b>Sign-OPT</b>: realize you only need the <em>sign</em> of the directional derivative &mdash; far cheaper.",
+              "<b>HopSkipJump</b>: estimate the gradient direction at the boundary by Monte-Carlo sampling. State-of-the-art query efficiency."
+            ]}
           ]
         }
       ]
@@ -34,17 +50,19 @@
       "pages": [
         {
           "title": "Start adversarial, then shrink",
-          "subtitle": "The defining idea of the Boundary Attack",
+          "subtitle": "The defining idea, inverted from the usual recipe",
           "pdfPages": [3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The Boundary Attack inverts the usual recipe. Gradient attacks start from the clean image and push it <em>toward</em> the boundary until it just barely becomes adversarial. The Boundary Attack instead <strong>starts from an image that is already adversarial</strong> but with a huge, obvious perturbation &mdash; for example pure uniform noise that the model happens to misclassify, or (for a targeted attack) an actual image of the target class. It then walks this point along the decision boundary, step by step, shrinking the distance back toward the original image."},
-            {"type": "p", "html": "This is appealing because it never needs gradients or scores. Staying adversarial is easy to check with a single hard-label query. The whole problem becomes: <em>given that I must remain adversarial, how do I get closer to the original image?</em>"},
+            {"type": "p", "html": "Here is the one idea that makes the Boundary Attack work, and it runs backwards from intuition. Gradient attacks start from the clean image and push it <em>toward</em> the boundary until it just barely flips. The Boundary Attack instead <strong>starts from an image that is already adversarial</strong> but with a huge, obvious perturbation. It then walks that point along the decision boundary, step by tiny step, shrinking the distance back toward the original image."},
+            {"type": "p", "html": "Concretely, how do you get an initial adversarial image for free? For an <strong>untargeted</strong> attack, sample pure uniform noise &mdash; a TV-static image &mdash; until the model happens to misclassify it (usually instant, since random noise is rarely the true class). For a <strong>targeted</strong> attack, just grab any real image that the model already labels as the target class. Either way you begin far from the original but safely on the adversarial side."},
+            {"type": "p", "html": "Why is this clever? Because <em>staying adversarial is trivial to check with a single hard-label query</em>, the entire hard problem collapses to one question: <em>given that I must remain adversarial, how do I get geometrically closer to the original image?</em> No gradients, no scores, no surrogate models."},
             {"type": "h2", "text": "Two competing objectives at every step"},
             {"type": "list", "items": [
-              "Stay on the adversarial side of the boundary (the hard constraint, checkable by one query).",
-              "Reduce the $\\ell_2$ distance to the original clean image (the thing we are minimizing)."
-            ]}
+              "Stay on the adversarial side of the boundary &mdash; the hard constraint, verified by one query.",
+              "Reduce the $\\ell_2$ distance to the original clean image &mdash; the quantity being minimized."
+            ]},
+            {"type": "quote", "html": "Boundary Attack: begin with a large adversarial perturbation, then random-walk along the decision boundary to shrink it down toward the original image."}
           ]
         },
         {
@@ -53,24 +71,34 @@
           "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Each iteration proposes a small perturbation in two parts. First a random step drawn from a Gaussian, then re-projected so the candidate stays on the sphere of the current distance to the original (an orthogonal move along the boundary). Second a small step <em>toward</em> the original image (which shrinks the distance). The candidate is accepted only if it is still adversarial."},
-            {"type": "math", "tex": "\\tilde{x}^{k} = x^{k-1} + \\eta^{k}, \\quad \\text{subject to } \\tilde{x}^{k} \\text{ being adversarial}"},
-            {"type": "p", "html": "Read plainly: from the current adversarial point $x^{k-1}$ we add a proposal $\\eta^{k}$ that (a) moves orthogonally along the boundary surface and (b) nudges toward the clean image, then we keep it only if the single hard-label query confirms it is still misclassified. Over thousands of accepted steps the point slides along the boundary while creeping ever closer to the original."},
-            {"type": "quote", "html": "The boundary is treated as a surface to surf. Random sideways moves explore it; small inward moves harvest the progress; the hard-label query is the only referee."}
+            {"type": "p", "html": "Each iteration proposes a small perturbation $\\eta^{k}$ built in two parts, then accepts it only if a single hard-label query confirms the new point is still adversarial. Think of it as surfing a curved surface: a sideways move to explore, then a small step downhill to bank progress."},
+            {"type": "math", "tex": "\\tilde{x}^{k} = x^{k-1} + \\eta^{k}, \\qquad \\eta^{k} \\text{ chosen so that } \\tilde{x}^{k} \\text{ stays adversarial}"},
+            {"type": "p", "html": "Reading term by term: $x^{k-1}$ is the current adversarial point; $\\eta^{k}$ is the proposed move; $\\tilde{x}^{k}$ is the candidate. The candidate is kept (becomes $x^{k}$) only if $c(\\tilde{x}^{k})$ confirms it is still misclassified, otherwise it is discarded and we try again."},
+            {"type": "h2", "text": "The three constraints on each proposal"},
+            {"type": "list", "items": [
+              "<b>Box constraint:</b> the candidate must remain a valid image (pixels in $[0,255]$ or $[0,1]$).",
+              "<b>Orthogonal / spherical move:</b> $\\eta^{k}$ is first drawn from a Gaussian $\\mathcal{N}(0,1)$, then rescaled and re-projected so the candidate sits on the <em>sphere</em> of the current distance around the original image. This is a sideways slide along the boundary that does not change the distance &mdash; pure exploration.",
+              "<b>Source step:</b> after the orthogonal move, take a small step <em>toward</em> the original image, which actually shrinks the $\\ell_2$ distance. This is where progress is harvested."
+            ]},
+            {"type": "math", "tex": "\\eta^{k} \\sim \\mathcal{N}(0, 1), \\quad \\text{then project onto sphere of radius } \\lVert x^{k-1} - o \\rVert_2 \\text{ around original } o"},
+            {"type": "p", "html": "Here $o$ is the original clean image and $\\lVert x^{k-1} - o\\rVert_2$ is the current perturbation size. Projecting the Gaussian noise back onto that sphere guarantees the exploratory move keeps the distance fixed; only the deliberate inward source step is allowed to reduce it. Splitting exploration (sideways) from progress (inward) is what keeps the walk stable."},
+            {"type": "quote", "html": "The boundary is treated as a surface to surf. Random sideways moves explore it; small inward moves harvest the progress; the single hard-label query is the only referee."}
           ]
         },
         {
           "title": "Keeping the walk efficient",
-          "subtitle": "Adaptive step sizes",
+          "subtitle": "Adaptive step sizes, the only real hyperparameters",
           "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The two step magnitudes must be tuned on the fly. If too few proposals are accepted, the orthogonal step is too large and is shrunk; if almost all are accepted, it is grown. Likewise the inward step is increased when progress is being made and decreased when it keeps pushing the point off the adversarial region. This adaptation is governed by simple acceptance-rate targets."},
+            {"type": "p", "html": "The two step magnitudes are the only knobs, and the attack tunes them itself on the fly using acceptance rates &mdash; the same trick used in Trust-Region and Markov-Chain Monte Carlo methods. The logic is intuitive: if your steps keep getting rejected, you are stepping too far; if they all succeed, you are being timid and could go bigger."},
             {"type": "list", "items": [
-              "Orthogonal step controls how aggressively we explore the boundary surface; tuned to keep the acceptance rate near a target (about 50%).",
-              "Source step controls how aggressively we move toward the original; tuned to keep roughly a quarter of proposals successful.",
-              "Both decay over time, so the attack naturally refines a coarse solution into a fine one."
-            ]}
+              "<b>Orthogonal step $\\delta$</b> controls how aggressively we explore the boundary surface. Tuned to keep the acceptance rate near a target of about 50% &mdash; shrink it if too few proposals survive, grow it if nearly all do.",
+              "<b>Source step $\\epsilon$</b> controls how aggressively we move toward the original. Tuned so roughly a quarter of proposals still land adversarial; if pushing inward keeps flipping us back, $\\epsilon$ is reduced.",
+              "Both decay over time, so the attack naturally refines a coarse solution into a fine one, asymptotically hugging the boundary."
+            ]},
+            {"type": "p", "html": "This self-tuning is why the method is described as <strong>hyperparameter-light and reliable</strong>: there is essentially nothing to grid-search. The same code, untouched, works on MNIST, CIFAR, and ImageNet, and on defended or non-differentiable models where gradient estimates would be meaningless."},
+            {"type": "p", "html": "Design rationale: an MCMC-style accept/reject walk is the natural fit for a setting where the only feedback is a binary in/out signal. You cannot do gradient descent on a step function, but you <em>can</em> do a guided random walk on one. The genius is that the constraint (stay adversarial) and the objective (get closer) are decoupled into the two step types, so neither fights the other."}
           ]
         }
       ]
@@ -80,12 +108,20 @@
       "pages": [
         {
           "title": "How well it works",
-          "subtitle": "Comparable perturbations without gradients or scores",
-          "pdfPages": [5],
+          "subtitle": "White-box-quality perturbations from labels alone",
+          "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Despite using only hard labels, the Boundary Attack finds adversarial perturbations whose $\\ell_2$ size is competitive with strong gradient-based white-box attacks such as Carlini &amp; Wagner, on MNIST, CIFAR, and ImageNet. The catch is query cost: reaching small perturbations can take on the order of $10^5$ to $10^6$ queries, because each step extracts only one bit of information."},
-            {"type": "p", "html": "Crucially it transfers to real, defended, and non-differentiable systems. The authors demonstrate it against models with gradient masking and against commercial black-box classifiers, where gradient and transfer attacks fail. The attack is also robust: it does not depend on substitute models, surrogate gradients, or access to training data."}
+            {"type": "p", "html": "The headline result: using only hard labels, the Boundary Attack finds adversarial perturbations whose $\\ell_2$ size is <strong>competitive with the strongest white-box attacks</strong>, including the Carlini &amp; Wagner $\\ell_2$ attack and DeepFool, on MNIST, CIFAR-10, and ImageNet (VGG-19, ResNet-50, Inception-v3). That a labels-only attacker matches a full-gradient attacker was the paper's shock value."},
+            {"type": "p", "html": "The honest catch is <strong>query cost</strong>. Because each step extracts at most one bit, reaching very small perturbations can take on the order of $10^5$ to $10^6$ queries. This single weakness became the explicit research target of everything that followed &mdash; OPT, Sign-OPT, and HopSkipJump are all, in effect, answers to <em>'can we extract more than one bit per query?'</em>"},
+            {"type": "p", "html": "Crucially, the attack transfers to real, defended, and non-differentiable systems. The authors demonstrate it against models with <strong>gradient masking</strong> (a defense that deliberately hides or obfuscates gradients) and against commercial black-box classifiers from Clarifai, where gradient and transfer attacks fail outright. It needs no substitute model, no surrogate gradients, and no access to training data."},
+            {"type": "table", "headers": ["Property", "Boundary Attack"], "rows": [
+              ["Information needed", "Final label only"],
+              ["Perturbation quality", "Matches C&W / DeepFool ($\\ell_2$)"],
+              ["Query cost", "High ($10^5$&ndash;$10^6$)"],
+              ["Beats gradient masking?", "Yes"],
+              ["Needs substitute model?", "No"]
+            ]}
           ]
         },
         {
@@ -94,9 +130,10 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The Boundary Attack established that the strictest threat model &mdash; labels only &mdash; is genuinely dangerous, not just an academic curiosity. It set the template that the rest of this family refines: treat the decision boundary as the object of study and minimize distance to it using only label queries."},
-            {"type": "p", "html": "Its one weakness, query inefficiency, became the explicit target of the follow-up work. OPT reformulates the search as a smooth optimization; Sign-OPT slashes the per-direction query cost; HopSkipJump estimates gradients directly at the boundary. Each can be understood as an answer to the question the Boundary Attack left open: <em>can we extract more than one bit per query?</em>"},
-            {"type": "quote", "html": "Boundary Attack: begin with a large adversarial perturbation, then random-walk along the decision boundary to shrink it down toward the original image."}
+            {"type": "p", "html": "The Boundary Attack established that the strictest threat model &mdash; labels only &mdash; is genuinely dangerous, not an academic curiosity. It set the template the rest of this family refines: <strong>treat the decision boundary as the object of study, and minimize distance to it using only label queries.</strong>"},
+            {"type": "p", "html": "A common misconception it dispelled: that hiding gradients or scores makes a model safe. Gradient masking defenses looked strong against white-box attacks precisely because they broke gradients &mdash; but the Boundary Attack never uses gradients, so masking does nothing to it. This foreshadowed the later <em>Obfuscated Gradients</em> paper, which argued that many published defenses give a false sense of security."},
+            {"type": "p", "html": "The lineage from here is direct: OPT reformulates the search as a smooth optimization over attack directions; Sign-OPT shows you only need the sign of the directional derivative, slashing the per-direction query cost; HopSkipJump estimates the gradient direction at the boundary by Monte-Carlo sampling and reaches state-of-the-art query efficiency. Each can be read as one more bite out of the Boundary Attack's query bill."},
+            {"type": "quote", "html": "The lasting lesson: an attacker who can only see the final decision is still a serious threat. Security through opacity of scores and gradients is not security."}
           ]
         }
       ]

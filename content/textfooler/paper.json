@@ -8,14 +8,16 @@
       "title": "Abstract",
       "pages": [
         {
-          "title": "Fooling BERT by Swapping Words",
-          "subtitle": "Adversarial examples for text",
+          "title": "Fooling BERT by Swapping a Few Words",
+          "subtitle": "Adversarial examples, but for text",
           "pdfPages": [1],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Adversarial examples are easy to picture for images &mdash; add invisible pixel noise. Text is harder: words are discrete, so you cannot nudge them by a tiny amount, and any change a human can read. The challenge is to alter a sentence enough to flip a classifier while a person still sees the <em>same</em> meaning, fluent grammar, and the same correct label."},
-            {"type": "p", "html": "<strong>TextFooler</strong> is a black-box attack that does exactly this for modern text models including BERT. It does not need the model's weights or gradients &mdash; only the ability to query it and read the output probabilities."},
-            {"type": "quote", "html": "The recipe: (1) find the few words that matter most to the prediction, then (2) replace them with meaning-preserving synonyms until the label flips while staying grammatical and semantically faithful."}
+            {"type": "p", "html": "Adversarial examples are easy to picture for images: add a sprinkle of invisible pixel noise and a panda becomes a gibbon, with no human able to see the change. Text refuses to play along. Words are <strong>discrete</strong> &mdash; there is no &ldquo;tiny nudge&rdquo; to a word, you either change it or you do not &mdash; and any change is, by definition, visible to a reader. So the bar is higher: you must alter a sentence enough to flip a classifier while a person still sees the <em>same meaning</em>, <em>fluent grammar</em>, and the <em>same correct label</em>."},
+            {"type": "p", "html": "<strong>TextFooler</strong> is a <strong>black-box</strong> attack that does exactly this against modern text models, including <strong>BERT</strong>. Black-box means it never touches the model&rsquo;s weights or gradients &mdash; it only sends queries and reads back the output probabilities, the same access any user of a deployed API would have. That realism is the point: it is the threat a real-world attacker can actually mount."},
+            {"type": "p", "html": "Here is a concrete success from the paper, a movie-review sentiment classifier. Original (predicted <strong>positive</strong>): <em>&ldquo;their computer animated faces are very <strong>expressive</strong>.&rdquo;</em> TextFooler&rsquo;s version (predicted <strong>negative</strong>): <em>&ldquo;their computer animated faces are very <strong>affective</strong>.&rdquo;</em> One word changed, the meaning preserved to a human &mdash; and the label flipped."},
+            {"type": "quote", "html": "The recipe in one line: (1) find the few words that matter most to the prediction, then (2) replace them with meaning-preserving synonyms &mdash; constrained by part-of-speech and sentence-level semantic similarity &mdash; until the label flips while the sentence stays grammatical and faithful."},
+            {"type": "p", "html": "The answer to the title&rsquo;s question turns out to be a resounding <em>no</em>: BERT&rsquo;s accuracy can be driven from the high 80s/90s down to the low teens or single digits by changing only a small fraction of words per sentence."}
           ]
         }
       ]
@@ -24,49 +26,50 @@
       "title": "Method",
       "pages": [
         {
-          "title": "Step 1 - Rank Words by Importance",
+          "title": "Step 1 — Rank Words by Importance",
           "subtitle": "Find the load-bearing words",
-          "pdfPages": [3],
+          "pdfPages": [2, 3],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Changing every word would wreck the sentence. TextFooler first asks: <strong>which words actually drive the model's decision?</strong> It deletes each word in turn and measures how much the model's confidence in the correct label drops. A big drop means that word was important."},
+            {"type": "p", "html": "Changing every word would obviously wreck the sentence and destroy its meaning. So TextFooler first asks a sharp question: <strong>which words actually drive the model&rsquo;s decision?</strong> Most words in a sentence are filler the classifier barely uses; a few carry almost all the weight. Find those, and you can flip the prediction with the fewest possible edits &mdash; which also keeps the sentence closest to the original."},
+            {"type": "p", "html": "The probe is simple: delete each word in turn and measure how much the model&rsquo;s confidence in the correct label drops. A large drop means that word was load-bearing."},
             {"type": "math", "tex": "I_{w_i} = F_{y}(X) - F_{y}(X_{\\setminus w_i})"},
-            {"type": "p", "html": "Read this as: the importance $I_{w_i}$ of word $w_i$ is the model's probability for the true label $y$ on the full sentence $X$ minus its probability after removing that word ($X_{\\setminus w_i}$). The larger this gap, the more the model leans on $w_i$."},
-            {"type": "p", "html": "Words are then sorted by importance, and the attack targets the top ones first. This keeps the attack efficient &mdash; changing a handful of high-impact words is usually enough, which also keeps the sentence close to the original."}
+            {"type": "p", "html": "Term by term: $I_{w_i}$ is the <em>importance score</em> of word $w_i$; $F_y(X)$ is the model&rsquo;s predicted probability for the true label $y$ on the full sentence $X$; and $F_y(X_{\\setminus w_i})$ is that same probability after deleting word $w_i$. The difference is how much removing $w_i$ hurts the model&rsquo;s confidence in $y$. (When deletion actually <em>changes</em> the predicted label, the paper uses a slightly richer score that also credits the size of the new class&rsquo;s confidence.) The bigger $I_{w_i}$, the more the model leans on that word."},
+            {"type": "p", "html": "Words are sorted by importance, stop-words are skipped (swapping &ldquo;the&rdquo; helps nobody), and the attack targets the highest-impact words first. In the sentiment example above, &ldquo;expressive&rdquo; scores high because it is precisely the word telling the model the review is positive &mdash; so it is attacked first."}
           ]
         },
         {
-          "title": "Step 2 - Find Safe Synonyms",
-          "subtitle": "Replace meaning, not message",
-          "pdfPages": [3, 4],
+          "title": "Step 2 — Find Safe Synonyms",
+          "subtitle": "Replace the meaning's carrier, not the message",
+          "pdfPages": [3],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "For each important word, TextFooler gathers candidate replacements and filters them through several constraints so the swap stays invisible to a human reader:"},
+            {"type": "p", "html": "For each important word, TextFooler gathers candidate replacements and runs them through a gauntlet of constraints so the swap stays invisible to a human reader. A replacement only survives if it passes all three:"},
             {"type": "list", "items": [
-              "<strong>Synonym extraction:</strong> take the nearest neighbors of the word in a <em>counter-fitted</em> word-embedding space. Counter-fitting reshapes embeddings so that genuine synonyms are close and antonyms are pushed apart &mdash; avoiding the classic trap where 'good' and 'bad' look similar.",
-              "<strong>Part-of-speech match:</strong> keep only candidates with the same POS (replace a verb with a verb, a noun with a noun) so grammar is preserved.",
-              "<strong>Semantic similarity check:</strong> embed the original and candidate sentences with a Universal Sentence Encoder and keep the swap only if overall sentence meaning stays above a similarity threshold."
+              "<strong>Synonym extraction.</strong> Take the $N$ nearest neighbors of the word in a <em>counter-fitted</em> word-embedding space. Plain word embeddings notoriously place &ldquo;good&rdquo; and &ldquo;bad&rdquo; close together (they appear in similar contexts); counter-fitting post-processes the vectors so true synonyms pull together and antonyms push apart &mdash; avoiding the disaster of swapping a word for its opposite.",
+              "<strong>Part-of-speech match.</strong> Keep only candidates with the same POS as the original (verb&rarr;verb, noun&rarr;noun, adjective&rarr;adjective), so the sentence stays grammatical.",
+              "<strong>Semantic-similarity check.</strong> Encode the original sentence and the candidate-edited sentence with the <em>Universal Sentence Encoder (USE)</em> and keep the swap only if the cosine similarity of the two sentence embeddings stays above a threshold $\\tau$ &mdash; a guard on <em>sentence-level</em> meaning, not just word-level."
             ]},
-            {"type": "p", "html": "Among the survivors, the attacker picks the replacement that most reduces the model's confidence in the correct label (or pushes it toward the target label). If a single swap already flips the prediction, the attack stops; otherwise it moves to the next important word and repeats."},
-            {"type": "math", "tex": "\\text{Sim}(X, X_{\\text{adv}}) \\ge \\tau \\quad \\text{and} \\quad \\text{POS}(w_i) = \\text{POS}(c)"},
-            {"type": "p", "html": "In words: only accept a candidate $c$ if the adversarial sentence stays within a sentence-similarity threshold $\\tau$ of the original and the candidate shares the word's part of speech. These two guards are what keep the result fluent and meaning-preserving."}
+            {"type": "math", "tex": "\\text{Sim}(X,\\, X_{\\text{adv}}) \\ge \\tau \\quad\\text{and}\\quad \\text{POS}(w_i) = \\text{POS}(c)"},
+            {"type": "p", "html": "Reading it: a candidate replacement $c$ is accepted only if the resulting adversarial sentence $X_{\\text{adv}}$ stays within USE similarity $\\tau$ of the original $X$, <em>and</em> $c$ shares the part of speech of the word $w_i$ it replaces. These two guards are exactly what keep the output fluent and meaning-preserving rather than gibberish."},
+            {"type": "p", "html": "Among the candidates that survive all filters, the attacker picks the one that most reduces the model&rsquo;s confidence in the correct label (or most pushes it toward a target label). &ldquo;Expressive&rdquo; &rarr; &ldquo;affective&rdquo; passes every check &mdash; same adjective POS, high sentence similarity, a dictionary near-synonym &mdash; yet it tips the classifier over to &ldquo;negative.&rdquo;"}
           ]
         },
         {
           "title": "The Full Greedy Attack",
           "subtitle": "Putting the pieces together",
-          "pdfPages": [4],
+          "pdfPages": [3, 4],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "TextFooler is a <strong>greedy</strong> procedure. It walks down the importance-ranked word list and, for each word, makes the best meaning-preserving swap it can, checking after every change whether the label has flipped."},
+            {"type": "p", "html": "TextFooler is a <strong>greedy</strong> procedure (Algorithm 1 in the paper). It walks down the importance-ranked word list and, for each word, makes the best meaning-preserving swap available, checking after every change whether the label has flipped."},
             {"type": "list", "items": [
-              "Rank all words by importance (Step 1).",
-              "For the most important remaining word, build the filtered synonym candidate set (Step 2).",
-              "Choose the candidate that most hurts the true-label confidence while passing the POS and similarity constraints.",
-              "If the prediction has flipped, return the adversarial sentence; otherwise keep this swap and move to the next word.",
-              "Stop when the label flips or the candidates run out."
+              "Rank all words by importance (Step 1) and drop stop-words.",
+              "Take the most important remaining word and build its filtered synonym candidate set (Step 2).",
+              "Among candidates passing the POS and USE-similarity constraints, choose the one that most hurts the true-label confidence.",
+              "If the prediction has now flipped, return the adversarial sentence; otherwise lock in this best swap and move to the next important word.",
+              "Stop when the label flips, or when the important words are exhausted (a failure for that sentence)."
             ]},
-            {"type": "p", "html": "Because it is purely query-based, the attack works on any text classifier behind an API. It needs no gradients, which makes it a realistic black-box threat and a strong, reusable baseline for measuring NLP robustness."}
+            {"type": "p", "html": "Why greedy rather than searching all combinations? Because the space of possible multi-word substitutions is astronomically large; greedy, importance-first editing finds a flip cheaply and tends to touch only a handful of words. And because the whole thing is purely query-based, it works on <em>any</em> text classifier behind an API &mdash; no gradients, no model internals &mdash; which is what makes it both a realistic black-box threat and a strong, reusable <strong>baseline</strong> for measuring NLP robustness."}
           ]
         }
       ]
@@ -75,30 +78,33 @@
       "title": "Results",
       "pages": [
         {
-          "title": "BERT Falls With Few Edits",
-          "subtitle": "Large accuracy drops, small perturbations",
-          "pdfPages": [5, 6],
+          "title": "BERT Collapses With Few Edits",
+          "subtitle": "Large accuracy drops, tiny perturbations",
+          "pdfPages": [5],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Across classification and textual-entailment benchmarks, TextFooler drives the accuracy of strong models &mdash; including <strong>BERT</strong>, WordCNN, and LSTM classifiers &mdash; down to a small fraction of the original, often near or below 10-20%, while changing only a <strong>small percentage of the words</strong> in each sentence."},
-            {"type": "p", "html": "Critically, the perturbations are cheap and stealthy: a handful of synonym swaps per sentence. The answer to the title's question &mdash; 'Is BERT really robust?' &mdash; is a clear no against meaning-preserving word substitutions."},
-            {"type": "table", "headers": ["Quality measure", "Result"], "rows": [
-              ["After-attack accuracy", "Sharply reduced (often single / low double digits)"],
-              ["Words changed per sentence", "Small fraction of the text"],
-              ["Semantic similarity to original", "Kept high by the USE constraint"],
-              ["Setting", "Black-box (queries only, no gradients)"]
-            ]}
+            {"type": "p", "html": "The numbers are dramatic. Against <strong>BERT</strong> fine-tuned for text classification, TextFooler collapses accuracy across every dataset while perturbing only a small share of words:"},
+            {"type": "table", "headers": ["Dataset (BERT)", "Original acc.", "After-attack acc.", "% words changed"], "rows": [
+              ["MR (movie reviews)", "86.0", "11.5", "16.7%"],
+              ["IMDB (long reviews)", "90.9", "13.6", "6.1%"],
+              ["Yelp", "97.0", "6.6", "12.5%"],
+              ["AG News (topic)", "94.2", "12.5", "22.0%"],
+              ["Fake News", "97.8", "19.3", "11.7%"]
+            ]},
+            {"type": "p", "html": "Look at IMDB: BERT goes from 90.9% accurate to 13.6% by changing just <strong>6.1%</strong> of the words &mdash; and IMDB reviews average around 215 words, so that is roughly a dozen synonym swaps in a long paragraph. On the textual-entailment task <strong>SNLI</strong>, BERT&rsquo;s accuracy falls from about 89 to roughly <strong>4</strong>, with only a few words changed because the sentences are short."},
+            {"type": "p", "html": "The same attack flattens the other architectures too &mdash; <strong>WordCNN</strong> and <strong>WordLSTM</strong> classifiers drop to single digits as well &mdash; so the brittleness is not a quirk of BERT alone. But the headline is that the supposedly robust, heavily pretrained transformer is no more durable than a humble CNN against meaning-preserving word substitution. The answer to &ldquo;Is BERT really robust?&rdquo; is plainly no."}
           ]
         },
         {
-          "title": "Did the Meaning Survive?",
-          "subtitle": "Human validation and impact",
+          "title": "Did the Meaning Survive? Human Validation",
+          "subtitle": "The model is fooled but a person is not",
           "pdfPages": [6, 7],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "An attack on text is only valid if humans still read the adversarial sentence as the <em>same</em> content with the <em>same</em> label. The authors run human studies on grammaticality, meaning preservation, and human label agreement, and find the perturbed sentences largely retain their original meaning and human-assigned label."},
-            {"type": "quote", "html": "The threat is genuine: the model is fooled, but a human is not. That gap &mdash; exactly the opposite of a typo or gibberish attack &mdash; is what makes synonym substitution a meaningful adversarial example for NLP."},
-            {"type": "p", "html": "TextFooler became a standard baseline and stress test for NLP robustness, motivating defenses such as adversarial training with synonym sets, certified word-substitution robustness, and more careful evaluation of just how brittle large language models are to word-level changes that humans barely notice."}
+            {"type": "p", "html": "An attack on text is only meaningful if humans still read the adversarial sentence as the <em>same</em> content with the <em>same</em> label &mdash; otherwise it is just a typo or gibberish, which fools no one and proves nothing. The authors back this up with three human studies, on <strong>grammaticality</strong>, <strong>meaning preservation</strong>, and <strong>human label agreement</strong>."},
+            {"type": "p", "html": "The results hold up: human judges rate the perturbed sentences as nearly as grammatical as the originals (e.g. about 4.2 vs 4.0 out of 5 on MR), and human annotators continue to assign the original (correct) label to the adversarial sentences the large majority of the time. Sentence-level semantic similarity to the original stays high (the USE constraint enforces it). In short, people barely notice the edit, while the model flips completely."},
+            {"type": "quote", "html": "The threat is genuine: the model is fooled, but a human is not. That gap &mdash; the exact opposite of a typo attack that confuses humans too &mdash; is what makes synonym substitution a legitimate adversarial example for NLP."},
+            {"type": "p", "html": "The paper also shows the adversarial sentences <strong>transfer</strong> across models (a flip crafted on one classifier often fools another) and that <strong>adversarial training</strong> on TextFooler-generated examples partially hardens the model &mdash; the standard attack/defense loop. TextFooler became a de-facto standard baseline and stress test, motivating defenses such as certified word-substitution robustness and prompting a broad reckoning with just how fragile large language models are to word-level changes that humans hardly register."}
           ]
         }
       ]

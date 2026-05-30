@@ -11,15 +11,17 @@
           "title": "Scale unlocks in-context learning",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "Before GPT-3, the standard pipeline was <i>pre-train then fine-tune</i>: take a base language model, then update its weights on each downstream task with thousands of labeled examples. GPT-3's central claim is that at sufficient scale, you can <b>skip fine-tuning entirely</b> — describe the task in plain text, show a few examples in the prompt, and the model just does it." },
-            { "type": "p", "html": "<b>GPT-3</b> is a 175B-parameter autoregressive Transformer language model trained on ~300B tokens of internet text. The architecture is essentially the same as GPT-2 — the contribution is what happens when you scale it 100×." },
+            { "type": "p", "html": "<b>The problem with the status quo.</b> By 2020 the dominant recipe (from GPT-1 and BERT) was <i>pre-train then fine-tune</i>: pre-train a base model on text, then update its weights on each new task using thousands of labeled examples. That works, but every new task needs its own labeled dataset and its own training run, which is expensive and unlike how humans learn — a person can usually do a new task from a one-line description and a couple of examples." },
+            { "type": "p", "html": "<b>GPT-3's central claim.</b> At sufficient scale, you can <i>skip fine-tuning entirely</i>. Describe the task in plain English, optionally show a few examples right there in the prompt, and the model performs the task — with no gradient updates and no weight changes at all. This ability is called <b>in-context learning</b>." },
+            { "type": "p", "html": "<b>What GPT-3 is.</b> A 175-billion-parameter autoregressive Transformer language model trained on roughly 300 billion tokens of internet text. Architecturally it is almost identical to GPT-2 — the contribution is not a new design but a demonstration of what happens when you scale the same design up by more than 100x." },
             { "type": "quote", "html": "We train GPT-3 ... 10x more than any previous non-sparse language model, and test its performance in the few-shot setting. For all tasks, GPT-3 is applied without any gradient updates or fine-tuning, with tasks and few-shot demonstrations specified purely via text interaction with the model." },
-            { "type": "p", "html": "Three new evaluation modes get formalized here:" },
+            { "type": "p", "html": "<b>Three evaluation modes are formalized here</b>, all using the same frozen model:" },
             { "type": "list", "items": [
-              "<b>Zero-shot</b>: task description only, no examples.",
-              "<b>One-shot</b>: task description plus one demonstration.",
-              "<b>Few-shot</b>: task description plus K demonstrations (usually 10–100), filling the context window."
-            ]}
+              "<b>Zero-shot</b>: only a natural-language task description, no examples.",
+              "<b>One-shot</b>: the description plus a single demonstration.",
+              "<b>Few-shot</b>: the description plus K demonstrations (typically 10–100), as many as fit in the context window."
+            ]},
+            { "type": "p", "html": "<b>Why it mattered.</b> This paper reframed the goal of NLP from &ldquo;train a model per task&rdquo; to &ldquo;train one model and <i>prompt</i> it.&rdquo; It launched prompt engineering, chain-of-thought, and ultimately the modern chat-assistant paradigm." }
           ]
         }
       ]
@@ -31,13 +33,15 @@
           "title": "Why fine-tuning is a problem",
           "pdfPages": [1, 2, 3],
           "blocks": [
-            { "type": "p", "html": "Three structural objections to the dominant pre-train-then-fine-tune paradigm:" },
+            { "type": "p", "html": "<b>Three structural objections.</b> The paper opens by arguing the pre-train-then-fine-tune paradigm — successful as it had been — has fundamental limits:" },
             { "type": "list", "items": [
-              "Each new task needs a large labeled dataset, expensive to collect and limited in scope.",
-              "Fine-tuning narrows the model's distribution — it can overfit to spurious features of the training set and lose generality.",
-              "Humans don't need thousands of examples to do a new task. The fact that current ML does suggests we're learning the wrong thing."
+              "<b>Data hunger.</b> Each new task needs a large hand-labeled dataset, which is expensive to collect and limits NLP to tasks where such datasets exist.",
+              "<b>Spurious overfitting.</b> Fine-tuning on a narrow dataset lets the model exploit shortcut features specific to that dataset; it may post a high benchmark score while generalizing poorly out of distribution. A narrow model can look better than it actually is.",
+              "<b>Human contrast.</b> People don't need thousands of supervised examples to learn a new task — usually a brief instruction plus maybe a few demonstrations suffices, and humans fluidly switch between tasks. The gap suggests current ML is learning the wrong <i>kind</i> of thing."
             ]},
-            { "type": "p", "html": "In-context learning is the proposed alternative: the model uses its enormous prior over text patterns to recognize the task from a few examples and complete it correctly. No weights change." }
+            { "type": "p", "html": "<b>The proposed alternative: in-context learning.</b> A sufficiently large language model develops, as a byproduct of next-word prediction, a broad set of pattern-recognition and task-recognition skills. At inference time you exploit this by conditioning on a prompt: the model reads the task description and example demonstrations <i>in its context window</i>, infers what task it is being asked to do, and continues the text accordingly. Crucially, <b>no weights change</b> — the &ldquo;learning&rdquo; happens entirely in the forward pass." },
+            { "type": "p", "html": "<b>A worked picture.</b> To do French translation few-shot, the prompt is literally: a line saying &ldquo;Translate English to French:&rdquo;, then a few example pairs (&ldquo;sea otter =&gt; loutre de mer&rdquo;), then the new English word followed by &ldquo;=&gt;&rdquo;. The model completes the line with the French translation. The same frozen model does arithmetic, unscrambling, or QA simply by changing what the prompt shows." },
+            { "type": "p", "html": "<b>The central empirical hypothesis</b>, foreshadowed here and confirmed in the results: in-context learning ability grows smoothly and reliably with model scale. Bigger models are not just more accurate — they are better at <i>learning from the prompt itself</i>." }
           ]
         }
       ]
@@ -46,12 +50,45 @@
       "title": "2. Approach",
       "pages": [
         {
-          "title": "Model and training",
+          "title": "The four settings: fine-tune, few-, one-, zero-shot",
           "pdfPages": [4, 5, 6],
           "blocks": [
-            { "type": "p", "html": "Eight models from 125M (GPT-3 Small) to 175B parameters (GPT-3 175B). All decoder-only Transformers with alternating dense and sparse attention patterns. Context window 2048 tokens." },
-            { "type": "p", "html": "Training data is a weighted mixture: filtered Common Crawl, WebText2, Books1, Books2, English Wikipedia. Higher-quality sources are upsampled. Trained on ~300 billion tokens." },
-            { "type": "p", "html": "Compute: roughly $3.14 \\times 10^{23}$ FLOPs for the 175B run — a multi-million-dollar training run, on a custom Microsoft V100 cluster. Up to that point, the largest dense model training run by an order of magnitude." }
+            { "type": "p", "html": "<b>The key distinction.</b> The paper carefully separates four ways to specify a task to a model. The first changes weights; the last three do not." },
+            { "type": "list", "items": [
+              "<b>Fine-tuning (FT)</b> — the traditional approach: update the model's weights by gradient descent on thousands of labeled examples for the target task. Strong but task-specific, data-hungry, and prone to the overfitting issue above. GPT-3 does <i>not</i> use this.",
+              "<b>Few-shot (FS)</b> — give the model a task description plus K demonstrations (as many as fit in the 2048-token context), then the query. No gradient updates; the demonstrations are just text in the prompt.",
+              "<b>One-shot (1S)</b> — exactly one demonstration plus the description. This is argued to most closely match how a task is often communicated to a human.",
+              "<b>Zero-shot (0S)</b> — only a natural-language description, no demonstrations at all. The hardest setting, and sometimes genuinely ambiguous even for people."
+            ]},
+            { "type": "p", "html": "<b>Why &ldquo;learning&rdquo; without weight changes?</b> During pre-training the model implicitly sees countless little &ldquo;tasks&rdquo; embedded in text (lists, translations, Q&amp;A pairs). The paper's framing is that it develops a broad repertoire of skills and the ability to rapidly recognize-and-adapt to the task implied by its context — so a prompt at inference time acts like a quick task selection. They sometimes call this &ldquo;in-context learning&rdquo; to distinguish it from gradient-based learning." },
+            { "type": "p", "html": "<b>The headline trend (Figure 1.2).</b> Across model sizes, accuracy in all three prompt-based settings rises with scale, and the <i>gap</i> between few-shot and zero-shot widens as models grow — i.e. larger models are disproportionately better at using the demonstrations in their context. This is the paper's core evidence that in-context learning is an emergent property of scale." }
+          ]
+        },
+        {
+          "title": "The eight models and the training data",
+          "pdfPages": [6, 7, 9],
+          "blocks": [
+            { "type": "p", "html": "<b>A ladder of sizes.</b> To study scaling, the authors trained eight models from 125M to 175B parameters, all the same decoder-only autoregressive Transformer (with GPT-2's alternating dense and locally-banded sparse attention) and a 2048-token context window. The hyperparameters were chosen to follow the scaling-law relationships from Kaplan et al. (2020)." },
+            { "type": "table", "headers": ["Model", "Params", "Layers", "d_model", "Heads"], "rows": [
+              ["GPT-3 Small", "125M", "12", "768", "12"],
+              ["GPT-3 Medium", "350M", "24", "1024", "16"],
+              ["GPT-3 XL", "1.3B", "24", "2048", "24"],
+              ["GPT-3 6.7B", "6.7B", "32", "4096", "32"],
+              ["GPT-3 175B", "175B", "96", "12288", "96"]
+            ]},
+            { "type": "p", "html": "The full ladder lets them plot performance against model size on a log axis and see whether the curve bends (saturates) or keeps rising. For most tasks it keeps rising." },
+            { "type": "h2", "text": "Training data: a weighted mixture" },
+            { "type": "p", "html": "<b>Quality over raw quantity.</b> The training set is a deliberate blend, with higher-quality sources sampled more often than their raw size would dictate. Common Crawl was aggressively filtered (with a classifier trained to recognize WebText-like quality) and fuzzily de-duplicated to avoid memorizing repeats." },
+            { "type": "table", "headers": ["Source", "Tokens", "Weight in training mix"], "rows": [
+              ["Common Crawl (filtered)", "410B", "60%"],
+              ["WebText2", "19B", "22%"],
+              ["Books1", "12B", "8%"],
+              ["Books2", "55B", "8%"],
+              ["Wikipedia", "3B", "3%"]
+            ]},
+            { "type": "p", "html": "The model was trained on ~300B tokens total, so high-weight sources like WebText2 and Wikipedia are effectively seen multiple times (epochs &gt; 1) while the giant Common Crawl is seen less than once — a tuning that trades a little repetition of clean text for a lot of exposure to noisy text." },
+            { "type": "h2", "text": "The compute" },
+            { "type": "p", "html": "Training the 175B model took roughly $3.14 \\times 10^{23}$ FLOPs — by far the largest dense-model training run at the time, on a custom Microsoft V100 GPU cluster, costing several million dollars. The notation $3.14 \\times 10^{23}$ means about 314 sextillion floating-point operations; for scale, that is thousands of times the compute of training the original BERT." }
           ]
         }
       ]
@@ -63,19 +100,20 @@
           "title": "In-context learning improves smoothly with scale",
           "pdfPages": [7, 8, 9, 10],
           "blocks": [
-            { "type": "p", "html": "Across dozens of benchmarks — language modeling (Penn Treebank, LAMBADA), closed-book QA (TriviaQA, WebQuestions), translation, Winograd Schema, common-sense reasoning, SuperGLUE, arithmetic, news article generation, novel word use — the same pattern appears:" },
+            { "type": "p", "html": "<b>The unifying finding.</b> GPT-3 was evaluated on dozens of benchmarks — language modeling (Penn Treebank, LAMBADA), closed-book QA (TriviaQA, WebQuestions, Natural Questions), translation, Winograd schemas, common-sense reasoning, SuperGLUE, reading comprehension, arithmetic, word unscrambling, novel-word use, and news-article generation. The same shape recurs almost everywhere:" },
             { "type": "list", "items": [
-              "Zero-shot already does meaningful work at the 175B scale.",
-              "Few-shot accuracy grows smoothly as model size grows — usually log-linear, with no obvious saturation.",
-              "On many tasks, GPT-3 175B few-shot approaches or matches fine-tuned state-of-the-art models that have orders of magnitude more task-specific data."
+              "Even <b>zero-shot</b> does meaningful work at the 175B scale — the model often beats older fine-tuned systems with no examples at all.",
+              "<b>Few-shot accuracy rises smoothly (roughly log-linear) with model size</b>, frequently with no sign of saturation, suggesting still-larger models would do better.",
+              "On many tasks GPT-3 few-shot approaches or matches <i>fine-tuned</i> state-of-the-art systems that were trained on orders of magnitude more task-specific labeled data."
             ]},
-            { "type": "p", "html": "Standout results:" },
+            { "type": "p", "html": "<b>Standout results, concretely:</b>" },
             { "type": "list", "items": [
-              "<b>TriviaQA closed-book</b>: 71.2% few-shot — beats fine-tuned baselines.",
-              "<b>LAMBADA last-word prediction</b>: 86.4% — substantially beats prior SOTA.",
-              "<b>Arithmetic</b>: 2-digit addition reaches near-perfect accuracy; 3-digit and beyond degrade gracefully.",
-              "<b>News article generation</b>: human evaluators identify GPT-3 articles as machine-written only 52% of the time — chance is 50%."
-            ]}
+              "<b>LAMBADA</b> (predict the final word of a passage that requires understanding the whole paragraph): few-shot <b>86.4%</b>, a large jump over the prior 68% SOTA.",
+              "<b>TriviaQA</b> closed-book (answer from parametric memory, no document retrieval): <b>71.2%</b> few-shot — beating fine-tuned open-domain systems that get to read documents.",
+              "<b>Arithmetic</b>: 2-digit addition/subtraction reach near-perfect accuracy few-shot; 3-digit and larger degrade gracefully — evidence the model learned a partial algorithm, not just memorization.",
+              "<b>News-article generation</b>: human evaluators could distinguish GPT-3-written ~200-word articles from real ones only <b>52%</b> of the time, barely above the 50% chance rate."
+            ]},
+            { "type": "p", "html": "<b>The honest caveat the authors raise.</b> Because the training data is essentially the whole internet, some benchmark test sets may have leaked into it (<i>data contamination</i>). They run a dedicated contamination analysis and conclude the effect is small for most benchmarks, but flag it as an unavoidable hazard of training at web scale — a problem every later LLM inherits." }
           ]
         }
       ]
@@ -84,16 +122,28 @@
       "title": "5. Discussion and impact",
       "pages": [
         {
-          "title": "Limitations and what changed",
-          "pdfPages": [11, 12, 13],
+          "title": "Limitations the paper is candid about",
+          "pdfPages": [11, 12],
           "blocks": [
-            { "type": "p", "html": "The paper is honest about failure modes: factual errors on long-tail facts, repetition and contradiction in long generations, limited reasoning (especially mathematical and physical), bias inherited from web data, and the fundamental issue that the model is learning to predict text — not to act in the world." },
-            { "type": "p", "html": "What GPT-3 changed:" },
+            { "type": "p", "html": "<b>The model's weaknesses, stated plainly.</b> The authors devote real space to where GPT-3 fails — unusual for a results-heavy paper, and part of why it aged well:" },
             { "type": "list", "items": [
-              "Established <b>scale</b> as a first-class research direction — the modern 'scaling laws' literature (Hoffmann et al., Kaplan et al.) systematized this.",
-              "Made <b>prompting</b> a real skill — prompt engineering, chain-of-thought, ReAct, etc. all build on the in-context-learning paradigm GPT-3 introduced.",
-              "Spawned the modern LLM industry. Every major frontier model since (PaLM, LLaMA, Claude, Gemini) is a descendant of this paper's recipe."
-            ]}
+              "<b>Coherence over length</b>: long generations can lose the thread, repeat themselves, contradict earlier sentences, or drift off-topic.",
+              "<b>Reasoning gaps</b>: it struggles with tasks needing real-world physical common sense (&ldquo;if I put cheese in the fridge, will it melt?&rdquo;) and multi-step deductive reasoning.",
+              "<b>Factual unreliability</b>: it confidently states false long-tail facts — the precursor to what is now called hallucination.",
+              "<b>Bias</b>: it reproduces gender, race, and religion biases present in its web training data, which the paper measures and discusses.",
+              "<b>The deepest limitation</b>: it is trained only to predict text, with no grounding in the physical world and no notion of acting toward a goal — it models language, not reality."
+            ]},
+            { "type": "p", "html": "<b>Efficiency and interpretability</b> are also flagged: a 175B model is expensive and slow to run, and it remains largely a black box. These limitations directly motivated the next wave of research — instruction tuning, RLHF, retrieval augmentation, and tool use — that turned a raw text predictor into a usable assistant." }
+          ]
+        },
+        {
+          "title": "What GPT-3 changed",
+          "pdfPages": [12, 13],
+          "blocks": [
+            { "type": "p", "html": "<b>Scale became a research direction.</b> GPT-3 was the clearest demonstration that simply making models bigger (with proportionally more data and compute) produces qualitatively new abilities — not just incremental accuracy. This crystallized the modern <i>scaling-laws</i> literature (Kaplan et al.; later Hoffmann et al.'s Chinchilla, which corrected the data/compute trade-off) into a first-class field." },
+            { "type": "p", "html": "<b>Prompting became a skill.</b> Once a frozen model could be steered entirely by its input text, a whole practice grew up around it: prompt engineering, in-context demonstration selection, chain-of-thought prompting (&ldquo;think step by step&rdquo;), ReAct, and tool-use prompting all build directly on the in-context-learning paradigm GPT-3 introduced." },
+            { "type": "p", "html": "<b>It launched the modern LLM industry.</b> Every major frontier model since — PaLM, LLaMA, Claude, Gemini, and the rest — is a descendant of this paper's recipe: a large decoder-only Transformer, pre-trained on a filtered web-scale corpus, used via prompting. The GPT-3 API (2020) was also the first widely-available way for outsiders to build on a frontier model, which seeded much of the application ecosystem." },
+            { "type": "p", "html": "<b>Connection to this collection.</b> GPT-3 is GPT-1 scaled roughly 1500x with the fine-tuning step deliberately removed; it is the autoregressive counterpart to BERT's bidirectional understanding model; and its sheer cost is exactly the deployment pressure that compression work like DistilBERT addresses on the other end." }
           ]
         }
       ]

@@ -11,8 +11,15 @@
           "title": "From LLMs to autonomous agents",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "A chat model takes an input, produces an output, and stops. An <b>agent</b> has goals, perceives an environment, uses tools, plans across multiple steps, and acts on the world. This survey is one of the early comprehensive maps of how LLMs are being used as the cognitive core of such agents." },
-            { "type": "p", "html": "The framing: an LLM agent has three logical components — <b>brain</b> (the LLM itself plus memory, planning, knowledge), <b>perception</b> (multimodal inputs from text, vision, audio, sensors), and <b>action</b> (tool use, code execution, embodiment, communication with other agents). The survey covers each component, then maps applications (single-agent, multi-agent, human-agent collaboration)." }
+            { "type": "p", "html": "<b>The distinction at the heart of the survey.</b> A chat model is a function: text in, text out, then it stops and forgets. An <b>agent</b> is a loop: it holds a goal, perceives an environment, decides on an action, acts, observes the result, and repeats until the goal is met. The difference between answering 'how do I book a flight?' and actually booking the flight is the difference between a model and an agent." },
+            { "type": "p", "html": "<b>An analogy.</b> A model is a brilliant consultant who answers any question you bring to the room. An agent is an employee you can send out into the world with a task: it makes phone calls, checks systems, handles surprises, and comes back when the job is done. The LLM supplies the consultant's brain; the agent scaffolding supplies the body, the hands, and the persistence." },
+            { "type": "p", "html": "<b>The survey's organizing framework — three components:</b>" },
+            { "type": "list", "items": [
+              "<b>Brain</b>: the LLM itself, plus memory, planning, knowledge, and reasoning — the part that thinks and decides.",
+              "<b>Perception</b>: how the agent takes in the world — text, but also images, audio, and sensor data, all converted into something the LLM can attend to.",
+              "<b>Action</b>: how the agent affects the world — calling tools, running code, moving a robot, or talking to other agents."
+            ]},
+            { "type": "p", "html": "<b>The map.</b> After dissecting each component, the survey charts where agents are deployed: single-agent systems, multi-agent societies, and human-agent collaboration. It is one of the first comprehensive attempts to organize a field that exploded in 2023." }
           ]
         }
       ]
@@ -24,8 +31,10 @@
           "title": "Why LLMs change the agent picture",
           "pdfPages": [2, 3],
           "blocks": [
-            { "type": "p", "html": "Pre-LLM, building an autonomous agent meant assembling domain-specific perception modules, planners, knowledge bases, and rule systems — each brittle, each hand-engineered. The classic AI agent literature (BDI, GOFAI planning) gave you the architecture but not the cognition." },
-            { "type": "p", "html": "An LLM brings a single component that can: parse arbitrary text instructions, reason in natural language, decompose goals into sub-goals, call APIs by writing code, and recover from errors by re-planning. The promise: replace twenty hand-engineered modules with one general-purpose model whose interface is text." }
+            { "type": "p", "html": "<b>The question.</b> Autonomous agents are not new — AI has chased them for decades. What did LLMs change?" },
+            { "type": "p", "html": "<b>The old way.</b> Pre-LLM, building an agent meant assembling many hand-engineered, domain-specific modules: a perception system, a symbolic planner, a knowledge base, a set of rules. Classic frameworks like BDI (Belief-Desire-Intention) and GOFAI (Good Old-Fashioned AI) planning gave you the <i>architecture</i> — the boxes and arrows — but not the <i>cognition</i> to fill them. Each module was brittle, narrow, and broke the moment reality stepped outside its design assumptions." },
+            { "type": "p", "html": "<b>A concrete contrast.</b> Old agent, asked to 'find a recipe and order the ingredients': you would need a custom intent parser, a recipe database query module, a hand-coded mapping from ingredients to store SKUs, and a checkout script — each separately built and maintained. LLM agent: a single model reads the instruction, reasons in plain language about the steps, writes the API calls itself, and adapts when a store is out of stock." },
+            { "type": "p", "html": "<b>What the LLM contributes.</b> One general component that can parse arbitrary natural-language instructions, reason and decompose goals into sub-goals, call APIs by writing code, and recover from errors by re-planning in language. The promise the survey identifies: replace twenty fragile hand-built modules with one flexible model whose universal interface is text." }
           ]
         }
       ]
@@ -34,29 +43,33 @@
       "title": "3. Brain",
       "pages": [
         {
-          "title": "Memory: short-term context vs. long-term retrieval",
+          "title": "Memory: short-term context vs long-term retrieval",
           "pdfPages": [4, 5, 6],
           "blocks": [
-            { "type": "p", "html": "An agent's <b>short-term memory</b> is the LLM's context window — it holds the current conversation, recent tool outputs, and active goals. Bounded by the model's context length." },
-            { "type": "p", "html": "<b>Long-term memory</b> needs external storage:" },
+            { "type": "p", "html": "<b>Why memory matters.</b> A goal that takes 50 steps requires remembering what happened in steps 1-49. But an LLM is stateless between calls and has a bounded context window. The survey splits the solution into two memory types, mirroring human short-term and long-term memory." },
+            { "type": "p", "html": "<b>Short-term memory</b> is the LLM's context window — the prompt currently in front of the model. It holds the active conversation, recent tool outputs, and the current sub-goal. Fast and directly usable, but strictly bounded: once the window fills, the oldest content must be dropped or summarized." },
+            { "type": "p", "html": "<b>Long-term memory</b> lives outside the model and is fetched on demand:" },
             { "type": "list", "items": [
-              "Vector databases (FAISS, Pinecone, Chroma) for semantic retrieval.",
-              "Structured stores (SQL, knowledge graphs) for facts and relations.",
-              "Episodic memory of past trajectories — the agent can recall what it tried before and why it failed."
-            ]}
+              "<b>Vector databases</b> (FAISS, Pinecone, Chroma): store past experiences as embeddings and retrieve the most semantically relevant ones — exactly the RAG mechanism, applied to the agent's own history.",
+              "<b>Structured stores</b> (SQL tables, knowledge graphs): hold precise facts and relations the agent can query exactly.",
+              "<b>Episodic memory of trajectories</b>: records of what the agent tried before, what worked, and what failed, so it can recall 'last time this approach errored, try the other one.'"
+            ]},
+            { "type": "p", "html": "<b>A concrete example.</b> A coding agent fixes a bug, hits a failing test, and logs the fix to long-term memory. A week later, facing a similar error, it retrieves that episode and skips the dead end — turning one-shot problem-solving into accumulated experience. Without long-term memory, every session starts from amnesia." }
           ]
         },
         {
-          "title": "Planning: ReAct, Chain-of-Thought, Tree-of-Thoughts",
+          "title": "Planning: Chain-of-Thought, ReAct, Tree-of-Thoughts, Reflection",
           "pdfPages": [6, 7, 8],
           "blocks": [
-            { "type": "p", "html": "Common patterns surveyed:" },
+            { "type": "p", "html": "<b>The question.</b> How does an LLM go from a goal to a sequence of good actions? The survey catalogs the main reasoning-and-planning patterns, from simplest to most elaborate." },
             { "type": "list", "items": [
-              "<b>Chain-of-Thought (CoT)</b>: the LLM produces intermediate reasoning steps before the final answer. Improves multi-step reasoning, especially on math and logic.",
-              "<b>ReAct</b>: interleave <i>thinking</i>, <i>acting</i> (calling a tool), and <i>observing</i> (reading tool output). The LLM iterates: think → act → observe → think → … → finish.",
-              "<b>Tree-of-Thoughts</b>: explore multiple reasoning branches, evaluate them, backtrack on dead ends. More expensive but solves problems CoT can't.",
-              "<b>Reflection / self-critique</b>: have the LLM evaluate its own output and revise. Powers agents like Reflexion that improve across trials."
-            ]}
+              "<b>Chain-of-Thought (CoT)</b>: prompt the model to write out intermediate reasoning steps before its final answer ('let's think step by step'). Dramatically improves multi-step math and logic, because the model uses its own generated text as a scratchpad.",
+              "<b>ReAct</b>: interleave <i>Reason</i>, <i>Act</i>, and <i>Observe</i>. The model thinks, then calls a tool, then reads the tool's output, then thinks again — looping until done. This grounds reasoning in real feedback instead of pure speculation.",
+              "<b>Tree-of-Thoughts</b>: instead of one reasoning chain, explore several branches, evaluate them, and backtrack from dead ends — a search over reasoning paths. More expensive but solves puzzles a single chain cannot.",
+              "<b>Reflection / self-critique</b>: the model evaluates its own output and revises it. Frameworks like Reflexion store these self-critiques and use them to improve across repeated attempts at the same task."
+            ]},
+            { "type": "p", "html": "<b>A concrete ReAct trace.</b> Goal: 'What is the population of the capital of France?' Thought: 'I need the capital of France.' Act: search('capital of France'). Observe: 'Paris.' Thought: 'Now Paris's population.' Act: search('population of Paris'). Observe: '~2.1 million.' Thought: 'I have the answer.' Finish: '~2.1 million.' Each Observe step injects real-world fact into the next Thought, preventing the hallucination a pure CoT chain might produce." },
+            { "type": "p", "html": "<b>The trade-off.</b> The patterns trade compute for reliability: CoT is one pass; ReAct adds tool round-trips; Tree-of-Thoughts multiplies cost by the branching factor. The survey's point is that 'planning' for LLM agents is really a family of prompting and search strategies layered on top of the same base model." }
           ]
         }
       ]
@@ -65,15 +78,17 @@
       "title": "4. Perception",
       "pages": [
         {
-          "title": "Multimodal inputs",
+          "title": "Multimodal inputs: giving the agent senses",
           "pdfPages": [9, 10],
           "blocks": [
-            { "type": "p", "html": "An agent in the real world rarely has text-only inputs. The survey catalogs:" },
+            { "type": "p", "html": "<b>Why text alone is not enough.</b> An agent acting in the real world (or even a software UI) rarely gets clean text. It needs to see a screenshot, hear a command, or read a sensor. Perception is the problem of converting all those signals into tokens the language model can attend to." },
             { "type": "list", "items": [
-              "<b>Visual</b>: image and video encoders (CLIP, BLIP-2, vision-LLM stacks) producing tokens the LLM can attend to.",
-              "<b>Auditory</b>: speech-to-text (Whisper) and ambient sound understanding.",
-              "<b>Embodied / sensor</b>: robot proprioception, GPS, depth sensors — typically converted to text or feature vectors before reaching the LLM."
-            ]}
+              "<b>Visual</b>: image and video encoders (CLIP, BLIP-2, and full vision-language stacks) turn pixels into embeddings the LLM consumes. This lets an agent read a chart, interpret a webpage screenshot, or describe a scene.",
+              "<b>Auditory</b>: speech-to-text (Whisper) converts spoken commands to text, and ambient-sound understanding lets an agent react to non-speech audio.",
+              "<b>Embodied / sensor</b>: robot proprioception (joint angles), GPS, depth sensors — usually translated into text descriptions or feature vectors before reaching the LLM, since the LLM's native input is tokens."
+            ]},
+            { "type": "p", "html": "<b>A concrete example.</b> A web-browsing agent gets a screenshot of a page. A vision encoder turns it into tokens; the LLM 'reads' the layout, identifies the 'Add to cart' button, and emits a click action at its coordinates. Without perception the agent would be blind to anything not handed to it as text." },
+            { "type": "p", "html": "<b>The unifying theme.</b> Whatever the modality, the pattern is the same — encode the signal into the LLM's token space so that one general reasoning engine can operate over sight, sound, and sensor data through a single interface." }
           ]
         }
       ]
@@ -85,12 +100,13 @@
           "title": "Tool use and embodied action",
           "pdfPages": [11, 12, 13],
           "blocks": [
-            { "type": "p", "html": "Action takes two main forms:" },
+            { "type": "p", "html": "<b>The question.</b> Reasoning is useless if the agent cannot change anything. Action is how thought becomes effect. The survey identifies two broad forms." },
             { "type": "list", "items": [
-              "<b>Tool use</b>: the LLM emits structured calls — search the web, run a Python snippet, query a database, post to a Slack channel, call an API. Frameworks like LangChain, LlamaIndex, AutoGPT, and the OpenAI function-calling format formalize this.",
-              "<b>Embodied action</b>: in simulators (Minecraft, web browsers, household environments) or on real robots, the LLM emits primitive actions (move, grasp, click) that an execution layer carries out. Voyager, RT-2, SayCan, and Inner Monologue are representative."
+              "<b>Tool use</b>: the LLM emits structured calls — search the web, run a Python snippet, query a database, send a Slack message, hit an API. The model decides <i>when</i> and <i>with what arguments</i> to call; an execution layer runs the call and feeds the result back. Frameworks like LangChain, LlamaIndex, AutoGPT, and the OpenAI function-calling format standardize this loop.",
+              "<b>Embodied action</b>: in simulators (Minecraft, web browsers, household environments) or on real robots, the LLM emits primitive actions — move, grasp, click, navigate — that a control layer executes. Voyager (Minecraft), RT-2, SayCan, and Inner Monologue are representative systems where language plans drive physical or simulated bodies."
             ]},
-            { "type": "p", "html": "<b>Mixture-of-experts via tools</b>: an LLM that knows when <i>not</i> to answer from parameters and instead delegates — to a calculator for arithmetic, to a search engine for current events, to a code interpreter for data analysis. This is RAG generalized to all of capability." }
+            { "type": "p", "html": "<b>The deep idea — knowing when not to answer from parameters.</b> A well-designed agent treats its own weights as just one tool among many. It delegates arithmetic to a calculator, current events to a search engine, and data analysis to a code interpreter — precisely because it knows its parametric memory is unreliable for those. This is RAG generalized from 'retrieve documents' to 'retrieve capability.'" },
+            { "type": "p", "html": "<b>A concrete example.</b> Asked 'what is 4,817 times 2,933?', a good agent does not guess — it calls a calculator tool and returns the exact product. Asked 'what happened in the news today?', it calls search rather than hallucinating. The skill being learned is <i>routing</i>: matching each sub-task to the right tool, including the model itself when appropriate." }
           ]
         }
       ]
@@ -99,12 +115,13 @@
       "title": "6-7. Multi-agent and applications",
       "pages": [
         {
-          "title": "Single-agent, multi-agent, human-agent",
+          "title": "Single-agent, multi-agent, and human-agent collaboration",
           "pdfPages": [14, 15, 16, 17],
           "blocks": [
-            { "type": "p", "html": "<b>Single-agent</b>: one LLM-driven loop. Examples: AutoGPT, BabyAGI, browser-using agents." },
-            { "type": "p", "html": "<b>Multi-agent</b>: several agents with distinct roles cooperate or compete. Examples: CAMEL (role-play), AutoGen (Microsoft framework), MetaGPT (software-dev workflows with PM/architect/engineer roles), Generative Agents (Stanford's Smallville simulation)." },
-            { "type": "p", "html": "<b>Human-agent collaboration</b>: the agent operates under continuous human supervision, asking for permission on high-stakes actions. This is the safer mode and where most real-world deployments sit today." }
+            { "type": "p", "html": "<b>Single-agent.</b> One LLM-driven loop pursuing a goal. Examples: AutoGPT and BabyAGI (early autonomous task-runners that plan, act, and re-plan), and browser-using agents that complete web tasks. Simplest to reason about, but a single agent can get stuck in its own loops or blind spots." },
+            { "type": "p", "html": "<b>Multi-agent.</b> Several agents with distinct roles cooperate or debate. The survey highlights CAMEL (two agents role-play a task to elicit better behavior), AutoGen (Microsoft's framework for conversable cooperating agents), MetaGPT (a software team simulated as PM, architect, and engineer agents passing artifacts down a pipeline), and Stanford's Generative Agents (the 'Smallville' simulation where 25 agents with memory and daily routines produce emergent social behavior like organizing a party)." },
+            { "type": "p", "html": "<b>Why multiple agents help.</b> Specialization and cross-checking. A 'critic' agent catches a 'writer' agent's mistakes; debate between agents surfaces errors a single chain would miss; role separation keeps each agent's prompt focused. The cost is coordination overhead and the risk of agents amplifying each other's errors." },
+            { "type": "p", "html": "<b>Human-agent collaboration.</b> The agent runs under continuous human supervision, asking permission before high-stakes actions (sending money, deleting data, emailing customers). This is the safest mode and where most real deployments actually sit today — full autonomy is reserved for low-stakes, reversible tasks." }
           ]
         }
       ]
@@ -116,12 +133,14 @@
           "title": "Open problems",
           "pdfPages": [18, 19, 20],
           "blocks": [
+            { "type": "p", "html": "<b>The question.</b> What stops agents from being reliably useful today? The survey closes by naming the hard, unsolved problems." },
             { "type": "list", "items": [
-              "<b>Hallucination compounding</b>: in long action sequences, every wrong sub-step pollutes the rest. Error correction becomes the bottleneck.",
-              "<b>Long-horizon memory and planning</b>: even with retrieval, agents struggle to maintain consistent state across thousands of steps.",
-              "<b>Safety and security</b>: an agent that can call APIs and execute code can be tricked into harmful actions (prompt injection, indirect injection from web content). The threat model is much larger than chatbots.",
-              "<b>Evaluation</b>: 'is this agent good?' is hard to answer when there's no fixed benchmark — the action space is open."
-            ]}
+              "<b>Hallucination compounding</b>: in a long action sequence, one wrong sub-step poisons every step after it. A single mistaken fact at step 3 can derail steps 4-50, so error correction becomes the central bottleneck — reliability does not just add, it multiplies.",
+              "<b>Long-horizon memory and planning</b>: even with retrieval, agents struggle to keep consistent state and coherent goals across thousands of steps. They lose the plot on long tasks.",
+              "<b>Safety and security</b>: an agent that can call APIs and execute code is a far larger attack surface than a chatbot. Prompt injection (malicious instructions hidden in a webpage or document the agent reads) can hijack its actions. The threat model is genuinely new and not yet solved.",
+              "<b>Evaluation</b>: 'is this agent good?' has no clean answer when the action space is open-ended and there is no fixed benchmark. Measuring open-ended autonomous behavior is itself a research problem."
+            ]},
+            { "type": "p", "html": "<b>The through-line.</b> Each challenge stems from the same shift: moving from a single text response to a long sequence of consequential actions. The connection to the rest of this collection is direct — RAG addresses the memory and hallucination problems, InstructGPT-style alignment addresses safety, and MCP (the next entry) standardizes the action surface that all of this depends on." }
           ]
         }
       ]

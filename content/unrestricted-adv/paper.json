@@ -8,15 +8,16 @@
       "title": "Abstract",
       "pages": [
         {
-          "title": "Escaping the epsilon-ball threat model",
-          "subtitle": "Don't perturb a real image, synthesize a fake one",
+          "title": "Escaping the Epsilon-Ball Threat Model",
+          "subtitle": "Don't perturb a real image, synthesize a fresh one",
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Almost all adversarial-example research lives inside one threat model: take a real image, add a perturbation $\\delta$ with $\\|\\delta\\|_p \\leq \\epsilon$ so small it is invisible, and fool the classifier. Defenses are then built and certified against exactly this norm-bounded attack."},
-            {"type": "p", "html": "This paper points out a blind spot. An attacker is not obligated to start from a real image at all. What if we <strong>generate a brand-new image from scratch</strong> that is unambiguously, legitimately one class to a human, yet the classifier calls it something else? Such an image is adversarial, but it lives <em>outside</em> any $\\epsilon$-ball, so norm-bounded defenses and certificates say nothing about it."},
-            {"type": "quote", "html": "We propose unrestricted adversarial examples: inputs that are not constrained to be near any clean image, generated from scratch with a conditional generative model, yet still legitimate members of a class while being misclassified."},
-            {"type": "p", "html": "The threat is arguably more dangerous because it sidesteps the entire defensive apparatus the community had built around small perturbations."}
+            {"type": "p", "html": "Nearly all adversarial-example research lives inside one threat model: take a <em>real</em> image $x$, add a perturbation $\\delta$ so small ($\\|\\delta\\|_p \\le \\epsilon$) that it is invisible, and fool the classifier. The entire defensive apparatus &mdash; adversarial training, and certified defenses that mathematically prove robustness &mdash; is built and measured against exactly this norm-bounded attack."},
+            {"type": "p", "html": "This paper names the blind spot. An attacker is under no obligation to start from a real image. What if you <strong>generate a brand-new image from scratch</strong> that is unambiguously, legitimately one class to a human, yet the classifier calls it something else? Such an image is genuinely adversarial &mdash; humans and the model disagree &mdash; but it lives <em>nowhere near</em> any clean image, so it sits outside every $\\epsilon$-ball, and norm-bounded defenses and certificates say nothing whatsoever about it."},
+            {"type": "p", "html": "A concrete picture: instead of taking a photo of the handwritten digit &ldquo;7&rdquo; and nudging pixels, you ask a generative model to <em>draw</em> a fresh, clean &ldquo;7&rdquo; &mdash; one that any person instantly reads as a seven &mdash; but you steer the drawing so a digit classifier reads it as a &ldquo;3.&rdquo; No original photo was ever perturbed, so there is no $\\delta$ to bound and no ball to certify."},
+            {"type": "quote", "html": "We propose unrestricted adversarial examples: inputs not constrained to be near any clean image, synthesized from scratch with a conditional generative model, that remain legitimate members of a class to a human oracle while being misclassified."},
+            {"type": "p", "html": "The threat is arguably more dangerous precisely because it sidesteps the machinery the community had built around small perturbations. The paper shows these examples defeat both adversarial training and certified defenses, and that they often <strong>transfer</strong> to other classifiers the attacker never saw."}
           ]
         }
       ]
@@ -25,20 +26,20 @@
       "title": "The Threat Model",
       "pages": [
         {
-          "title": "Restricted vs. unrestricted attacks",
+          "title": "Restricted vs. Unrestricted Attacks",
           "subtitle": "Two different notions of 'adversarial'",
           "pdfPages": [1, 2],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The classic <strong>restricted</strong> attack searches for a perturbation within a tiny ball around a fixed clean image $x$:"},
-            {"type": "math", "tex": "\\max_{\\|\\delta\\|_p \\leq \\epsilon}\\ \\mathcal{L}\\big(f(x+\\delta),\\, y\\big)"},
-            {"type": "p", "html": "Read this as: 'nudge $x$ just enough to break $f$, but not enough for a human to notice.' The smallness of $\\delta$ is what guarantees the true label has not changed."},
-            {"type": "p", "html": "An <strong>unrestricted</strong> adversarial example drops the $\\epsilon$ constraint entirely. Instead of anchoring to a real image, it asks for <em>any</em> image at all that satisfies two conditions:"},
+            {"type": "p", "html": "The classic <strong>restricted</strong> attack searches for a perturbation within a tiny ball around a <em>fixed</em> clean image $x$:"},
+            {"type": "math", "tex": "\\max_{\\|\\delta\\|_p \\le \\epsilon}\\; \\mathcal{L}\\big(f(x+\\delta),\\, y\\big)"},
+            {"type": "p", "html": "Term by term: $x$ is a real image with true label $y$; $\\delta$ is the perturbation; $\\|\\delta\\|_p \\le \\epsilon$ caps its size in the $\\ell_p$ norm; $f$ is the classifier; and $\\mathcal{L}$ is the loss we maximize to break $f$. In plain words: <em>nudge $x$ just enough to break $f$, but not enough for a human to notice.</em> The smallness of $\\delta$ is doing crucial double duty &mdash; it is both the constraint <em>and</em> the (implicit) guarantee that the true label is still $y$, since a tiny change cannot turn a real 7 into a real 3."},
+            {"type": "p", "html": "An <strong>unrestricted</strong> adversarial example throws away the $\\epsilon$ constraint entirely. It does not anchor to any real image. It asks for <em>any</em> image $x$ at all that satisfies two conditions simultaneously:"},
             {"type": "list", "items": [
-              "A human oracle confidently assigns it the true class $y$ (it really looks like a valid example of $y$).",
-              "The classifier $f$ assigns it a different class (it is misclassified)."
+              "A <strong>human oracle</strong> $o$ confidently assigns it the true class $y$ &mdash; it genuinely looks like a valid example of $y$.",
+              "The classifier $f$ assigns it a <em>different</em> class &mdash; it is misclassified."
             ]},
-            {"type": "p", "html": "Because there is no proximity constraint, the search space is the entire space of realistic images of class $y$, not a thin shell around one photo. The challenge becomes: how do we stay inside the set of realistic, correctly-labeled images while hunting for misclassification?"}
+            {"type": "p", "html": "Formally the paper defines the set of unrestricted adversarial examples as $\\{x : o(x) = y \\;\\wedge\\; f(x) \\ne y\\}$ &mdash; everything a human calls $y$ but the model does not. Note that ordinary restricted adversarial examples are a tiny <em>subset</em> of this: any clean image plus a small $\\delta$ still looks like $y$ to a human. The unrestricted set is vastly larger &mdash; it is the entire space of realistic, correctly-labeled images of class $y$, not a thin shell around one photo. The engineering challenge becomes: how do we stay inside that set of realistic, human-correct images while hunting for misclassification?"}
           ]
         }
       ]
@@ -47,40 +48,56 @@
       "title": "The Method",
       "pages": [
         {
-          "title": "Search the latent space of a GAN",
-          "subtitle": "Let the generator keep images realistic",
-          "pdfPages": [3, 4],
+          "title": "Search the Latent Space of an AC-GAN",
+          "subtitle": "Let the generator keep every candidate realistic",
+          "pdfPages": [3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The key tool is a <strong>conditional generative model</strong> (an AC-GAN) trained to produce realistic images of a given class from a latent code $z$. Because the generator $G$ only ever outputs realistic, on-manifold images, optimizing over $z$ keeps every candidate looking like a genuine image, no perturbation budget required."},
-            {"type": "p", "html": "To craft an unrestricted adversarial example of source class $y$, we search the latent space for a code whose generated image is realistic and clearly class $y$ to humans, yet fools the target classifier $f$. The optimization combines three pulls:"},
-            {"type": "math", "tex": "\\min_{z}\\ \\ \\lambda_1\\,\\mathcal{L}_{\\text{adv}}\\big(f(G(z))\\big)\\ +\\ \\lambda_2\\,\\mathcal{L}_{\\text{aux}}\\big(G(z),\\, y\\big)\\ +\\ \\lambda_3\\,\\|z - z_0\\|^2"},
+            {"type": "p", "html": "The key tool is a <strong>conditional generative model</strong> &mdash; specifically an <strong>AC-GAN</strong> (Auxiliary-Classifier GAN). It is trained to produce realistic images of a chosen class $y$ from two inputs: a random latent code $z$ and a class label $y_0$. So $G(z, y_0)$ outputs, say, a realistic handwritten &ldquo;7&rdquo; when $y_0 = 7$. The beauty of this for an attacker is that the generator <em>only ever outputs realistic, on-manifold images</em>. Searching over the latent code $z$ therefore explores a whole family of plausible images without any perturbation budget &mdash; the generator itself is the guardrail that keeps every candidate looking genuine."},
+            {"type": "p", "html": "Why not just search in pixel space without a budget? Because unconstrained pixel search produces meaningless static &mdash; noise that no human would call a 7. The GAN&rsquo;s latent space is exactly the trick that confines the search to images that look real."},
+            {"type": "p", "html": "To craft an unrestricted adversarial example of source class $y_0$, the authors search the latent space for a code $z$ whose generated image $G(z, y_0)$ stays clearly class $y_0$ to humans yet fools the target classifier $f$ into some other class $y_{\\text{target}}$. The objective combines three competing pulls:"},
+            {"type": "math", "tex": "\\min_{z}\\; \\lambda_1\\, \\mathcal{L}_0 \\;+\\; \\lambda_2\\, \\mathcal{L}_1 \\;+\\; \\lambda_3\\, \\mathcal{L}_2"},
             {"type": "list", "items": [
-              "$\\mathcal{L}_{\\text{adv}}$ pushes the target classifier $f$ toward the wrong class (this is what makes it adversarial).",
-              "$\\mathcal{L}_{\\text{aux}}$ uses the GAN's own auxiliary classifier to keep the image firmly looking like the true class $y$, so a human still reads it correctly.",
-              "$\\|z - z_0\\|^2$ keeps the code near a well-formed starting point $z_0$ so the generator outputs a clean, realistic image rather than a degenerate one."
+              "<strong>$\\mathcal{L}_0$ (the adversarial loss)</strong> drives the target classifier $f(G(z, y_0))$ toward the wrong class $y_{\\text{target}}$ &mdash; this is what makes the image adversarial.",
+              "<strong>$\\mathcal{L}_1$ (the auxiliary / realism loss)</strong> uses the AC-GAN&rsquo;s own built-in auxiliary classifier to keep the generated image firmly recognizable as the true class $y_0$, so a human still reads it correctly.",
+              "<strong>$\\mathcal{L}_2$ (the latent-proximity term)</strong> penalizes $z$ straying too far from a well-formed random draw $z_0$, keeping the generator in its sweet spot so it outputs a clean image rather than a degenerate one."
             ]},
-            {"type": "quote", "html": "By optimizing in latent space rather than pixel space, every step yields a realistic image. The generator is the guardrail that keeps us on the manifold of legitimate examples."}
+            {"type": "p", "html": "The weights $\\lambda_1, \\lambda_2, \\lambda_3$ balance the three. Crank $\\lambda_1$ and you get a strong attack that may stop looking like $y_0$; crank $\\lambda_2$ and the image stays a beautiful $y_0$ but may not fool $f$. The whole skill is finding the region where both hold at once."},
+            {"type": "quote", "html": "By optimizing in latent space rather than pixel space, every gradient step yields a realistic image. The generator is the constraint, replacing the $\\epsilon$-ball as the thing that keeps us on the manifold of legitimate examples."}
           ]
         },
         {
-          "title": "Keeping the human label honest",
-          "subtitle": "Why these aren't just mislabeled garbage",
-          "pdfPages": [4, 5],
+          "title": "Two Flavors: Legitimate and Noise-Augmented",
+          "subtitle": "From pure synthesis to a hybrid attack",
+          "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The whole claim hinges on the generated image truly belonging to class $y$ for a human. The auxiliary loss term and the latent-proximity term work together to ensure the image stays a confident, recognizable member of $y$. The authors validate this with <strong>human studies</strong>: annotators are shown the generated images and reliably label them as the intended class, confirming the examples are legitimate, not ambiguous noise."},
-            {"type": "p", "html": "So the result is a clean separation of opinion: humans say $y$, the classifier says not-$y$. That is the definition of an adversarial example, achieved without ever touching a real photograph or staying within any norm ball."}
+            {"type": "p", "html": "The paper actually defines two attack variants. The first is the pure <strong>unrestricted</strong> attack just described &mdash; search $z$ so that $G(z, y_0)$ is, on its own, a legitimate $y_0$ that fools $f$. Nothing is added to the image; the adversarial-ness lives entirely in <em>which</em> realistic image the generator was steered to produce."},
+            {"type": "p", "html": "The second is a <strong>noise-augmented</strong> variant that bridges to the classic threat model. Here the attacker first finds a good latent image and then <em>also</em> adds a small bounded perturbation $\\epsilon$ on top: the final input is $G(z, y_0) + \\epsilon$ with $\\|\\epsilon\\|$ small. This combines the freedom of latent search with a little extra pixel-space push, making the attack even stronger while still looking like a clean $y_0$ to people."},
+            {"type": "p", "html": "Both variants are optimized with projected gradient descent on $z$ (and on $\\epsilon$ for the second). The auxiliary loss and latent-proximity terms are what prevent the optimizer from wandering into ambiguous, label-unclear images &mdash; they are the price of admission that keeps each result inside the human-correct set."},
+            {"type": "p", "html": "An important consequence: because the attack is built <em>from</em> a generator rather than <em>from</em> a specific test image, it can produce an essentially unlimited stream of distinct adversarial examples for a class, each a different realistic image, rather than a single perturbed photo."}
           ]
         },
         {
-          "title": "Why existing defenses don't help",
-          "subtitle": "Certificates assume the wrong threat",
+          "title": "Keeping the Human Label Honest",
+          "subtitle": "Why these aren't just mislabeled garbage",
           "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Norm-bounded defenses, including adversarial training and certified methods like PixelDP, all reason about a neighborhood around a fixed input. An unrestricted example has no such anchor, so those guarantees simply do not apply to it."},
-            {"type": "p", "html": "The authors demonstrate that models hardened against $\\epsilon$-bounded attacks remain vulnerable to unrestricted ones, and that these examples often <strong>transfer</strong> across different classifiers. Robustness in the restricted sense gives a false sense of security against this broader attack surface."}
+            {"type": "p", "html": "The entire claim collapses if the generated images are not <em>actually</em> class $y_0$ to a person &mdash; otherwise they would just be ambiguous junk, not adversarial examples. The auxiliary-loss and latent-proximity terms exist precisely to prevent this, but the authors do not take it on faith: they run <strong>human studies</strong> on Amazon Mechanical Turk."},
+            {"type": "p", "html": "Annotators are shown the generated images and asked to label them. The crafted images are reliably labeled as the intended class $y_0$, confirming they are legitimate, confident members of that class and not borderline noise. Only images that pass this human-agreement bar are counted as successful unrestricted adversarial examples &mdash; the human oracle is built into the evaluation, not just the definition."},
+            {"type": "p", "html": "So the result is a clean separation of opinion: <em>humans say $y_0$, the classifier says not-$y_0$.</em> That is the textbook definition of an adversarial example &mdash; achieved without ever touching a real photograph or staying within any norm ball. The paper demonstrates this across <strong>MNIST</strong> (handwritten digits), <strong>SVHN</strong> (street-view house numbers), and <strong>CelebA</strong> (face attributes), so it is not a quirk of one toy dataset."}
+          ]
+        },
+        {
+          "title": "Why Existing Defenses Don't Help",
+          "subtitle": "Certificates and adversarial training assume the wrong threat",
+          "pdfPages": [6, 7],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Every norm-bounded defense reasons about a <em>neighborhood</em> around a fixed input. <strong>Adversarial training</strong> (Madry et al.) hardens the model against perturbations inside an $\\ell_p$ ball; <strong>certified defenses</strong> like <strong>PixelDP</strong> prove the label cannot change within such a ball. An unrestricted example has no such anchor &mdash; it is not $x + \\delta$ for any clean $x$ the defender considered &mdash; so those guarantees structurally cannot apply to it."},
+            {"type": "p", "html": "The experiments bear this out starkly. The authors attack classifiers protected by both adversarial training and certified PixelDP, and the unrestricted examples still fool them at <strong>high success rates</strong> &mdash; the certified guarantee is simply silent about images that did not come from perturbing a test point. Robustness in the restricted sense gives a false sense of security against this broader surface."},
+            {"type": "p", "html": "Worse, the examples <strong>transfer</strong>. A batch crafted against one classifier frequently fools <em>other</em>, independently trained classifiers the attacker never queried &mdash; the paper reports substantial cross-model transfer rates. That makes the attack practical even in a black-box setting where the victim&rsquo;s exact model is unknown, echoing the transferability seen with classic adversarial examples."}
           ]
         }
       ]
@@ -89,19 +106,20 @@
       "title": "Takeaways",
       "pages": [
         {
-          "title": "A broader definition of robustness",
+          "title": "A Broader Definition of Robustness",
           "subtitle": "What the field has to grapple with",
           "pdfPages": [7, 8],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "This paper enlarges the question from 'is the model stable near real images?' to 'can the model be fooled by <em>any</em> realistic, correctly-labeled image?' The latter is much harder to defend against and much closer to what a real adversary could do."},
+            {"type": "p", "html": "This paper enlarges the central question from &ldquo;is the model stable in a tiny neighborhood of real images?&rdquo; to &ldquo;can the model be fooled by <em>any</em> realistic, correctly-labeled image?&rdquo; The second question is far harder to defend against and far closer to what a real adversary can actually do &mdash; nobody promised attackers would politely start from your test set."},
             {"type": "list", "items": [
-              "Adversarial examples need not be perturbations of real data; generative models can synthesize them from scratch.",
-              "Latent-space search keeps generated images realistic and human-correct, sidestepping the epsilon-ball entirely.",
-              "Norm-based defenses and certificates do not cover this threat model.",
-              "Motivated later community efforts (the Unrestricted Adversarial Examples challenge) to build defenses against this broader class."
+              "Adversarial examples need not be perturbations of real data &mdash; generative models can synthesize them from scratch.",
+              "Latent-space search over a conditional GAN keeps generated images realistic and human-correct, sidestepping the $\\epsilon$-ball entirely.",
+              "Norm-based defenses and certificates (adversarial training, PixelDP) do not cover this threat model, and these examples transfer across models.",
+              "A human-oracle definition of &ldquo;adversarial&rdquo; is the honest one: disagreement between people and the model on a legitimate input."
             ]},
-            {"type": "p", "html": "The enduring message: true robustness must mean agreeing with humans on all realistic inputs, not just resisting tiny pixel nudges around a test set."}
+            {"type": "p", "html": "The work directly motivated Google Brain&rsquo;s <strong>Unrestricted Adversarial Examples Challenge</strong>, a community effort to build defenses against this broader class. Within this collection it sits beside the adversarial patch and the certificate-spoofing Shadow Attack &mdash; three different escapes from the same tidy $\\ell_p$ box."},
+            {"type": "p", "html": "The enduring message: true robustness must mean <em>agreeing with humans on all realistic inputs</em>, not merely resisting tiny pixel nudges around a fixed test set."}
           ]
         }
       ]

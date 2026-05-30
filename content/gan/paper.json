@@ -5,21 +5,40 @@
   "venue": "NeurIPS 2014 — arXiv:1406.2661",
   "sections": [
     {
-      "title": "Abstract",
+      "title": "Abstract & Introduction",
       "pages": [
         {
-          "title": "Two networks playing a game",
+          "title": "The forger and the detective",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "Generative modeling means: given samples from some unknown distribution $p_{\\text{data}}$, learn to produce new samples from that distribution. Before GANs, the dominant approaches were either explicit (VAEs, Boltzmann machines, autoregressive models) — they model the density directly — or implicit but limited (RBMs, stochastic Markov chains)." },
-            { "type": "p", "html": "<b>GANs reframe generation as a two-player minimax game</b>:" },
+            { "type": "p", "html": "<b>The problem.</b> Suppose you have 60,000 photos of handwritten digits and you want a machine that can <i>invent new ones</i> that look just as real. This is <b>generative modeling</b>: you are given samples from some unknown distribution $p_{\\text{data}}$ (the true distribution over all plausible digit images), and you want to produce fresh samples that look like they were drawn from the same source. The hard part is that you never get to see $p_{\\text{data}}$ written down as a formula — you only ever see examples." },
+            { "type": "p", "html": "<b>The intuition / analogy.</b> Picture a <b>currency forger</b> and a <b>detective</b>. The forger ($G$, the <i>generator</i>) prints fake banknotes and tries to pass them off as real. The detective ($D$, the <i>discriminator</i>) examines notes and tries to flag the fakes. Each makes the other better: as the detective sharpens, the forger must produce more convincing notes; as the forger improves, the detective must look harder. The paper's own words:" },
+            { "type": "quote", "html": "The generative model can be thought of as analogous to a team of counterfeiters, trying to produce fake currency and use it without detection, while the discriminative model is analogous to the police, trying to detect the counterfeit currency. Competition in this game drives both teams to improve their methods until the counterfeits are indistinguishable from the genuine articles." },
+            { "type": "p", "html": "<b>Why this was a new idea.</b> Before GANs, generative models were dominated by approaches that model the probability density <i>explicitly</i> — VAEs, Boltzmann machines, autoregressive models — often requiring intractable integrals, Markov-chain sampling, or crude approximations like Markov chain Monte Carlo (MCMC). GANs sidestep all of that: there is <b>no explicit density, no Markov chain, and no inference network</b>. You just need to be able to backpropagate through two feedforward networks, which standard deep-learning tooling already does extremely well." },
             { "type": "list", "items": [
-              "A <b>generator</b> $G(z)$ turns noise $z \\sim p_z$ into a synthetic sample.",
-              "A <b>discriminator</b> $D(x)$ tries to tell whether $x$ came from $p_{\\text{data}}$ or from $G$."
+              "<b>Generator</b> $G(z;\\theta_g)$: a neural net that maps a random noise vector $z \\sim p_z(z)$ (e.g. a vector of Gaussian or uniform samples) to a synthetic data point, e.g. a $28\\times 28$ image.",
+              "<b>Discriminator</b> $D(x;\\theta_d)$: a neural net that outputs a single scalar $D(x) \\in [0,1]$, its estimated probability that $x$ came from the real data rather than from $G$.",
+              "<b>The endgame</b>: when $G$ perfectly matches $p_{\\text{data}}$, the detective is reduced to guessing — $D(x)=\\tfrac{1}{2}$ everywhere, because real and fake are genuinely indistinguishable."
             ]},
-            { "type": "p", "html": "$D$ trains to be good at distinguishing; $G$ trains to fool $D$. At equilibrium, $G$ matches $p_{\\text{data}}$ so well that $D$ can do no better than chance: $D(x) = 1/2$ everywhere." }
+            { "type": "p", "html": "<b>Context.</b> This 2014 paper launched an entire research era. GANs dominated image synthesis from DCGAN (2015) through StyleGAN3 (2021) before diffusion models — also in this collection — overtook them. The key conceptual gift was reframing 'learn a distribution' as 'win a game,' which turned a hard density-estimation problem into a standard backprop optimization." }
           ],
           "viz": ["gan-game"]
+        },
+        {
+          "title": "Where GANs sat among earlier generative models",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem with the old approaches.</b> The most successful generative models of the era worked by writing down a parametric probability distribution and maximizing its log-likelihood on the data. That sounds clean, but it forces you to compute or approximate nasty quantities — partition functions and high-dimensional integrals that have no closed form." },
+            { "type": "p", "html": "<b>Concrete pain points the paper calls out.</b> Deep Boltzmann machines need <b>MCMC</b> (Markov chain Monte Carlo) to estimate gradients, and those chains mix slowly and badly in high dimensions. Variational methods (VAEs) need a tractable <b>variational lower bound</b> and sometimes can't approximate the true posterior well. The earlier 'generative stochastic networks' line of work could sample but still relied on Markov chains." },
+            { "type": "p", "html": "<b>The GAN bargain.</b> By using a discriminator as a learned, adaptive loss function, GANs avoid every one of those: no partition function, no Markov chain, no variational bound. The price is that you give up an explicit likelihood — you can sample beautifully but you cannot easily ask 'what is $p(x)$ for this image?'. This trade-off (sharp samples vs. no density) is the defining personality of GANs." },
+            { "type": "table", "headers": ["Approach", "Needs Markov chain?", "Explicit density?", "Sample sharpness"],
+              "rows": [
+                ["Deep Boltzmann machine", "Yes (MCMC)", "Up to partition fn", "Often blurry"],
+                ["VAE", "No", "Yes (lower bound)", "Tends to blur"],
+                ["GAN", "No", "No", "Sharp"]
+              ]},
+            { "type": "p", "html": "<b>Why no Markov chain matters.</b> Sampling from a GAN is a single forward pass: draw $z$, compute $G(z)$, done. Compare that to a Boltzmann machine, where generating one sample may require thousands of chain steps and you can never be sure the chain has converged." }
+          ]
         }
       ]
     },
@@ -27,25 +46,45 @@
       "title": "3. Adversarial nets",
       "pages": [
         {
-          "title": "The minimax objective",
-          "pdfPages": [2, 3],
+          "title": "The minimax value function, term by term",
+          "pdfPages": [3],
           "blocks": [
-            { "type": "math", "tex": "\\min_G \\max_D \\;\\; \\mathbb{E}_{x \\sim p_{\\text{data}}}[\\log D(x)] + \\mathbb{E}_{z \\sim p_z}[\\log(1 - D(G(z)))]" },
-            { "type": "p", "html": "$D$ maximizes the objective: $\\log D(x)$ goes up when $D$ correctly labels real samples as real; $\\log(1 - D(G(z)))$ goes up when $D$ correctly labels fakes as fake." },
-            { "type": "p", "html": "$G$ minimizes the objective: it can only influence the second term, and pushes $D(G(z))$ toward 1 — making fakes look real." },
-            { "type": "p", "html": "<b>Theoretical result</b> (paper's Theorem 1): at the global optimum of this minimax game, $p_g = p_{\\text{data}}$ exactly, and $D = 1/2$ everywhere. The proof rewrites the value function as a Jensen-Shannon divergence and shows JSD is minimized iff distributions are equal." }
+            { "type": "p", "html": "<b>The goal of this page.</b> Turn the forger-vs-detective story into one precise equation that both networks optimize. The result is a single <b>minimax objective</b>: the discriminator tries to push it up, the generator tries to push it down." },
+            { "type": "math", "tex": "\\min_G \\max_D \\; V(D,G) = \\mathbb{E}_{x \\sim p_{\\text{data}}(x)}\\big[\\log D(x)\\big] + \\mathbb{E}_{z \\sim p_z(z)}\\big[\\log\\big(1 - D(G(z))\\big)\\big]" },
+            { "type": "p", "html": "<b>Reading every symbol.</b> $V(D,G)$ is the value of the game. $\\mathbb{E}_{x\\sim p_{\\text{data}}}[\\cdot]$ averages over real samples (in practice, over a mini-batch of real images). $D(x)\\in(0,1)$ is the detective's probability that $x$ is real, so $\\log D(x)$ is large when it correctly calls a real image real. $z\\sim p_z$ is the input noise; $G(z)$ is a fake image; $D(G(z))$ is the detective's verdict on that fake, and $\\log(1-D(G(z)))$ is large when it correctly calls a fake fake." },
+            { "type": "p", "html": "<b>The two players, separately.</b> The discriminator <i>maximizes</i> $V$: both terms reward it for being correct. The generator <i>minimizes</i> $V$: it can only touch the second term (it has no control over real data), and it minimizes it by driving $D(G(z))\\to 1$ — i.e. making fakes that fool the detective." },
+            { "type": "p", "html": "<b>A worked numeric feel.</b> Early in training $G$ is terrible, so the detective is confident: $D(x)\\approx 0.9$ on reals and $D(G(z))\\approx 0.1$ on fakes. Then $\\log D(x)\\approx \\log 0.9 \\approx -0.105$ and $\\log(1-0.1)=\\log 0.9\\approx -0.105$ — both near zero, $D$ is happy. As $G$ improves toward the optimum, $D(G(z))\\to 0.5$, and the detective's reward shrinks toward $\\log 0.5\\approx -0.69$ — it can no longer tell the difference." }
           ]
         },
         {
-          "title": "Training algorithm",
+          "title": "The optimal discriminator and the JSD connection",
+          "pdfPages": [3, 4, 5],
+          "blocks": [
+            { "type": "p", "html": "<b>The question.</b> Suppose we freeze $G$ and let $D$ train to perfection. What is the <i>best possible</i> detective, and what does the game look like once we plug it in? Answering this is what lets the paper prove the game actually has the right solution." },
+            { "type": "p", "html": "<b>Proposition 1 (optimal $D$).</b> For a fixed generator with induced distribution $p_g$, the optimal discriminator is" },
+            { "type": "math", "tex": "D^*_G(x) = \\frac{p_{\\text{data}}(x)}{p_{\\text{data}}(x) + p_g(x)}" },
+            { "type": "p", "html": "<b>Reading it.</b> At a point $x$, the best detective just reports the fraction of probability mass at $x$ that comes from real data. Where only real data lives, $p_g=0$ so $D^*=1$. Where only fakes live, $p_{\\text{data}}=0$ so $D^*=0$. Where they overlap equally, $p_{\\text{data}}=p_g$ so $D^*=\\tfrac{1}{2}$ — exactly the 'can't tell' value." },
+            { "type": "p", "html": "<b>Plugging $D^*$ back in.</b> Substituting $D^*_G$ into $V(D,G)$ and simplifying, the generator's effective objective $C(G)=\\max_D V(D,G)$ becomes a known statistical divergence:" },
+            { "type": "math", "tex": "C(G) = -\\log 4 + 2 \\cdot \\mathrm{JSD}\\big(p_{\\text{data}} \\,\\|\\, p_g\\big)" },
+            { "type": "p", "html": "<b>What is JSD?</b> The <b>Jensen–Shannon divergence</b> measures how different two distributions are. It is always $\\geq 0$ and equals $0$ <i>if and only if</i> the two distributions are identical. So minimizing $C(G)$ means minimizing $\\mathrm{JSD}(p_{\\text{data}}\\|p_g)$, whose unique minimum is at $p_g = p_{\\text{data}}$, where $C(G)=-\\log 4 \\approx -1.386$." },
+            { "type": "p", "html": "<b>Theorem 1 (global optimum).</b> The global minimum of the generator's training criterion is achieved if and only if $p_g = p_{\\text{data}}$, and at that point $D^*(x)=\\tfrac{1}{2}$ for all $x$. This is the formal statement of 'the forger has won': the detective is reduced to a coin flip. It justifies the whole game — the equilibrium really is the distribution we wanted to learn." },
+            { "type": "p", "html": "<b>Why this matters / the caveat.</b> The proof assumes $D$ is trained to its optimum and that $G$ and $D$ have unlimited capacity. Real networks have finite capacity and we never fully optimize $D$ between $G$ updates, so this is an idealization. But it tells us the objective is <i>pointed at the right target</i> — the instability of GANs is an optimization problem, not a problem with what the loss is asking for." }
+          ]
+        },
+        {
+          "title": "The training algorithm and the non-saturating trick",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "Alternate updates:" },
+            { "type": "p", "html": "<b>The practical problem.</b> The theory wants the optimal $D$ for each $G$, but fully optimizing $D$ at every step is expensive and would overfit the current mini-batch. The paper's Algorithm 1 instead <b>alternates</b> a few cheap steps." },
             { "type": "list", "items": [
-              "Sample a mini-batch of real $x$ and noise $z$. Take $k$ gradient ascent steps on $D$ (paper uses $k=1$ in practice).",
-              "Sample fresh noise $z$. Take one gradient descent step on $G$."
+              "<b>Discriminator step.</b> Sample a mini-batch of $m$ real examples and $m$ noise vectors. Take $k$ steps of stochastic gradient <i>ascent</i> on $\\nabla_{\\theta_d}\\frac{1}{m}\\sum_i \\big[\\log D(x^{(i)}) + \\log(1-D(G(z^{(i)})))\\big]$. The paper uses $k=1$ in their experiments.",
+              "<b>Generator step.</b> Sample $m$ fresh noise vectors. Take one step of gradient <i>descent</i> on $\\frac{1}{m}\\sum_i \\log(1-D(G(z^{(i)})))$.",
+              "Repeat. The idea: keep $D$ near its optimum without diverging, so the gradient $G$ receives is meaningful."
             ]},
-            { "type": "p", "html": "<b>Non-saturating trick.</b> The minimax loss for $G$ — $\\log(1 - D(G(z)))$ — saturates when $D$ is confidently rejecting fakes (the gradient is very small exactly when $G$ needs the most help). The paper recommends the practical alternative: train $G$ to maximize $\\log D(G(z))$ instead. Same fixed point, much better gradients." }
+            { "type": "p", "html": "<b>The saturation problem.</b> Early in training, $G$'s samples are obviously fake, so $D(G(z))\\approx 0$. The generator's loss $\\log(1-D(G(z)))$ is then <i>flat</i>: its gradient is nearly zero exactly when $G$ is worst and needs the strongest learning signal. This is the dreaded <b>vanishing gradient at the start of training</b>." },
+            { "type": "p", "html": "<b>The non-saturating fix.</b> Instead of minimizing $\\log(1-D(G(z)))$, train $G$ to <i>maximize</i> $\\log D(G(z))$:" },
+            { "type": "math", "tex": "\\max_{\\theta_g} \\; \\mathbb{E}_{z\\sim p_z}\\big[\\log D(G(z))\\big]" },
+            { "type": "p", "html": "<b>Why it works.</b> Both objectives have the same fixed point (push $D(G(z))$ toward $1$), but $\\log D(G(z))$ has a <i>large</i> gradient precisely when $D(G(z))$ is small — early training, when help is needed most. This 'non-saturating' loss is what nearly every practical GAN actually uses. The paper's Figure 1 visualizes the two distributions $p_{\\text{data}}$ (real) and $p_g$ (fake) and the discriminator line $D$ converging toward the flat $\\tfrac{1}{2}$ as training proceeds." }
           ],
           "viz": ["gan-game"]
         }
@@ -55,25 +94,40 @@
       "title": "5. Experiments",
       "pages": [
         {
-          "title": "MNIST, TFD, CIFAR-10",
+          "title": "MNIST, TFD, CIFAR-10 — and how they measured it",
           "pdfPages": [5, 6],
           "blocks": [
-            { "type": "p", "html": "The original paper benchmarks on MNIST, Toronto Face Database, and CIFAR-10. The networks are MLPs (no convolutions — that's DCGAN, two years later). Samples are clearly recognizable as their respective categories, though far from photorealistic." },
-            { "type": "p", "html": "Quantitatively, log-likelihood is estimated with a Parzen window method (which the authors caveat as imperfect). The samples are most convincing on MNIST." }
+            { "type": "p", "html": "<b>The setup.</b> The original GAN was trained on three datasets: <b>MNIST</b> (handwritten digits), the <b>Toronto Face Database (TFD)</b>, and <b>CIFAR-10</b> (small natural images). Crucially, the networks here are plain <b>multilayer perceptrons (MLPs)</b> with ReLU and sigmoid units — there are <i>no convolutions yet</i>. Convolutional GANs (DCGAN) came two years later and dramatically improved image quality." },
+            { "type": "p", "html": "<b>The evaluation headache.</b> Because a GAN gives you no explicit likelihood, the authors estimate log-likelihood with a <b>Parzen-window</b> (kernel density) estimate: fit a Gaussian kernel to the generated samples and score the test set under it. They explicitly caution that this estimator has high variance and works poorly in high dimensions — an honest admission that good GAN evaluation was an open problem (later addressed by Inception Score and FID)." },
+            { "type": "table", "headers": ["Model", "MNIST (nats)", "TFD (nats)"],
+              "rows": [
+                ["DBN", "138 ± 2", "1909 ± 66"],
+                ["Stacked CAE", "121 ± 1.6", "2110 ± 50"],
+                ["Deep GSN", "214 ± 1.1", "1890 ± 29"],
+                ["Adversarial nets", "225 ± 2", "2057 ± 26"]
+              ]},
+            { "type": "p", "html": "<b>Reading the results.</b> Higher is better (these are log-likelihood estimates in nats). GANs are competitive with or better than the contemporaneous deep belief networks and generative stochastic networks. The authors stress the numbers are noisy, so the real evidence is the <b>samples</b> themselves (their Figure 2), which are recognizably digits/faces drawn from the learned distribution." },
+            { "type": "p", "html": "<b>An honest demonstration.</b> The paper shows that the rightmost column of generated samples is <i>not</i> a memorized copy of the nearest training image — evidence that $G$ is generalizing, not just regurgitating the dataset, which is the perennial worry with generative models." }
           ]
         }
       ]
     },
     {
-      "title": "6. Discussion",
+      "title": "6. Advantages, disadvantages & conclusions",
       "pages": [
         {
-          "title": "Trade-offs and failure modes",
+          "title": "Trade-offs, mode collapse, and the legacy",
           "pdfPages": [7, 8],
           "blocks": [
-            { "type": "p", "html": "<b>Pros</b>: no explicit likelihood needed; sharp samples (unlike VAE's blurry ones, because there's no per-pixel mean-squared reconstruction loss); samples are obtained by a single forward pass." },
-            { "type": "p", "html": "<b>Cons</b>: training is fundamentally a saddle-point problem and is notoriously unstable. Mode collapse — $G$ producing very few distinct samples — was the central failure mode that motivated years of follow-up work (Wasserstein GAN, spectral normalization, gradient penalty, two-time-scale updates, progressive growing, StyleGAN)." },
-            { "type": "p", "html": "GANs dominated image generation from 2015 (DCGAN) through 2021 (StyleGAN3) until diffusion models took over. They remain important for face synthesis, style transfer, and any setting where you need sharp, single-shot samples." }
+            { "type": "p", "html": "<b>The advantages.</b> No Markov chains are needed (sampling is one forward pass). No inference is needed during learning. A wide variety of functions can be used for $G$, since the only requirement is differentiability — there is no need for $G$ to be invertible or for its density to be tractable. And because there's no per-pixel reconstruction term, samples can be <b>sharp</b> rather than the smooth average that mean-squared-error losses produce." },
+            { "type": "p", "html": "<b>The central failure mode: mode collapse.</b> The most-cited GAN pathology, which the paper foresees in its discussion. $G$ discovers a few outputs that reliably fool the current $D$ and produces those almost exclusively — collapsing many modes of $p_{\\text{data}}$ onto one. The authors note this stems from $G$ being updated too much relative to $D$: the so-called 'Helvetica scenario' where $G$ maps too many $z$ values to the same $x$." },
+            { "type": "p", "html": "<b>Why training is unstable.</b> The minimax objective is a <b>saddle-point</b> problem, not a simple minimization. The two gradient updates can oscillate or chase each other without converging, and keeping $D$ and $G$ in balance is delicate. This single difficulty motivated years of follow-up: Wasserstein GAN (better-behaved distance), gradient penalty and spectral normalization (Lipschitz control on $D$), two-time-scale update rules, progressive growing, and StyleGAN's architecture." },
+            { "type": "list", "items": [
+              "<b>Pro:</b> sharp samples, single-pass generation, no partition function or MCMC.",
+              "<b>Con:</b> no explicit likelihood, hard to evaluate, unstable saddle-point training, mode collapse.",
+              "<b>Synchronization rule:</b> $D$ and $G$ must be kept roughly in step; over-training $G$ without updating $D$ invites collapse."
+            ]},
+            { "type": "p", "html": "<b>The legacy.</b> GANs defined image generation for the better part of a decade and still power face synthesis, image-to-image translation, and super-resolution where sharp single-shot samples matter. The adversarial idea — a learned, adaptive loss — spread far beyond images, into domain adaptation, imitation learning, and adversarial robustness. In this collection, GANs sit opposite the VAE (which keeps an explicit likelihood but blurs) and the diffusion model (which trades single-shot sampling for far more stable training)." }
           ]
         }
       ]

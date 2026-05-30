@@ -11,9 +11,12 @@
           "title": "Fine-tune a 65B model on one 48GB GPU",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "LoRA showed you can fine-tune by training only low-rank adapters and freezing the base model. The base model still has to live in GPU memory at fp16, though — for a 65B model that's ~130GB of weights, well beyond a single GPU." },
-            { "type": "p", "html": "QLoRA's answer: <b>quantize the frozen base to 4-bit</b>, then add fp16 LoRA adapters on top. The base shrinks from 130GB to ~33GB; LoRA adapters add a few hundred MB; gradients only flow through the small fp16 adapters. Net result: <b>65B model fine-tuning fits on a single 48GB GPU</b>." },
-            { "type": "quote", "html": "QLoRA reduces the average memory requirements of finetuning a 65B parameter model from >780GB of GPU memory to <48GB without degrading runtime or predictive performance compared to a 16-bit fully finetuned baseline." }
+            { "type": "p", "html": "<b>Where we left off.</b> LoRA showed you can fine-tune by training only small low-rank adapters while freezing the base model. But there is a catch LoRA does not solve: the frozen base still has to sit in GPU memory at 16-bit precision during training. For a 65B-parameter model that is about 130GB of weights — already more than the 80GB on the largest single GPU, before you add activations, gradients, and optimizer state." },
+            { "type": "p", "html": "<b>QLoRA's idea, in plain terms.</b> Store the frozen base model in a brutally compressed 4-bit format, and only ever decompress a small piece back to 16-bit at the exact moment it is needed for a matrix multiply. The trainable LoRA adapters stay in 16-bit. Gradients flow only through those tiny adapters, so the heavy 4-bit base never needs gradients or optimizer memory at all." },
+            { "type": "p", "html": "<b>The arithmetic.</b> 65B params at 16-bit = ~130GB. At 4-bit = ~33GB. The LoRA adapters add only a few hundred MB. Activations and the (adapter-only) optimizer state fit in the remaining headroom. Net result: a 65B model fits — and fine-tunes — on a single 48GB GPU (an A6000 or A40)." },
+            { "type": "quote", "html": "QLoRA reduces the average memory requirements of finetuning a 65B parameter model from >780GB of GPU memory to <48GB without degrading runtime or predictive performance compared to a 16-bit fully finetuned baseline." },
+            { "type": "p", "html": "<b>Three ingredients make this work, each on its own page below:</b> (1) NF4, a 4-bit number format tuned to how weights are actually distributed; (2) Double Quantization, compressing the compression metadata; (3) Paged Optimizers, which stop rare memory spikes from crashing the run. Together they hit the <i>quality</i> of full 16-bit fine-tuning at a fraction of the memory." },
+            { "type": "p", "html": "<b>The trophy.</b> Applied to a 65B LLaMA, QLoRA produced <b>Guanaco</b>, which at release was the best open-source chatbot on the Vicuna benchmark — trained in 24 hours on one GPU." }
           ]
         }
       ]
@@ -22,28 +25,51 @@
       "title": "3. Method — three innovations",
       "pages": [
         {
-          "title": "1. NF4: 4-bit NormalFloat data type",
+          "title": "Innovation 1: NF4, the 4-bit NormalFloat data type",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "Standard 4-bit quantization (int4 or fp4) uses uniformly-spaced quantization levels. But pre-trained weights are <b>not uniformly distributed</b> — they're approximately Gaussian, centered around zero, with heavy density near the mean and thin tails." },
-            { "type": "p", "html": "<b>NF4</b> (NormalFloat 4) uses 16 quantization levels chosen so that each is equally likely under a standard normal distribution — i.e. the levels are the quantiles of $\\mathcal{N}(0,1)$. This is information-theoretically optimal for normally-distributed input." },
-            { "type": "p", "html": "Empirically NF4 beats both int4 and fp4 on perplexity by ~0.1 points across LLaMA model sizes, while using the same storage." }
+            { "type": "p", "html": "<b>The problem with naive 4-bit.</b> 4 bits give you only $2^4 = 16$ distinct values. Standard formats (int4, fp4) place these 16 levels at <i>uniform</i> spacing across the range. But neural-network weights are not spread out uniformly — after training they pile up tightly around zero in an approximately bell-shaped (Gaussian) distribution, with only a few weights far out in the tails." },
+            { "type": "p", "html": "<b>An analogy.</b> If you have 16 shelves to sort a library where 90% of the books are about one topic, you would not give each topic an equal-width shelf — you would put many fine-grained shelves where the books actually are. Uniform 4-bit wastes most of its 16 levels on the empty tails and gives the dense center near zero almost no resolution." },
+            { "type": "p", "html": "<b>The fix: NormalFloat (NF4).</b> Choose the 16 levels so that, under a standard normal distribution $\\mathcal{N}(0,1)$, each level is equally likely to be the nearest one — i.e. place the levels at the <b>quantiles</b> of the normal distribution. This is information-theoretically optimal when the inputs really are normally distributed: every one of the 16 codes carries the same amount of information." },
+            { "type": "p", "html": "<b>How a weight gets stored.</b> Weights are split into small <b>blocks</b> (64 weights per block in QLoRA). Each block is divided by its own absolute maximum so its values land in $[-1, 1]$; that per-block divisor is the <b>quantization constant</b> (also called the absmax or scale). Each normalized weight is then snapped to the nearest of the 16 NF4 levels and stored as a 4-bit code. To use a weight you multiply its level back by the block's constant. Per-block scaling matters because it stops one giant outlier from ruining the resolution of an entire layer." },
+            { "type": "p", "html": "<b>Does it help?</b> Empirically NF4 beats both int4 and fp4 — it gives lower perplexity (a fluency measure; lower is better) by roughly 0.1 across LLaMA model sizes, at identical storage. Small but free." }
           ]
         },
         {
-          "title": "2. Double Quantization",
+          "title": "Innovation 2: Double Quantization",
           "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "Quantization works <i>per block</i>: you split the weights into blocks (size 64 in QLoRA), and each block has its own quantization constants (a scale and possibly a zero-point). For 4-bit weights with fp32 scaling constants, the constants themselves cost ~32/64 = 0.5 bits per parameter — significant overhead at this regime." },
-            { "type": "p", "html": "<b>Double Quantization</b>: quantize the quantization constants themselves to 8-bit. Saves ~0.37 bits per parameter — about 3GB on a 65B model." }
+            { "type": "p", "html": "<b>The hidden overhead.</b> Recall every 64-weight block carries its own quantization constant (the absmax divisor). If that constant is stored as a 32-bit float, then across 64 weights it adds $32 / 64 = 0.5$ bits <i>per weight</i>. When the weights themselves are only 4 bits, that 0.5-bit overhead is a 12.5% tax — large enough to care about." },
+            { "type": "p", "html": "<b>The idea.</b> Quantize the quantization constants too. Treat the long list of 32-bit block constants as just another tensor and compress it to 8-bit (grouping 256 of them per second-level block, with one 32-bit constant for that group). Hence 'double' quantization — you quantize, then quantize the leftovers." },
+            { "type": "math", "tex": "\\text{overhead}: \\; \\frac{32}{64} = 0.5 \\;\\text{bits/param} \\;\\longrightarrow\\; \\frac{8}{64} + \\frac{32}{64 \\cdot 256} \\approx 0.127 \\;\\text{bits/param}" },
+            { "type": "p", "html": "Reading the right-hand side: the $\\frac{8}{64}$ term is the 8-bit constant now shared across 64 weights; the $\\frac{32}{64 \\cdot 256}$ term is the single 32-bit second-level constant shared across $64 \\times 256$ weights. The total drops from 0.5 to about 0.127 bits per weight — a saving of roughly 0.37 bits per parameter." },
+            { "type": "p", "html": "<b>Concrete payoff.</b> 0.37 bits across 65 billion parameters is about $65 \\times 10^9 \\times 0.37 / 8 \\approx 3$ GB of GPU memory freed — often the difference between fitting and not fitting on a 48GB card." }
           ]
         },
         {
-          "title": "3. Paged Optimizers",
+          "title": "Innovation 3: Paged Optimizers",
           "pdfPages": [5],
           "blocks": [
-            { "type": "p", "html": "Adam keeps two moment estimates per trainable parameter. Even with LoRA, gradient checkpointing during the backward pass can cause memory spikes that OOM the GPU." },
-            { "type": "p", "html": "Paged Optimizers use NVIDIA's <i>unified memory</i> to automatically page optimizer state between GPU and CPU RAM when GPU memory pressure is high. The training loop runs at GPU speed when there's room and degrades gracefully (rather than crashing) when there isn't." }
+            { "type": "p", "html": "<b>The remaining risk: spikes, not averages.</b> Even with the base in 4-bit, training memory is not perfectly flat. With gradient checkpointing (recomputing activations on the backward pass to save memory), there are brief moments — long sequences, the backward pass through a big layer — where memory demand spikes. A spike that exceeds VRAM by even a little crashes the whole multi-hour run with an out-of-memory error." },
+            { "type": "p", "html": "<b>An analogy.</b> It is like RAM swapping to disk on a laptop: when you open too many tabs, the OS quietly moves the least-used pages to disk instead of crashing. Paged Optimizers do the same for GPU optimizer state." },
+            { "type": "p", "html": "<b>How it works.</b> QLoRA uses NVIDIA <i>unified memory</i> to allocate the optimizer state (Adam's moment buffers for the LoRA parameters) as pageable memory. When the GPU is under pressure, those pages are automatically evicted to CPU RAM, and paged back to the GPU when needed for the optimizer update. The training loop runs at full GPU speed when there is room and degrades gracefully — slows down momentarily rather than dying — when there is not." },
+            { "type": "p", "html": "<b>Why it matters in practice.</b> It removes the last source of fragility, so a researcher can launch a 65B fine-tune on a single GPU and walk away, instead of babysitting it against rare OOM crashes." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.x How the pieces fit at runtime",
+      "pages": [
+        {
+          "title": "The forward pass: 4-bit storage, 16-bit compute",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "<b>The key trick to internalize.</b> The base weights are <i>stored</i> in 4-bit NF4, but no math is done in 4-bit. The instant a weight matrix is needed, it is dequantized back to a 16-bit format (BFloat16), the matmul runs in 16-bit, and the 16-bit copy is thrown away immediately. So 4-bit is a storage format, not a compute format." },
+            { "type": "math", "tex": "Y^{\\text{BF16}} = X^{\\text{BF16}} \\,\\operatorname{doubleDequant}(c_1, c_2, W^{\\text{NF4}}) + X^{\\text{BF16}} L_1^{\\text{BF16}} L_2^{\\text{BF16}}" },
+            { "type": "p", "html": "Reading it term by term: $X^{\\text{BF16}}$ is the layer input in 16-bit. $W^{\\text{NF4}}$ is the frozen base weight stored in 4-bit. $\\operatorname{doubleDequant}(c_1, c_2, \\cdot)$ undoes double quantization — $c_2$ recovers the per-block constants from 8-bit, $c_1$ is the second-level constant — to reconstruct a 16-bit weight on the fly. The second term $L_1 L_2$ is the LoRA adapter ($L_1 = B$, $L_2 = A$) kept entirely in 16-bit. The two outputs are summed, exactly as in LoRA." },
+            { "type": "p", "html": "<b>Where gradients go.</b> During backprop, gradients are computed only with respect to $L_1$ and $L_2$ (the adapters). The frozen $W^{\\text{NF4}}$ gets no gradient and needs no optimizer state — that is the entire reason the memory bill stays small. The 4-bit base is used as a fixed lookup table, never updated." },
+            { "type": "p", "html": "<b>Runtime cost.</b> The on-the-fly dequantization adds a little compute per matmul, but because it is fused into a custom CUDA kernel, QLoRA fine-tuning runs at essentially the same wall-clock speed as 16-bit LoRA — you pay in a few percent of speed to save ~4x the memory." }
           ]
         }
       ]
@@ -52,18 +78,22 @@
       "title": "5. Results: Guanaco",
       "pages": [
         {
-          "title": "Fine-tuning quality matches full fp16",
+          "title": "Quality matches full 16-bit fine-tuning",
           "pdfPages": [6, 7],
           "blocks": [
-            { "type": "p", "html": "QLoRA on a 65B LLaMA base, fine-tuned on OASST1 conversations, produces <b>Guanaco-65B</b> — at the time, the best open-source chatbot on Vicuna's evaluation benchmark, scoring within 3 points of GPT-4 and beating ChatGPT (March 2023)." },
-            { "type": "p", "html": "Cost: 24 hours of training on a single 48GB GPU. The same recipe applied to smaller models (7B, 13B, 33B) produces a family that consistently outperforms previous open-source models at each scale." }
+            { "type": "p", "html": "<b>The headline model.</b> QLoRA on a 65B LLaMA base, fine-tuned on the OASST1 (OpenAssistant) human-conversation dataset, produces <b>Guanaco-65B</b>. On the Vicuna automated benchmark (GPT-4 judges pairs of chatbot answers) it scored about 99% of ChatGPT's performance and within roughly 3 points of GPT-4 — the strongest open-source chatbot at the time of release." },
+            { "type": "p", "html": "<b>The cost.</b> 24 hours on a single 48GB GPU. For context, a comparable 16-bit full fine-tune of a 65B model would need a multi-GPU server costing tens of thousands of dollars; QLoRA did it on one card." },
+            { "type": "p", "html": "<b>The critical control experiment.</b> The paper's central scientific claim is that 4-bit QLoRA <i>loses nothing</i> versus 16-bit. They verify this by fine-tuning the same models both ways and comparing benchmark scores: across model sizes the 4-bit NF4 + LoRA runs match the 16-bit full fine-tuning baselines. The compression is, for fine-tuning purposes, free." },
+            { "type": "p", "html": "<b>The family.</b> The same recipe applied to 7B, 13B, and 33B LLaMA bases yields a consistent ladder of models that each beat prior open-source models at their size — showing the method is not a one-off trick at 65B." }
           ]
         },
         {
-          "title": "Data quality > data quantity",
+          "title": "An unexpected lesson: data quality beats data quantity",
           "pdfPages": [8, 9],
           "blocks": [
-            { "type": "p", "html": "An incidental finding from the OASST1 ablations: a small (~9k) high-quality conversation dataset outperforms 450k mediocre conversations from FLAN. Cheap fine-tuning unlocks the ability to run many experiments cheaply — leading to careful data curation that wasn't economically feasible before." }
+            { "type": "p", "html": "<b>The surprising finding.</b> While ablating which dataset to fine-tune on, the authors found that the small but carefully curated OASST1 set (~9,000 high-quality conversations) produced a <i>better</i> chatbot than the much larger FLAN collection (~450,000 instruction examples). More data made the model worse." },
+            { "type": "p", "html": "<b>Why this is more than a footnote.</b> It is a second-order consequence of cheap fine-tuning. When a single fine-tune cost a fortune, you ran one big job on whatever data you had. When a fine-tune costs 24 hours on one GPU, you can run dozens of experiments and discover, empirically, that 9k good examples beat 450k mediocre ones. Cheap iteration is what made the data-quality insight visible at all." },
+            { "type": "p", "html": "<b>The broader influence.</b> This finding helped kick off the 2023 wave of 'small, clean instruction set' work (LIMA's 'less is more for alignment' is a sibling result) and shifted community effort from scraping more data toward curating better data." }
           ]
         }
       ]
@@ -72,11 +102,12 @@
       "title": "6. Discussion",
       "pages": [
         {
-          "title": "Why QLoRA matters",
+          "title": "Why QLoRA mattered",
           "pdfPages": [10],
           "blocks": [
-            { "type": "p", "html": "Before QLoRA, fine-tuning a 30B+ model required multi-GPU rigs that cost tens of thousands of dollars. After QLoRA, a single A6000 or even consumer 4090 can fine-tune 7B–33B models, and a 48GB workstation can fine-tune 65B." },
-            { "type": "p", "html": "This is the technical foundation under the explosion of open-source fine-tuned models that followed in 2023–2024 — Alpaca, Vicuna, Guanaco, WizardLM, dozens of others. The economic barrier to customizing large models collapsed." }
+            { "type": "p", "html": "<b>The economic shift.</b> Before QLoRA, fine-tuning a 30B+ model needed multi-GPU rigs costing tens of thousands of dollars, putting customization out of reach of individuals and most companies. After QLoRA, a single A6000 (or even a consumer 24GB RTX 4090 for 7B-33B) could do it. The financial barrier to adapting large models collapsed by one to two orders of magnitude." },
+            { "type": "p", "html": "<b>What it unlocked.</b> QLoRA (via the <code>bitsandbytes</code> 4-bit kernels, built on the earlier LLM.int8() line of work) is the technical foundation under the 2023-2024 explosion of open fine-tunes — Guanaco, and the broader ecosystem of community models that followed, all leaned on the same memory math." },
+            { "type": "p", "html": "<b>The chain of papers.</b> LLM.int8() proved large models could be served in low precision without quality loss; LoRA proved you could fine-tune by training only tiny adapters; QLoRA fused the two — quantize the frozen base, train 16-bit adapters on top — to make fine-tuning the very largest open models a single-GPU activity. It is the capstone of that three-paper arc." }
           ]
         }
       ]

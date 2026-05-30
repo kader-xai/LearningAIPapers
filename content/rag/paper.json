@@ -11,9 +11,11 @@
           "title": "Let the model look things up",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "Large pre-trained language models store a lot of facts in their parameters — but that knowledge is implicit, hard to update, and the model has no way to cite its source. When asked a factual question, the model will confidently answer regardless of whether it knows. This is the structural cause of hallucination." },
-            { "type": "p", "html": "<b>RAG</b> couples a pre-trained <b>generator</b> (BART) with a non-parametric <b>retriever</b> over an external corpus (Wikipedia). At inference time the retriever pulls top-$k$ relevant passages; the generator conditions on the query <i>and</i> the retrieved passages." },
-            { "type": "p", "html": "The key technical contribution: both the retriever and the generator are <b>fine-tuned jointly</b>, with the retrieved documents treated as a latent variable that's marginalized out. The retriever learns to retrieve what the generator finds useful — not just what looks superficially relevant." }
+            { "type": "p", "html": "<b>The problem.</b> A large language model stores facts in its weights — but that knowledge is <i>parametric</i>: baked in, implicit, impossible to inspect, hard to update, and impossible to cite. Ask such a model a factual question and it will answer confidently whether or not it actually knows. That structural inability to say 'let me check' is the root cause of <b>hallucination</b>." },
+            { "type": "p", "html": "<b>An analogy.</b> A closed-book exam taken from memory versus an open-book exam where you can flip to the relevant page. A pure language model is always taking the closed-book exam. RAG hands it the book and lets it look up the passage before answering — and the passage is right there to cite." },
+            { "type": "p", "html": "<b>The architecture.</b> RAG couples a pre-trained <b>generator</b> (BART, a sequence-to-sequence Transformer) with a <b>retriever</b> (Dense Passage Retrieval) that searches an external corpus (all of Wikipedia, ~21 million 100-word passages). Given a query, the retriever pulls the top-$k$ relevant passages; the generator then writes its answer conditioned on the query <i>and</i> those passages." },
+            { "type": "p", "html": "<b>The key technical move.</b> The retrieved document is treated as a <b>latent variable</b> that is <i>marginalized out</i> — summed over — and the retriever and generator are fine-tuned <i>jointly</i>. This means the retriever learns to fetch documents that the generator actually finds useful for producing the right answer, not merely documents that look superficially similar to the query." },
+            { "type": "p", "html": "<b>Why it is in the collection.</b> 'Add RAG' became the default way to ground LLMs in private or up-to-date data. The specific 2020 architecture has been superseded, but the framing — retrieval as a first-class, trainable component with documents as latent variables — is the conceptual foundation of the entire retrieval-augmentation field." }
           ],
           "viz": ["rag-pipeline"]
         }
@@ -23,32 +25,41 @@
       "title": "2. Method",
       "pages": [
         {
-          "title": "Architecture: DPR retriever + BART generator",
+          "title": "The two components: DPR retriever + BART generator",
           "pdfPages": [2, 3],
           "blocks": [
-            { "type": "p", "html": "<b>Retriever</b>: Dense Passage Retrieval (DPR). Two BERT encoders — one for the query, one for the passage — produce dense embeddings; relevance is the dot product. The Wikipedia corpus is encoded offline into a FAISS index for fast nearest-neighbor search." },
-            { "type": "p", "html": "<b>Generator</b>: BART, a pre-trained sequence-to-sequence Transformer. Input is the concatenation of the query and a retrieved passage; output is the answer." }
-          ]
-        },
-        {
-          "title": "Marginalizing over retrieved documents",
-          "pdfPages": [3, 4],
-          "blocks": [
-            { "type": "p", "html": "Two variants of how documents enter the output distribution:" },
-            { "type": "list", "items": [
-              "<b>RAG-Sequence</b>: pick a single document $z$ and generate the entire answer conditioned on it. The output probability marginalizes over the top-$k$ documents: $p(y|x) = \\sum_z p_\\eta(z|x) p_\\theta(y|x, z)$.",
-              "<b>RAG-Token</b>: every token in the output can attend to a different document. Marginalize over $z$ per token: $p(y|x) = \\prod_i \\sum_z p_\\eta(z|x) p_\\theta(y_i | x, z, y_{<i})$."
-            ]},
-            { "type": "p", "html": "RAG-Sequence is better for single-fact answers (Jeopardy, open-domain QA). RAG-Token is better when different parts of the answer need different sources." }
+            { "type": "p", "html": "<b>The retriever — Dense Passage Retrieval (DPR).</b> Two separate BERT encoders. A <b>passage encoder</b> $d(z)$ turns each document $z$ into a fixed dense vector; a <b>query encoder</b> $q(x)$ turns the input query $x$ into a vector of the same size. Relevance is just their dot product $d(z)^\\top q(x)$ — high when the vectors point the same way." },
+            { "type": "math", "tex": "p_\\eta(z \\mid x) \\;\\propto\\; \\exp\\!\\big(d(z)^\\top q(x)\\big)" },
+            { "type": "p", "html": "Reading it term by term: $p_\\eta(z|x)$ is the probability the retriever assigns to document $z$ given query $x$; $\\eta$ are the retriever's parameters; $d(z)$ and $q(x)$ are the passage and query embedding vectors (768-dimensional); their dot product scores the match; $\\exp$ and the proportionality turn the top-scoring documents into a probability distribution (a softmax over candidates). To make this fast over 21M passages, all $d(z)$ are pre-computed offline and stored in a <b>FAISS</b> index, which finds the top-$k$ nearest neighbors in milliseconds." },
+            { "type": "p", "html": "<b>The generator — BART.</b> A pre-trained encoder-decoder Transformer (400M params). Its input is the query $x$ concatenated with one retrieved passage $z$; its output is the answer $y$, generated token by token. Formally it models $p_\\theta(y \\mid x, z)$, the probability of answer $y$ given the query and that document." },
+            { "type": "p", "html": "<b>A concrete example.</b> Query: <i>'Who wrote Pride and Prejudice?'</i> DPR retrieves the Wikipedia passage on Jane Austen; BART reads 'query: Who wrote Pride and Prejudice? document: Pride and Prejudice is an 1813 novel by Jane Austen...' and generates 'Jane Austen.' The answer is grounded in a retrieved, inspectable source." }
           ],
           "viz": ["rag-pipeline"]
         },
         {
-          "title": "Training",
+          "title": "Marginalizing over documents: RAG-Sequence vs RAG-Token",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "<b>The core question.</b> The retriever returns $k$ documents, not one. How should all $k$ contribute to the answer? RAG never commits to a single document — it treats the document as a hidden (latent) variable and <i>averages</i> over the top-$k$, weighting each by how relevant the retriever thinks it is. There are two ways to do this averaging." },
+            { "type": "p", "html": "<b>RAG-Sequence</b>: pick one document and use it for the <i>entire</i> answer, then marginalize across documents at the level of the whole sequence:" },
+            { "type": "math", "tex": "p_{\\text{RAG-Seq}}(y \\mid x) = \\sum_{z \\in \\text{top-}k} p_\\eta(z \\mid x)\\; p_\\theta(y \\mid x, z)" },
+            { "type": "p", "html": "Reading it term by term: the sum runs over the top-$k$ retrieved documents; $p_\\eta(z|x)$ is the retriever's weight for document $z$; $p_\\theta(y|x,z)$ is the probability the generator assigns to the <i>full</i> answer $y$ using only document $z$. Each candidate document produces a complete answer probability, and they are blended by retrieval weight. One document is responsible for the whole output." },
+            { "type": "p", "html": "<b>RAG-Token</b>: let <i>each token</i> of the answer draw on a possibly different document, marginalizing per token:" },
+            { "type": "math", "tex": "p_{\\text{RAG-Tok}}(y \\mid x) = \\prod_{i}^{N} \\sum_{z \\in \\text{top-}k} p_\\eta(z \\mid x)\\; p_\\theta(y_i \\mid x, z, y_{1:i-1})" },
+            { "type": "p", "html": "Reading it term by term: the outer product $\\prod_i$ runs over the $N$ answer tokens; for each token position $i$, the inner sum marginalizes over documents; $p_\\theta(y_i | x, z, y_{1:i-1})$ is the probability of the next token $y_i$ given the query, document $z$, and the tokens generated so far $y_{1:i-1}$. Because the document is re-marginalized at every token, token 1 can come mostly from document A and token 5 mostly from document B." },
+            { "type": "p", "html": "<b>When to use which.</b> RAG-Sequence is better for answers that come from a single source — open-domain QA, Jeopardy answers — where one document holds the whole fact. RAG-Token shines when an answer stitches together facts from several documents (e.g. 'list the capitals of three countries'), since different parts of the output can be sourced independently." }
+          ],
+          "viz": ["rag-pipeline"]
+        },
+        {
+          "title": "Training: how the retriever learns without re-indexing",
           "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "The whole system is trained end-to-end with a standard negative log-likelihood loss on $(x, y)$ pairs. Gradient flows through the generator, and through the retriever via the marginalization weights $p_\\eta(z|x)$." },
-            { "type": "p", "html": "The passage-encoder is held fixed during fine-tuning (re-encoding the whole Wikipedia corpus after every gradient step would be prohibitive). Only the query encoder and the generator update. The retriever learns by adjusting <i>which documents</i> get high probability, not what their embeddings are." }
+            { "type": "p", "html": "<b>The objective.</b> Train the whole system end-to-end to maximize the likelihood of the correct answer — i.e. minimize the negative log-likelihood of $y$ given $x$, using the marginalized $p(y|x)$ above. Crucially, no labels are needed for <i>which</i> document is correct: the document is latent, and the model figures out which documents help purely from whether they lead to the right answer." },
+            { "type": "math", "tex": "\\mathcal{L} = -\\sum_{(x,y)} \\log p(y \\mid x)" },
+            { "type": "p", "html": "Reading it: the sum is over training (query, answer) pairs; $p(y|x)$ is the marginal answer probability (RAG-Sequence or RAG-Token); the negative log of it is the standard cross-entropy loss. Gradient flows into the generator $\\theta$ directly, and into the retriever $\\eta$ through the weights $p_\\eta(z|x)$ — documents that contributed to correct answers get their retrieval probability pushed up." },
+            { "type": "p", "html": "<b>The clever shortcut.</b> Updating the retriever would normally mean re-embedding all 21M Wikipedia passages after every gradient step (to keep the FAISS index consistent) — astronomically expensive. RAG sidesteps this: it <b>freezes the passage encoder</b> $d(z)$ (so the index never changes) and only trains the <b>query encoder</b> $q(x)$ and the generator. The retriever improves by learning to map queries into the fixed document-embedding space such that useful documents land nearby — not by moving the documents." },
+            { "type": "p", "html": "<b>Why this works.</b> Empirically, fine-tuning only the query side recovers most of the benefit of full joint training at a tiny fraction of the cost. It is the practical compromise that makes end-to-end retrieval training feasible at all." }
           ]
         }
       ]
@@ -57,12 +68,13 @@
       "title": "4. Experiments",
       "pages": [
         {
-          "title": "Open-domain QA, fact verification, generation",
+          "title": "QA, fact verification, and the killer feature: hot-swappable knowledge",
           "pdfPages": [6, 7, 8],
           "blocks": [
-            { "type": "p", "html": "RAG sets state of the art on four open-domain QA tasks (Natural Questions, TriviaQA, WebQuestions, CuratedTREC) — beating both extractive 'pick a span' models and closed-book seq2seq models (T5 with no retrieval)." },
-            { "type": "p", "html": "On Jeopardy question generation, RAG produces more <b>specific</b> and <b>factually correct</b> questions than BART alone. On FEVER fact verification, it's within a few points of task-specific architectures." },
-            { "type": "p", "html": "<b>Updating world knowledge</b>: swap the Wikipedia index (e.g. for a more recent snapshot). The model immediately starts producing different answers for queries about facts that changed — no retraining required. This 'parametric vs non-parametric knowledge' split is RAG's main practical value." }
+            { "type": "p", "html": "<b>Open-domain QA.</b> RAG sets a new state of the art on four open-domain QA tasks — Natural Questions, TriviaQA, WebQuestions, and CuratedTREC — beating both <i>extractive</i> models (which can only copy a span from a retrieved passage) and <i>closed-book</i> seq2seq models like T5 (which answer purely from parameters with no retrieval). RAG gets the best of both: it can retrieve <i>and</i> generate free-form, abstractive answers." },
+            { "type": "p", "html": "<b>Generation and verification.</b> On Jeopardy question generation, RAG produces more <b>specific</b> and <b>factually correct</b> questions than BART alone, because it can ground details in retrieved passages. On FEVER fact verification it lands within a few points of bespoke task-specific architectures, while being a single general model." },
+            { "type": "p", "html": "<b>The killer practical feature — updating knowledge without retraining.</b> Because the world knowledge lives in the <i>index</i>, not the <i>weights</i>, you can swap the Wikipedia snapshot for a newer one and the model immediately answers differently on facts that changed — no gradient steps, no fine-tuning. The authors demonstrate this by replacing the index and watching answers about (for example) who holds a given office update correctly." },
+            { "type": "p", "html": "<b>The conceptual payoff: parametric vs non-parametric memory.</b> RAG cleanly separates <i>how to reason and write</i> (parametric, in the generator's weights) from <i>what is true right now</i> (non-parametric, in the swappable index). That split is RAG's lasting contribution: knowledge becomes editable, auditable, and current without touching the model." }
           ]
         }
       ]
@@ -74,8 +86,9 @@
           "title": "Why RAG became the dominant LLM application pattern",
           "pdfPages": [9, 10],
           "blocks": [
-            { "type": "p", "html": "By 2023, 'add RAG' was the default first answer to 'how do we apply an LLM to our private documents.' The original paper's specific architecture (BART + DPR) was largely superseded by zero-shot RAG with frozen instruction-tuned LLMs (GPT-4, Claude) — but the framing it introduced — retrieval as a first-class component, treated documents as latent variables — is the conceptual foundation." },
-            { "type": "p", "html": "Modern descendants and variations: hybrid retrieval (BM25 + dense), rerankers, hypothetical document embeddings (HyDE), graph RAG, agentic retrieval, long-context models that obviate retrieval for some use cases, and the entire ecosystem of vector databases (Pinecone, Weaviate, Chroma, pgvector)." }
+            { "type": "p", "html": "<b>The default answer.</b> By 2023, 'add RAG' was the standard first response to 'how do we apply an LLM to our private documents?' The original BART + DPR architecture was largely replaced by <i>zero-shot</i> RAG — a frozen, instruction-tuned LLM (GPT-4, Claude) that reads retrieved passages stuffed into its prompt, no joint training required — but the framing came straight from this paper." },
+            { "type": "p", "html": "<b>The ecosystem it spawned.</b> Modern descendants include hybrid retrieval (combining classic keyword BM25 with dense vectors), rerankers that re-sort candidates, HyDE (generate a hypothetical answer, embed <i>that</i> to retrieve), graph RAG, agentic retrieval (the model decides when and what to search), and the entire vector-database industry — Pinecone, Weaviate, Chroma, pgvector — built to be the FAISS index for everyone else." },
+            { "type": "p", "html": "<b>The enduring lesson.</b> Even as ultra-long-context models reduce the need for retrieval in some cases, the core insight survives: you do not have to cram all knowledge into the weights. Separating a reasoning engine from a searchable, updatable knowledge store is good engineering, and RAG is the paper that made that separation a first-class idea in NLP." }
           ]
         }
       ]

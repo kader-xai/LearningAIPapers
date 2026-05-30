@@ -15,19 +15,23 @@
           "blocks": [
             {
               "type": "p",
-              "html": "Describing an image in a natural sentence sounds like a vision problem, but the authors reframe it as a <strong>translation</strong> problem. In seq2seq machine translation, an encoder reads a source sentence into a vector and a decoder unrolls that vector into the target sentence. Here, the source is not a sentence &mdash; it is a picture."
+              "html": "<strong>The question this page answers:</strong> how do you get a computer to write a true, fluent sentence describing a photo &mdash; not just a list of detected objects but something like &ldquo;A group of people shopping at an outdoor market&rdquo;? It sounds like a pure vision problem, but the authors reframe it as a <strong>translation</strong> problem."
             },
             {
               "type": "p",
-              "html": "So replace the encoder RNN with a <strong>convolutional neural network</strong> that maps an image to a vector, and keep the LSTM <strong>decoder</strong> that turns that vector into words. The model, called NIC (Neural Image Caption), is trained end to end to maximize the probability of the correct caption given the image."
+              "html": "<strong>The analogy that drives everything.</strong> In seq2seq machine translation, an encoder RNN reads a French sentence into a fixed-length vector, and a decoder RNN unrolls that vector into the English translation. Show and Tell keeps the decoder but swaps the source: the &lsquo;source language&rsquo; is now a <em>picture</em>. Replace the encoder RNN with a <strong>convolutional neural network</strong> that maps an image to a vector, and let the same LSTM decoder narrate it."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The model, named NIC</strong> (Neural Image Caption), is trained end-to-end to maximize the probability of the correct human caption given the image. One clean idea &mdash; image as source language &mdash; replaces an entire hand-built pipeline of detectors and sentence templates with a single network learned from image&ndash;caption pairs."
             },
             {
               "type": "quote",
-              "html": "One clean idea &mdash; image as the &lsquo;source language&rsquo; &mdash; let a single trainable network produce fluent, accurate captions and set new state-of-the-art BLEU scores across Pascal, Flickr30k, SBU, and COCO."
+              "html": "&ldquo;On the Pascal dataset of image description, the current state-of-the-art BLEU-1 score (the higher the better) is 25, our approach yields 59, to be compared to human performance around 69. &hellip; On the newer SBU dataset, we improve the state-of-the-art from 19 to 28.&rdquo;"
             },
             {
               "type": "p",
-              "html": "It was a striking demonstration that the encoder-decoder template was not specific to text: swap in any encoder that produces a vector, and the same language-generating decoder will narrate it."
+              "html": "<strong>Context &amp; trivia.</strong> NIC won the inaugural 2015 MS COCO captioning challenge (tied for first by human evaluation). It was a striking demonstration that the encoder&ndash;decoder template was not specific to text: swap in any encoder that produces a vector, and the same language-generating decoder will narrate it &mdash; the seed of today&rsquo;s vision-language models."
             }
           ]
         }
@@ -44,15 +48,23 @@
           "blocks": [
             {
               "type": "p",
-              "html": "A good caption must do more than list the objects in a scene. It must capture how they <strong>relate</strong> &mdash; who is doing what to whom &mdash; and express it in a grammatical, natural sentence. That couples a hard vision problem (recognizing objects, attributes, and relationships) with a hard language problem (generating fluent text)."
+              "html": "<strong>The intuition.</strong> A good caption must do far more than list the objects in a scene. It must capture how they <strong>relate</strong> &mdash; who is doing what to whom &mdash; and express it in a grammatical, natural sentence. That couples a hard vision problem (recognizing objects, their attributes, and their relationships) with a hard language problem (generating fluent, ordered text)."
             },
             {
               "type": "p",
-              "html": "Earlier systems stitched these together with hand-designed pipelines: detect objects, fill in sentence templates, or retrieve and recombine existing captions. These were brittle and hard to improve. The authors wanted a <strong>single model, trained jointly</strong>, that learns vision and language together from image-caption pairs."
+              "html": "<strong>Concrete example.</strong> A photo contains a dog, a frisbee, and grass. A bag-of-objects system might output &ldquo;dog frisbee grass&rdquo;. But the <em>correct</em> caption &mdash; &ldquo;A dog catching a frisbee on the grass&rdquo; &mdash; requires knowing the dog is the agent, the frisbee is the object being caught, and &ldquo;on the grass&rdquo; is the setting. Reorder the same words wrongly (&ldquo;A frisbee catching a dog&rdquo;) and the sentence becomes nonsense. The model must learn both <em>what</em> is in the image and <em>how</em> to phrase it."
             },
             {
               "type": "p",
-              "html": "The timing was right: convolutional networks had just become excellent image encoders, and LSTMs had just shown they could generate sequences. Show and Tell connects the two."
+              "html": "<strong>What came before.</strong> Earlier systems stitched vision and language together with hand-designed pipelines: detect objects, then fill in sentence <em>templates</em>, or <em>retrieve</em> whole captions from a database and recombine fragments. These were brittle, hard to extend to new domains, and could only produce sentences they had effectively seen before."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;We present a generative model based on a deep recurrent architecture &hellip; trained to maximize the likelihood of the target description sentence given the training image.&rdquo;"
+            },
+            {
+              "type": "p",
+              "html": "<strong>Why the timing was right.</strong> Two ingredients had just matured. Convolutional networks (AlexNet 2012, then GoogLeNet) had become excellent image encoders, turning a photo into a vector that captures its contents. And LSTMs had just shown, in seq2seq translation, that they could generate fluent variable-length sequences. Show and Tell is the bridge: a CNN to see, an LSTM to talk, trained jointly as one model."
             }
           ]
         }
@@ -69,7 +81,7 @@
           "blocks": [
             {
               "type": "p",
-              "html": "Given an image $I$ and its caption $S$, the model is trained to maximize the probability of that caption. Over the whole training set, it adjusts its parameters $\\\\theta$ to maximize the log-probability of the correct descriptions:"
+              "html": "<strong>The goal stated as an equation.</strong> Given an image $I$ and its correct caption $S$, the model adjusts its parameters $\\\\theta$ to make that caption as probable as possible. Over the whole training set of image&ndash;caption pairs:"
             },
             {
               "type": "math",
@@ -77,7 +89,11 @@
             },
             {
               "type": "p",
-              "html": "A caption is a sequence of words of unbounded length, so its probability is factorized word by word using the chain rule:"
+              "html": "Reading it term by term: $\\\\theta$ are all the network&rsquo;s weights (CNN + embeddings + LSTM); the sum runs over every training image&ndash;caption pair $(I,S)$; $p(S \\\\mid I; \\\\theta)$ is the probability the model assigns to the true caption given the image; and $\\\\theta^{\\\\star}$ is the choice of weights that maximizes the total log-probability. It is the same maximum-likelihood objective seq2seq used for translation."
+            },
+            {
+              "type": "p",
+              "html": "<strong>A caption is a sequence</strong> of unbounded length, so its probability is factorized word by word using the chain rule:"
             },
             {
               "type": "math",
@@ -85,7 +101,11 @@
             },
             {
               "type": "p",
-              "html": "Read this as: the chance of the whole caption is the product (here, sum of logs) of the chance of each word given the image and all the words already written. This is exactly the seq2seq decoder objective &mdash; only the conditioning &lsquo;source&rsquo; is now an image rather than a sentence. Each per-word probability is a softmax over the vocabulary, modeled by an LSTM."
+              "html": "Reading it term by term: $S_t$ is the $t$-th word of the caption, $N$ is its length, and each factor $p(S_t \\\\mid I, S_0,\\\\dots,S_{t-1})$ is the chance of the next word given the image <em>and</em> every word written so far. So the log-probability of the whole caption is the sum of the log-probabilities of its words in order. Each per-word factor is a <strong>softmax</strong> over the vocabulary, produced by an LSTM."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Worked intuition.</strong> For &ldquo;a dog catching a frisbee&rdquo;, the model is scored on: P(&ldquo;a&rdquo; | image), then P(&ldquo;dog&rdquo; | image, &ldquo;a&rdquo;), then P(&ldquo;catching&rdquo; | image, &ldquo;a dog&rdquo;), and so on. Training pushes each of those conditional probabilities up for the real caption. This is exactly the seq2seq decoder objective &mdash; only the conditioning &lsquo;source&rsquo; is an image rather than a sentence."
             }
           ]
         },
@@ -97,39 +117,55 @@
           "blocks": [
             {
               "type": "p",
-              "html": "The encoder is a deep CNN image classifier (the paper used a batch-normalized GoogLeNet-style network) with its final classification layer removed, so its output is a rich fixed-length vector representing the image's contents."
+              "html": "<strong>The encoder.</strong> A deep CNN image classifier &mdash; the paper used a batch-normalized GoogLeNet-style network &mdash; with its final classification layer removed. Instead of outputting &lsquo;dog: 0.9, cat: 0.05&rsquo;, it outputs the rich fixed-length vector that <em>feeds</em> that classifier: a dense numerical summary of the image&rsquo;s contents."
             },
             {
               "type": "p",
-              "html": "That image vector is fed into the LSTM as the very first input, at step $t=-1$, and then <strong>never again</strong>. The authors found that showing the image once at the start worked better than injecting it at every step &mdash; repeatedly feeding the image tended to let the network overfit on visual noise. After the image, the LSTM receives word embeddings of the caption one at a time:"
+              "html": "<strong>The crucial wiring detail.</strong> That image vector is fed into the LSTM as the very first input, at step $t = -1$, and then <strong>never again</strong>. The model unrolls like this:"
             },
             {
               "type": "list",
               "items": [
-                "$x_{-1} = \\\\text{CNN}(I)$ &mdash; the image is the first thing the LSTM sees.",
-                "$x_t = W_e\\\\, S_t$ &mdash; each subsequent input is the embedding of the previous word.",
-                "$p_{t+1} = \\\\text{LSTM}(x_t)$ &mdash; at each step the LSTM predicts a distribution over the next word."
+                "$x_{-1} = \\\\text{CNN}(I)$ &mdash; the image (mapped into the embedding space) is the first thing the LSTM sees, before any word.",
+                "$x_t = W_e\\\\, S_t$ for $t \\\\geq 0$ &mdash; each subsequent input is the word embedding ($W_e$ is the embedding matrix) of the previous caption word $S_t$.",
+                "$p_{t+1} = \\\\text{LSTM}(x_t)$ &mdash; at each step the LSTM emits a softmax distribution over the next word, conditioned on the image (seen at $t=-1$) and all prior words through its hidden state."
               ]
             },
             {
+              "type": "quote",
+              "html": "&ldquo;We empirically verified that feeding the image at each time step as an extra input yields inferior results, as the network can explicitly exploit noise in the image and overfits more easily.&rdquo;"
+            },
+            {
               "type": "p",
-              "html": "A special start token kicks off generation and a stop token ends it, letting the model produce captions of any length. The whole thing &mdash; CNN, embeddings, LSTM &mdash; is trained jointly by backpropagation."
+              "html": "<strong>Why show the image only once.</strong> Re-injecting the image at every step lets the LSTM latch onto pixel-level noise and overfit. Showing it once forces the network to <em>encode</em> the relevant content into its hidden state up front and then carry it forward as it speaks &mdash; cleaner, and it generalizes better."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Start and stop tokens.</strong> A special start word kicks off generation and a special stop word ends it, so the model produces captions of any length and decides for itself when the sentence is complete. The whole system &mdash; CNN, embedding matrix $W_e$, and LSTM &mdash; is trained jointly by backpropagation; only the word embeddings and LSTM are trained from scratch, while the CNN starts from ImageNet pre-training."
             }
           ]
         },
         {
           "title": "Generating a caption with beam search",
           "subtitle": "Searching for the best sentence, not the greedy one",
-          "pdfPages": [3],
+          "pdfPages": [3, 4],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "At test time the model must turn its word-by-word probabilities into a single caption. The simplest method is to sample or to greedily take the most likely word each step, but greedy choices can lock in early mistakes that doom the rest of the sentence."
+              "html": "<strong>The problem at test time.</strong> The trained model gives a probability for each next word, but a caption is a whole sentence. The simplest method &mdash; <strong>greedy decoding</strong>, taking the single most likely word at each step &mdash; can lock in an early mistake that dooms the rest of the sentence."
             },
             {
               "type": "p",
-              "html": "Instead the authors use <strong>beam search</strong>: keep the best $k$ partial captions at each step, extend each by one word, and prune back to the top $k$. They used a beam size of 20, which lets the decoder weigh several phrasings before committing &mdash; reducing the chance that one bad early word ruins an otherwise good caption."
+              "html": "<strong>Concrete example.</strong> If after the start token the model slightly prefers &ldquo;Two&rdquo; over &ldquo;A&rdquo;, greedy decoding commits to &ldquo;Two&rdquo; and may be forced into &ldquo;Two dog ...&rdquo;, an ungrammatical dead end. Keeping both &ldquo;Two&rdquo; and &ldquo;A&rdquo; alive lets the later words reveal that &ldquo;A dog catching a frisbee&rdquo; has higher total probability."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Beam search</strong> does exactly that: keep the best $k$ partial captions at each step, extend each one by every possible next word, score the extensions by total log-probability, and prune back to the top $k$. The authors used a <strong>beam size of 20</strong>, letting the decoder weigh many phrasings before committing."
+            },
+            {
+              "type": "p",
+              "html": "<strong>A telling detail.</strong> The paper notes that <em>shrinking</em> the beam to size 1 (greedy) cost only about 2 BLEU points on average &mdash; evidence the model&rsquo;s probabilities were already sharp, the same observation seq2seq made for translation. Beam search is the standard generation procedure inherited directly from the machine-translation work in this collection."
             }
           ]
         }
@@ -141,41 +177,82 @@
         {
           "title": "State of the art across datasets",
           "subtitle": "Pascal, Flickr30k, SBU, COCO",
-          "pdfPages": [1],
+          "pdfPages": [5, 6],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "NIC improved automatic caption-quality scores (BLEU) substantially over the prior art on every benchmark tested, and on some it approached human-level BLEU."
+              "html": "<strong>The headline.</strong> NIC improved automatic caption-quality scores (chiefly BLEU, which counts overlapping word n-grams with the reference captions) substantially over the prior state-of-the-art on every benchmark, and on several it approached human-level scores. The BLEU-1 comparison (scaled to 0&ndash;100; higher is better):"
             },
             {
               "type": "table",
-              "headers": ["Dataset", "Prior best (BLEU-1)", "NIC (BLEU-1)", "Human"],
+              "headers": ["Dataset", "Prior SOTA (BLEU-1)", "NIC (BLEU-1)", "Human"],
               "rows": [
                 ["Pascal", "25", "59", "69"],
-                ["Flickr30k", "56", "66", "-"],
+                ["Flickr30k", "56", "66", "68"],
+                ["Flickr8k", "58", "63", "70"],
                 ["SBU", "19", "28", "-"]
               ]
             },
             {
               "type": "p",
-              "html": "On the large MS COCO benchmark the model reached strong BLEU-4 scores as well. Beyond the numbers, the qualitative captions were often genuinely fluent and correct &mdash; the network had learned to name objects, describe their attributes, and string them into grammatical sentences without any hand-written rules."
+              "html": "<strong>Reading the table.</strong> On Pascal, NIC more than doubled the previous best (25 &rarr; 59) and closed most of the gap to humans (69). On Flickr30k it reached 66, just 2 points shy of the human score of 68. The pattern &mdash; big jumps over prior systems, approaching human BLEU &mdash; held across four independent datasets."
+            },
+            {
+              "type": "p",
+              "html": "<strong>On the large MS COCO benchmark</strong> the model was evaluated with the richer modern metrics. NIC scored <strong>BLEU-4 of 27.7, METEOR 23.7, and CIDEr 85.5</strong>. For perspective, a &lsquo;Nearest Neighbor&rsquo; retrieval baseline scored only 9.9 BLEU-4, and even <em>human</em> captions scored 21.7 BLEU-4 / 85.4 CIDEr on this set &mdash; so NIC actually exceeded the human BLEU-4 number, a quirk of how BLEU treats the many valid ways to describe one image."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Beyond the numbers.</strong> The qualitative captions were often genuinely fluent and correct &mdash; naming objects, describing their attributes, and stringing them into grammatical sentences with no hand-written rules. The authors did note BLEU is an imperfect metric for captioning, since one image has many equally good descriptions, which is why they also report METEOR, CIDEr, and human ranking."
+            }
+          ]
+        },
+        {
+          "title": "Diversity, ranking, and what it learned",
+          "subtitle": "Does it just memorize captions?",
+          "pdfPages": [6, 7],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<strong>The natural worry.</strong> A model that scores this well might simply be regurgitating training captions. The authors checked, and the answer is reassuring: NIC generates genuinely <strong>novel</strong> sentences."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;Taking the best candidate &hellip; the sentence is present in the training set 80% of the time. &hellip; If we take the 15 best candidates, about half of the generated captions are completely novel descriptions while still having a similar BLEU score.&rdquo;"
+            },
+            {
+              "type": "p",
+              "html": "<strong>Diversity, concretely.</strong> When asked for several captions of the same beach photo, the model offered distinct, all-plausible options such as &ldquo;A person riding a surfboard on a wave&rdquo;, &ldquo;A man in a wetsuit riding a wave on a surfboard&rdquo;, and &ldquo;A man on a surfboard riding a wave&rdquo; &mdash; different phrasings, not one memorized string."
+            },
+            {
+              "type": "p",
+              "html": "<strong>It also learned to rank.</strong> Although built to generate, NIC doubles as an image&ndash;sentence ranking model: score how well each candidate caption fits an image by its probability. On Flickr8k retrieval it beat prior systems on both directions &mdash; image annotation (Recall@1 of 20 vs the prior 18) and image search (Recall@1 of 19 vs 13), with a better median rank. A single generative model thus matched specialized retrieval systems."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Design choices that helped.</strong> Dropout and ensembling several models each added a few BLEU points. Initializing word embeddings from a large external news corpus, by contrast, gave no significant gain, so they left them random for simplicity &mdash; a sign the model learned its visual-linguistic vocabulary largely from the caption data itself."
             }
           ]
         },
         {
           "title": "Why this paper matters",
           "subtitle": "The encoder-decoder goes multimodal",
-          "pdfPages": [1],
+          "pdfPages": [1, 7],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "Show and Tell proved the encoder-decoder template is <strong>modality-agnostic</strong>. The decoder does not care whether its conditioning vector came from a sentence or a photograph &mdash; if you can encode something into a vector, an LSTM can narrate it. This opened the door to captioning, visual question answering, and the broad family of <strong>vision-language models</strong>."
+              "html": "<strong>The lasting lesson.</strong> Show and Tell proved the encoder&ndash;decoder template is <strong>modality-agnostic</strong>. The LSTM decoder does not care whether its conditioning vector came from a French sentence or a photograph &mdash; if you can encode something into a vector, the same decoder can narrate it. This single insight opened the door to image captioning, visual question answering, and the broad family of <strong>vision-language models</strong> that followed."
             },
             {
               "type": "p",
-              "html": "It also set up the next step in the captioning story. NIC compresses the whole image into one vector before the decoder ever speaks &mdash; the same bottleneck that attention solved for translation. The follow-up &lsquo;Show, Attend and Tell&rsquo; added visual attention so the decoder could look at different regions of the image as it produced each word, mirroring exactly the move Bahdanau made for text."
+              "html": "<strong>The bottleneck it inherited &mdash; and the fix.</strong> Like the original seq2seq translator, NIC compresses the entire image into <em>one</em> vector before the decoder ever speaks. That is the same fixed-vector bottleneck that attention removed for translation (see &ldquo;Neural Machine Translation by Jointly Learning to Align and Translate&rdquo; in this collection). The direct follow-up, &lsquo;Show, Attend and Tell&rsquo;, added <strong>visual attention</strong> so the decoder could look at different regions of the image while producing each word &mdash; precisely mirroring the move Bahdanau made for text, and a step closer to the attention-everywhere design of the Transformer."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The place in the family tree.</strong> Seq2seq showed a network could read a sentence and write a sentence; Show and Tell showed it could read a picture and write a sentence; attention then let it look back at the source as it wrote. Together these three ideas define the lineage that runs through the Transformer to modern multimodal models like the image-understanding parts of GPT-4 and Gemini."
             }
           ]
         }

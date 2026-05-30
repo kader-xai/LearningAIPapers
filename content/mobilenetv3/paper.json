@@ -12,10 +12,12 @@
           "subtitle": "Co-design the architecture by search, then hand-tune",
           "pdfPages": [1],
           "blocks": [
-            {"type":"p","html":"MobileNetV3 is a family of efficient vision models for phones and other resource-limited hardware. Its central idea is to <b>combine automated architecture search with targeted hand engineering</b>: let an algorithm search for a good backbone, then have humans fix the few parts the search misses."},
-            {"type":"p","html":"Two search techniques work together. <b>Platform-aware NAS</b> (neural architecture search) finds the coarse structure of each block, optimizing for accuracy under a latency budget on real hardware. Then <b>NetAdapt</b> tunes the number of filters in each layer one at a time. Finally the authors redesign the most expensive layers by hand and introduce a new activation."},
+            {"type":"p","html":"<b>The problem.</b> You want a neural network that recognizes objects on a <i>phone</i> &mdash; fast enough to run in real time, small enough to fit, accurate enough to be useful. Every millisecond and every megabyte counts. MobileNetV3 is a family of such models, and its central idea is to <b>combine automated architecture search with targeted hand engineering</b>: let an algorithm search for a good backbone, then have humans fix the few parts the search misses."},
+            {"type":"p","html":"<b>Analogy.</b> Think of designing a fuel-efficient car. An optimization program can search thousands of engine and chassis configurations to find one that is fast and economical &mdash; but it might miss that the rear spoiler (a single bolted-on part) is creating most of the drag. A human engineer spots that instantly and redesigns it by hand. MobileNetV3 uses exactly this division of labor: search for the bulk of the design, hand-fix the few glaringly expensive parts."},
+            {"type":"p","html":"<b>Two search techniques work together.</b> <b>Platform-aware NAS</b> (neural architecture search) finds the coarse structure of each block, optimizing for accuracy under a latency budget on real hardware. Then <b>NetAdapt</b> tunes the number of filters in each layer, one at a time. Finally the authors redesign the most expensive layers by hand and introduce a new, cheaper activation function."},
             {"type":"quote","html":"We achieve new state of the art results for mobile classification, detection and segmentation ... MobileNetV3-Large is 3.2% more accurate on ImageNet classification while reducing latency by 20% compared to MobileNetV2."},
-            {"type":"p","html":"The result is two models: <b>MobileNetV3-Large</b> (~75.2% top-1 ImageNet, ~20% faster than V2) for higher-resource use and <b>MobileNetV3-Small</b> for very tight budgets. Both push the accuracy-vs-latency frontier outward."}
+            {"type":"p","html":"<b>The payoff.</b> Two models for two budgets: <b>MobileNetV3-Large</b> (about 75.2% top-1 ImageNet accuracy, ~20% lower latency than MobileNetV2) for higher-resource phones, and <b>MobileNetV3-Small</b> (about 67.4% top-1) for very tight budgets. Both push the accuracy-vs-latency frontier outward &mdash; for any given speed, they are more accurate than what came before."},
+            {"type":"p","html":"<b>Context.</b> This is the third generation of Google&rsquo;s MobileNet line (V1 in 2017, V2 in 2018), and a landmark in the move from hand-designed to <i>searched</i> efficient networks. It folds in ideas from across 2018&ndash;2019 efficient-net research &mdash; MnasNet&rsquo;s latency-aware search, Squeeze-and-Excitation attention, and the swish activation &mdash; and packages them into a practical, deployable recipe."}
           ]
         }
       ]
@@ -28,10 +30,12 @@
           "subtitle": "Not all FLOPs are equal",
           "pdfPages": [1, 2],
           "blocks": [
-            {"type":"p","html":"On a phone, what matters is not theoretical FLOPs but <b>actual latency</b> on the device, which depends on memory access patterns, how well operations map to the hardware, and where time is really spent. A layer can be cheap in multiply-adds yet slow in practice, or vice versa."},
-            {"type":"p","html":"MobileNetV3 therefore optimizes directly against measured latency, and treats the network design as a <b>search problem</b> rather than a purely manual one. Humans are good at spotting a few structural inefficiencies; search is good at exploring thousands of configurations. The paper uses both, each where it is strongest."},
+            {"type":"p","html":"<b>The problem.</b> The obvious way to measure a model&rsquo;s cost is to count its multiply-add operations (FLOPs). But on a real phone, what users feel is <b>wall-clock latency</b>, and that depends on far more than arithmetic: memory bandwidth, cache behavior, how cleanly an operation maps to the chip&rsquo;s instruction set, and fixed overheads per layer."},
+            {"type":"p","html":"<b>Concrete example.</b> A depthwise convolution and a regular convolution can have wildly different FLOP-to-latency ratios. A layer might be cheap in multiply-adds yet memory-bound and therefore slow; another might look expensive on paper but run fast because it keeps the hardware&rsquo;s arithmetic units busy. The sigmoid inside the swish activation is a perfect case: tiny FLOP count, but it needs an exponential, which mobile CPUs compute slowly and quantize poorly. Optimizing FLOPs would never catch this."},
+            {"type":"p","html":"<b>The approach.</b> MobileNetV3 therefore optimizes directly against <b>measured latency on the target device</b>, and treats network design as a <b>search problem</b> rather than a purely manual one. Humans are good at spotting a few structural inefficiencies; search is good at exploring thousands of configurations. The paper uses both, each where it is strongest."},
             {"type":"h2","text":"Building on V1 and V2"},
-            {"type":"p","html":"It inherits depthwise-separable convolutions from MobileNetV1 (splitting a normal convolution into a per-channel spatial filter plus a $1\\times1$ mixing step) and the inverted-residual, linear-bottleneck block from MobileNetV2, then layers new ideas on top."}
+            {"type":"p","html":"<b>The inherited foundation.</b> MobileNetV3 does not start from scratch. From <b>MobileNetV1</b> it inherits the <b>depthwise-separable convolution</b>: instead of one fat convolution that filters spatially <i>and</i> mixes channels at once, you split it into (1) a depthwise convolution that applies one spatial filter per channel independently, and (2) a $1\\times1$ pointwise convolution that mixes channels. For a $3\\times3$ filter this cuts cost by roughly $8\\!-\\!9\\times$ with little accuracy loss."},
+            {"type":"p","html":"<b>From MobileNetV2</b> it inherits the <b>inverted residual with linear bottleneck</b>: the block <i>expands</i> a thin input to a wide intermediate representation (where the cheap depthwise filtering happens), then <i>projects</i> back down to a thin output with no activation on that final projection (the &lsquo;linear bottleneck&rsquo;, which preserves information that ReLU would destroy in low dimensions), with a residual skip connection between the thin ends. MobileNetV3 layers its new ideas &mdash; SE attention, h-swish, searched sizing &mdash; on top of this block."}
           ]
         }
       ]
@@ -44,13 +48,17 @@
           "subtitle": "Platform-aware NAS + NetAdapt",
           "pdfPages": [3, 4],
           "blocks": [
-            {"type":"p","html":"The search runs in two phases at two granularities. First, <b>platform-aware NAS</b> searches the global block structure &mdash; how blocks are arranged &mdash; using a reward that trades off accuracy against on-device latency. This produces a strong starting architecture."},
-            {"type":"p","html":"Second, <b>NetAdapt</b> refines it layer by layer. Starting from the NAS model, it repeatedly proposes small reductions to the filter count of individual layers, measures the real latency/accuracy change of each proposal, keeps the best trade-off, and continues until the latency target is met. NAS sets the skeleton; NetAdapt trims the fat."},
+            {"type":"p","html":"<b>The problem.</b> The space of possible networks is astronomically large &mdash; how many blocks, how wide each one, what kernel sizes, where to put attention. You cannot try them all. MobileNetV3 splits the search into two stages working at two granularities: one finds the coarse skeleton, the other trims it precisely."},
+            {"type":"p","html":"<b>Stage 1 &mdash; Platform-aware NAS (the skeleton).</b> Reusing the MnasNet approach, a controller searches the global block structure &mdash; how many blocks, their kernel sizes, expansion ratios &mdash; to maximize a reward that explicitly trades off accuracy against real on-device latency. The reward has the form $\\text{ACC}(m) \\times [\\text{LAT}(m)/\\text{TAR}]^{w}$, balancing model accuracy $\\text{ACC}(m)$ against its latency $\\text{LAT}(m)$ relative to a target $\\text{TAR}$. This produces a strong starting architecture tuned to the hardware."},
+            {"type":"p","html":"<b>Stage 2 &mdash; NetAdapt (the fine trim).</b> Starting from the NAS skeleton, NetAdapt refines it layer by layer. Each round it proposes a set of small changes &mdash; each shrinking the filter count of one layer &mdash; briefly fine-tunes each candidate, <i>measures the real latency and accuracy</i> of each, and keeps the proposal with the best accuracy-per-latency trade-off. It repeats until the latency target is met. The selection criterion maximizes:"},
+            {"type":"math","tex":"\\frac{\\Delta \\text{Acc}}{\\Delta \\text{latency}}"},
+            {"type":"p","html":"Reading it: $\\Delta\\text{Acc}$ is how much accuracy a proposed filter reduction loses (a small negative number) and $\\Delta\\text{latency}$ is how much latency it saves. The ratio rewards proposals that shed the most latency for the least accuracy cost &mdash; cut the fat, keep the muscle."},
             {"type":"list","items":[
-              "Platform-aware NAS: searches coarse block-level structure under a latency objective.",
-              "NetAdapt: fine-tunes per-layer filter counts using measured on-device latency.",
-              "The two are complementary &mdash; global structure vs. local sizing."
-            ]}
+              "<b>Platform-aware NAS</b>: searches coarse, block-level structure under a latency-aware reward &mdash; sets the skeleton.",
+              "<b>NetAdapt</b>: greedily fine-tunes per-layer filter counts using measured on-device latency &mdash; trims the fat.",
+              "<b>Complementary scopes</b>: NAS handles global structure (slow, broad); NetAdapt handles local sizing (fast, precise)."
+            ]},
+            {"type":"p","html":"<b>Why two stages.</b> NAS alone is expensive and tends to find good <i>structure</i> but coarse <i>sizing</i>; NetAdapt is cheap and precise but cannot invent new structure. Chaining them gets the best of both. Trivia: this latency-aware, two-stage recipe became the template for nearly all later mobile architecture search."}
           ]
         },
         {
@@ -58,8 +66,11 @@
           "subtitle": "Hand-tuning what search overlooks",
           "pdfPages": [5, 6],
           "blocks": [
-            {"type":"p","html":"Search tends to leave a couple of layers that are accurate but disproportionately slow &mdash; notably the early stem and the final classifier stages. The authors redesign these by hand: they move and shrink the last expensive $1\\times1$ expansion (the 'efficient last stage'), cutting latency with no accuracy loss, and reduce the number of filters in the initial layer."},
-            {"type":"p","html":"They also add <b>squeeze-and-excitation (SE)</b> modules inside the bottleneck blocks. An SE module cheaply learns per-channel importance weights and rescales the channels, giving the network a lightweight form of attention that boosts accuracy for little cost."}
+            {"type":"p","html":"<b>The problem.</b> Search optimizes the average block, but it tends to leave a couple of layers that are accurate yet disproportionately slow &mdash; the early <b>stem</b> and the final <b>classifier head</b>. These sit at the network&rsquo;s edges, where feature maps are either very large (the stem, on the full-resolution image) or where channel counts balloon (the head). The authors fix these by hand."},
+            {"type":"p","html":"<b>Fix 1 &mdash; the efficient last stage.</b> The original MobileNetV2 head expanded to a wide $1\\times1$ layer (e.g. 960&rarr;1280 channels) <i>before</i> the final spatial pooling, so that expensive expansion ran over the whole feature map. MobileNetV3 moves the expensive $1\\times1$ expansion to <i>after</i> the average pooling, where the spatial size is just $1\\times1$ &mdash; the same representational power, but the costly operation now runs on a single pixel instead of a $7\\times7$ grid. This drops about <b>7 milliseconds (~11% of runtime)</b> with no measurable accuracy loss."},
+            {"type":"p","html":"<b>Fix 2 &mdash; a leaner stem.</b> The initial convolution had 32 filters; the authors found 16 filters with h-swish maintain the same accuracy, saving another ~2 ms. Small layer, but it runs on the largest feature map, so it punches above its weight."},
+            {"type":"p","html":"<b>Fix 3 &mdash; Squeeze-and-Excitation (SE) attention.</b> Inside the bottleneck blocks, MobileNetV3 adds lightweight <b>SE modules</b>. An SE module is a cheap form of channel attention: it (1) <i>squeezes</i> each channel&rsquo;s spatial map to a single number via global average pooling, (2) passes those through a tiny two-layer bottleneck network to learn a per-channel importance weight in $[0,1]$, then (3) rescales each channel by its weight. This lets the network emphasize informative channels and suppress useless ones, boosting accuracy for negligible cost. (V3 uses the hard-sigmoid for the SE gate, and reduces the SE bottleneck to 1/4 of the expansion channels to keep it cheap.)"},
+            {"type":"p","html":"<b>Why search misses these.</b> SE placement and the head redesign are structural choices outside the search space the authors gave NAS; and the stem/head sit at extreme feature-map sizes where a human&rsquo;s understanding of <i>where</i> compute is spent beats brute-force search. This is the &lsquo;search plus craft&rsquo; thesis in action."}
           ]
         },
         {
@@ -67,9 +78,13 @@
           "subtitle": "A hardware-friendly nonlinearity",
           "pdfPages": [6, 7],
           "blocks": [
-            {"type":"p","html":"The swish activation, $x \\cdot \\sigma(x)$, improves accuracy but its sigmoid is expensive to compute on mobile hardware (and awkward to quantize). MobileNetV3 replaces it with a piecewise-linear approximation called <b>hard-swish (h-swish)</b>:"},
+            {"type":"p","html":"<b>The problem.</b> The <b>swish</b> activation, $\\text{swish}(x) = x \\cdot \\sigma(x)$ (where $\\sigma$ is the sigmoid), was found to improve accuracy over ReLU in deep networks. But the sigmoid $\\sigma(x) = 1/(1+e^{-x})$ requires an <i>exponential</i>, which is slow on mobile CPUs and behaves badly under fixed-point <b>quantization</b> (the conversion to cheap 8-bit integer math used on-device). On a phone, swish&rsquo;s accuracy gain is eaten by its compute cost."},
+            {"type":"p","html":"<b>The idea.</b> Replace the expensive sigmoid with a piecewise-linear look-alike that hardware already runs fast. MobileNetV3 defines <b>hard-swish (h-swish)</b>:"},
             {"type":"math","tex":"\\text{h-swish}(x) = x \\cdot \\frac{\\text{ReLU6}(x + 3)}{6}"},
-            {"type":"p","html":"Reading this: $\\text{ReLU6}(z) = \\min(\\max(z, 0), 6)$ is a clipped ReLU that hardware already supports efficiently. The fraction is a cheap, piecewise-linear stand-in for the sigmoid, so h-swish behaves like swish but uses only fast, quantization-friendly operations. The authors apply it mainly in the deeper half of the network, where it helps most and the feature maps are smaller (so the cost is low)."}
+            {"type":"p","html":"Reading it term by term: $\\text{ReLU6}(z) = \\min(\\max(z, 0), 6)$ is a ReLU clipped at 6 &mdash; an operation mobile chips already implement as a single fast instruction. The factor $\\frac{\\text{ReLU6}(x+3)}{6}$ is a cheap piecewise-linear approximation of $\\sigma(x)$: it is 0 for $x \\le -3$, rises linearly to 1 by $x \\ge 3$, and so multiplies $x$ much like swish does &mdash; but with only additions, a clamp, and a multiply. No exponential, and it quantizes cleanly because it is exactly piecewise-linear."},
+            {"type":"p","html":"<b>The same trick for the SE gate.</b> The SE module&rsquo;s sigmoid gate is likewise replaced by a <b>hard-sigmoid</b>, $\\text{ReLU6}(x+3)/6$, for the same speed and quantization reasons."},
+            {"type":"p","html":"<b>Why apply it selectively.</b> The authors use h-swish only in the <i>deeper half</i> of the network. Activation cost scales with feature-map size, and the early layers have the largest maps; the deeper layers (smaller maps, more channels) are where the nonlinearity helps accuracy most while costing least. This selective placement captures most of swish&rsquo;s benefit at a fraction of the cost."},
+            {"type":"p","html":"<b>Trivia.</b> The &lsquo;hard&rsquo; prefix &mdash; hard-swish, hard-sigmoid &mdash; comes from earlier &lsquo;hard&rsquo; piecewise-linear versions of saturating functions used in quantized and recurrent nets. MobileNetV3 popularized them for efficient vision, and h-swish remains a standard building block in mobile model libraries today."}
           ]
         }
       ]
@@ -79,21 +94,37 @@
       "pages": [
         {
           "title": "Pushing the accuracy-latency frontier",
-          "subtitle": "ImageNet classification",
+          "subtitle": "ImageNet classification and ablations",
           "pdfPages": [7, 8],
           "blocks": [
-            {"type":"p","html":"On ImageNet, <b>MobileNetV3-Large</b> reaches about <b>75.2% top-1 accuracy</b> while being roughly <b>20% faster</b> than MobileNetV2 at comparable accuracy &mdash; a clear improvement on the speed-accuracy trade-off. <b>MobileNetV3-Small</b> targets the very-low-latency regime and beats prior small models at similar speed."},
-            {"type":"table","headers":["Model","Top-1","Relative latency"],"rows":[["MobileNetV2","~72.0%","baseline"],["MobileNetV3-Large","~75.2%","~20% faster"],["MobileNetV3-Small","~67.4%","much lower"]]},
-            {"type":"p","html":"Ablations confirm every ingredient pulls its weight: the searched structure, the redesigned expensive layers, the SE modules, and h-swish each contribute measurable accuracy or latency gains."}
+            {"type":"p","html":"<b>The headline.</b> On ImageNet (1.28M training images, 1000 classes; top-1 = fraction where the single top guess is correct), <b>MobileNetV3-Large</b> reaches about <b>75.2% top-1</b> while being roughly <b>20% faster</b> than MobileNetV2 (measured on a Pixel phone). <b>MobileNetV3-Small</b> targets the very-low-latency regime at about <b>67.4% top-1</b>, beating prior small models at similar speed."},
+            {"type":"table","headers":["Model","Top-1","Latency (Pixel-1)","Params"],"rows":[
+              ["MobileNetV2 1.0","72.0%","64 ms","3.4M"],
+              ["MobileNetV3-Large","75.2%","51 ms","5.4M"],
+              ["MobileNetV3-Small","67.4%","15.8 ms","2.5M"]
+            ]},
+            {"type":"p","html":"<b>The ablations &mdash; every ingredient earns its place.</b> The paper peels back each addition from MobileNetV3-Large to show its individual contribution to accuracy and latency:"},
+            {"type":"table","headers":["Configuration","Top-1","Latency"],"rows":[
+              ["V2 baseline","72.0%","~64 ms"],
+              ["+ searched structure (NAS+NetAdapt)","~74.0%","~58 ms"],
+              ["+ squeeze-and-excitation","~74.6%","~61 ms"],
+              ["+ h-swish","~75.2%","~57 ms"],
+              ["+ efficient last stage","75.2%","~51 ms"]
+            ]},
+            {"type":"p","html":"<b>Reading the ablation.</b> Search lifts accuracy ~2 points and trims latency; SE adds accuracy but a touch of latency; h-swish adds accuracy <i>and</i> claws latency back; the efficient last stage is pure latency savings (~7 ms) at constant accuracy. None of these alone is dramatic &mdash; the win is the cumulative stack."},
+            {"type":"p","html":"<b>Why it matters.</b> The result is not just &lsquo;a faster model&rsquo; but a demonstration that the speed-accuracy frontier can be pushed outward by <i>method</i> &mdash; latency-aware search plus targeted craft &mdash; rather than by simply scaling up. For any latency budget you care about, V3 gives more accuracy than its predecessors."}
           ]
         },
         {
           "title": "Detection and segmentation",
-          "subtitle": "Beyond classification",
+          "subtitle": "The backbone transfers; LR-ASPP for pixels",
           "pdfPages": [9, 10],
           "blocks": [
-            {"type":"p","html":"The backbone transfers to other tasks. As a detection feature extractor it improves the speed-accuracy trade-off on COCO over MobileNetV2. For semantic segmentation the paper introduces <b>Lite Reduced ASPP (LR-ASPP)</b>, an efficient segmentation head that pairs with the V3 backbone to deliver strong Cityscapes accuracy at low latency."},
-            {"type":"quote","html":"MobileNetV3-Large LR-ASPP is 34% faster than MobileNetV2 R-ASPP at similar accuracy for Cityscapes segmentation."}
+            {"type":"p","html":"<b>The question.</b> A good classification backbone should transfer to harder tasks. Does MobileNetV3 help when you need <i>where</i> objects are, not just <i>what</i> they are?"},
+            {"type":"p","html":"<b>Detection.</b> Plugged into an SSDLite detector as the feature extractor, MobileNetV3-Large improves the speed-accuracy trade-off on COCO over MobileNetV2 &mdash; comparable mAP (mean average precision) at lower latency. The same SE/h-swish/searched backbone that helped classification helps detection, confirming the features are generally useful."},
+            {"type":"p","html":"<b>Segmentation &mdash; LR-ASPP.</b> For semantic segmentation (labeling every pixel with a class), the paper introduces <b>Lite Reduced ASPP (LR-ASPP)</b>, a stripped-down efficient version of the Atrous Spatial Pyramid Pooling head used in DeepLab. It combines a large-kernel global-context branch (via pooling) with a $1\\times1$ branch and lightweight bilinear upsampling, replacing the heavy multi-rate atrous convolutions of the original. Paired with the V3 backbone, it delivers strong Cityscapes accuracy at low latency."},
+            {"type":"quote","html":"MobileNetV3-Large LR-ASPP is 34% faster than MobileNetV2 R-ASPP at similar accuracy for Cityscapes segmentation."},
+            {"type":"p","html":"<b>Why this matters.</b> Showing the backbone wins across classification, detection, <i>and</i> segmentation establishes MobileNetV3 as a general-purpose efficient feature extractor &mdash; the role it went on to play across countless on-device vision products."}
           ]
         }
       ]
@@ -106,13 +137,14 @@
           "subtitle": "Search plus craft",
           "pdfPages": [1],
           "blocks": [
-            {"type":"p","html":"MobileNetV3 showed that the best efficient models come from <b>combining automated search with human insight</b>, and from optimizing against measured hardware latency rather than proxy FLOPs. Its components &mdash; h-swish, SE in mobile blocks, the efficient last stage &mdash; became common ingredients in later efficient architectures."},
+            {"type":"p","html":"MobileNetV3 showed that the best efficient models come from <b>combining automated search with human insight</b>, and from optimizing against <i>measured hardware latency</i> rather than proxy FLOPs. Its individual components &mdash; h-swish, SE inside mobile blocks, the efficient last stage &mdash; became standard ingredients in later efficient architectures."},
             {"type":"list","items":[
-              "Combined platform-aware NAS (global structure) with NetAdapt (per-layer sizing).",
-              "Hand-redesigned the expensive stem/last stage and added squeeze-and-excitation blocks.",
-              "Introduced h-swish, a quantization-friendly, hardware-efficient activation.",
-              "MobileNetV3-Large: ~75.2% ImageNet top-1, ~20% faster than V2; strong detection and segmentation transfer."
-            ]}
+              "Combined <b>platform-aware NAS</b> (global structure) with <b>NetAdapt</b> (per-layer filter sizing) under a real-latency objective.",
+              "Hand-redesigned the expensive stem and last stage and added <b>squeeze-and-excitation</b> channel attention to the bottleneck blocks.",
+              "Introduced <b>h-swish</b> and hard-sigmoid &mdash; quantization-friendly, exponential-free activations.",
+              "<b>MobileNetV3-Large</b>: ~75.2% ImageNet top-1, ~20% faster than V2; <b>Small</b>: ~67.4%; strong detection (SSDLite) and segmentation (LR-ASPP) transfer."
+            ]},
+            {"type":"p","html":"<b>The bigger picture.</b> Coming out of the same Google research effort as MnasNet and EfficientNet, MobileNetV3 cemented latency-aware NAS as the default way to design mobile networks and remains a widely-deployed, widely-cited backbone. Its &lsquo;let search do the bulk, let humans fix the edges&rsquo; philosophy is now conventional wisdom in efficient deep learning."}
           ]
         }
       ]

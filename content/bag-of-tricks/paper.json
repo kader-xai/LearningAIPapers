@@ -13,10 +13,12 @@
           "pdfPages": [1],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Much of the progress in image classification is credited to new architectures, but a surprising share of it comes from quiet refinements in <strong>how networks are trained</strong> &mdash; data augmentation tweaks, learning-rate schedules, small architecture adjustments. These 'tricks' are often buried in implementation details or mentioned only in passing, yet stacked together they make a large difference."},
-            {"type": "p", "html": "This paper does the unglamorous but valuable work of cataloguing these refinements, ablating each one, and reporting the <strong>cumulative gain</strong> on ImageNet. The result: a vanilla ResNet-50 is pushed from 75.3% to 79.29% top-1 accuracy &mdash; better than many newer architectures &mdash; just by improving the training procedure."},
+            {"type": "p", "html": "<b>The problem.</b> When a new image classifier beats the old record, the headline always credits the <i>architecture</i> &mdash; a new kind of layer, a deeper network, a clever connection. But a surprising share of real-world progress comes from quiet refinements in <b>how networks are trained</b>: data-augmentation tweaks, learning-rate schedules, tiny surgical changes to existing blocks. These &lsquo;tricks&rsquo; are usually buried in code or mentioned in a single sentence, yet stacked together they rival the gains from a whole new architecture."},
+            {"type": "p", "html": "<b>Analogy.</b> Imagine two chefs given the identical recipe and ingredients. One follows it literally; the other knows to rest the dough, preheat properly, salt the water, and season in stages. Same dish on paper &mdash; wildly different result. This paper is the second chef writing down every technique, and then weighing each one to prove it actually helps."},
+            {"type": "p", "html": "<b>What the paper does.</b> It does the unglamorous but valuable work of cataloguing these refinements, <b>ablating</b> each one (turning it off to measure its individual contribution), and reporting the <b>cumulative gain</b> on ImageNet. The result is striking: a stock ResNet-50 is pushed from 75.3% to <b>79.29% top-1 accuracy</b> &mdash; better than many newer, fancier architectures &mdash; purely by improving the training procedure, with essentially the same network."},
             {"type": "quote", "html": "By combining these refinements together, we raise ResNet-50's top-1 validation accuracy from 75.3% to 79.29% on ImageNet, and show that improvements transfer to object detection and semantic segmentation."},
-            {"type": "p", "html": "The tricks fall into three groups: <strong>efficient training</strong> (large-batch and low-precision tricks), <strong>model tweaks</strong> (small surgical changes to the ResNet architecture), and <strong>training refinements</strong> (schedule and regularization tricks)."}
+            {"type": "p", "html": "<b>The three groups of tricks.</b> The refinements fall into: <b>efficient training</b> (large-batch and low-precision tricks that train faster <i>and</i> at least as accurately), <b>model tweaks</b> (small surgical changes to the ResNet downsampling path), and <b>training refinements</b> (schedule and regularization tricks: cosine decay, label smoothing, mixup, distillation)."},
+            {"type": "p", "html": "<b>Context.</b> From the Amazon AWS / MXNet team (Mu Li was a co-creator of MXNet and parameter-server training). It became a much-cited reference precisely because it is a practitioner&rsquo;s checklist: a single place to find the &lsquo;everyone-knows-this-but-it-is-written-nowhere&rsquo; recipe, with numbers attached. The fully-loaded recipe is sometimes called the &lsquo;ResNet-D&rsquo; or &lsquo;tricks&rsquo; baseline in later work."}
           ]
         }
       ]
@@ -30,25 +32,30 @@
           "pdfPages": [2, 3],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Larger mini-batches make better use of GPUs but tend to hurt accuracy if the learning rate is left unchanged. Two tricks fix this."},
-            {"type": "p", "html": "<strong>Linear scaling rule.</strong> A larger batch gives a less noisy gradient estimate, so you can afford a proportionally larger step. Scale the learning rate linearly with batch size:"},
+            {"type": "p", "html": "<b>The problem.</b> Bigger mini-batches use GPUs more efficiently (more parallel work per step, fewer synchronizations), so you would love to crank up the batch size. But naively, larger batches <i>hurt</i> final accuracy &mdash; the model trained with batch 1024 ends up worse than the one trained with batch 256 if you change nothing else. Why, and how do we fix it?"},
+            {"type": "p", "html": "<b>The intuition.</b> A mini-batch gradient is a noisy estimate of the true gradient. A larger batch averages over more examples, so the estimate is <i>less noisy</i> and more trustworthy &mdash; which means you can safely take a bigger step. If you keep the same small step, you are wasting the extra confidence and effectively training too slowly."},
+            {"type": "p", "html": "<b>Trick 1 &mdash; Linear scaling rule.</b> Scale the learning rate up in proportion to the batch size:"},
             {"type": "math", "tex": "\\eta = 0.1 \\times \\frac{b}{256}"},
-            {"type": "p", "html": "Read this as: start from the standard learning rate 0.1 for batch size 256, and scale it up in proportion to the batch size <em>b</em>."},
-            {"type": "p", "html": "<strong>Learning-rate warmup.</strong> At the very start, the weights are random and a large learning rate can destabilize training. So begin with a small rate and ramp it linearly up to the target over the first few epochs, letting the network settle before taking big steps."},
+            {"type": "p", "html": "Reading it: $\\eta$ is the learning rate (the step size), $0.1$ is the standard rate that works well for the reference batch size of 256, and $b$ is your actual batch size. So batch 1024 uses $\\eta = 0.4$. The rule says: quadruple the batch, quadruple the step. (Introduced by Goyal et al. in the &lsquo;ImageNet in 1 hour&rsquo; paper.)"},
+            {"type": "p", "html": "<b>Trick 2 &mdash; Learning-rate warmup.</b> At the very start the weights are random, and a large learning rate can send the loss diverging before training stabilizes. So <i>warm up</i>: begin at a tiny rate and ramp it linearly to the target over the first few epochs (e.g. 5). Concretely, if warmup lasts $m$ batches, at batch $i$ use $\\eta \\cdot i/m$. Let the network find its footing before taking big steps."},
+            {"type": "h2", "text": "Two more initialization tricks"},
             {"type": "list", "items": [
-              "Zero gamma initialization: set the last BatchNorm $\\gamma$ in each residual block to 0, so each block starts as an identity and the network is easier to train early on.",
-              "No bias decay: apply weight decay only to convolution and fully-connected weights, not to biases or to BatchNorm's $\\gamma$ and $\\beta$, to avoid over-regularizing those parameters."
-            ]}
+              "<b>Zero-&gamma; initialization.</b> Each residual block computes $x + \\text{block}(x)$, and the block ends in a BatchNorm layer that scales by a learned $\\gamma$. Initialize that final $\\gamma$ to <b>0</b>, so every block starts as the identity $x + 0 = x$. The network then behaves like a shallow net early on &mdash; far easier and more stable to train &mdash; and gradually &lsquo;turns on&rsquo; its depth as $\\gamma$ grows.",
+              "<b>No bias decay.</b> Weight decay (L2 regularization) is meant to shrink the many <i>weight</i> parameters. Applying it to biases and to BatchNorm&rsquo;s $\\gamma$ and $\\beta$ &mdash; few in number &mdash; just over-regularizes them for no benefit. So decay only the convolution and fully-connected weights, and leave biases and BN parameters alone."
+            ]},
+            {"type": "p", "html": "<b>Why it matters / trivia.</b> Together these let the authors train ResNet-50 at batch 1024 with <i>no</i> accuracy loss versus batch 256, unlocking much faster training. Zero-&gamma; init in particular is now a near-universal default for residual networks &mdash; a one-line change that meaningfully stabilizes deep training."}
           ]
         },
         {
-          "title": "Low-precision training",
-          "subtitle": "FP16 for speed",
+          "title": "Low-precision (FP16) training",
+          "subtitle": "Half the bits, more than the speed",
           "pdfPages": [3],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Modern GPUs are much faster in 16-bit floating point (FP16) than in 32-bit (FP32). Training in FP16 &mdash; while keeping an FP32 master copy of the weights for stable accumulation &mdash; speeds up training substantially and, somewhat surprisingly, can even slightly improve accuracy."},
-            {"type": "p", "html": "Combined with the large-batch tricks above, switching to a batch size of 1024 in FP16 trained ResNet-50 faster <em>and</em> reached marginally higher accuracy than the FP32 baseline, showing these efficiency tricks are not a speed-versus-accuracy tradeoff."}
+            {"type": "p", "html": "<b>The problem.</b> Networks are traditionally trained in 32-bit floating point (FP16&rsquo;s big sibling, FP32). But modern GPUs (with tensor cores) run <b>16-bit floating point (FP16)</b> arithmetic 2&ndash;3&times; faster and use half the memory bandwidth. Can we train in FP16 without wrecking accuracy?"},
+            {"type": "p", "html": "<b>The catch and the fix.</b> Pure FP16 has too little range and precision &mdash; small gradients underflow to zero, and tiny weight updates vanish into rounding. The fix is <b>mixed-precision training</b>: do the heavy matrix multiplies in fast FP16, but keep a <b>master copy of the weights in FP32</b> for stable accumulation, and apply updates there. You get FP16 speed with FP32 stability."},
+            {"type": "p", "html": "<b>Concrete result.</b> The authors found that switching ResNet-50 to batch size 1024 in FP16 trained <i>much faster</i> &mdash; and, somewhat surprisingly, reached marginally <i>higher</i> accuracy than the FP32 baseline (e.g. ~76.2% vs ~75.3% top-1 when combined with the warmup/scaling tricks above). The slight noise from reduced precision may even act as a mild regularizer."},
+            {"type": "p", "html": "<b>Why it matters.</b> This is the key message of the &lsquo;efficient training&rsquo; group: these are <i>not</i> a speed-versus-accuracy tradeoff. You train faster and at least as well. FP16 mixed-precision is now standard practice in essentially all large-scale deep-learning training."}
           ]
         }
       ]
@@ -62,13 +69,21 @@
           "pdfPages": [4],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "These are tiny modifications to the ResNet architecture that barely change the parameter count but recover information the original design throws away, mostly around the downsampling blocks."},
+            {"type": "p", "html": "<b>The problem.</b> The original ResNet has a couple of spots where, by accident of design, it <i>throws away</i> input information during downsampling (the steps that halve the spatial resolution). These tweaks are tiny edits that recover that lost information while barely touching the parameter count or compute."},
+            {"type": "p", "html": "<b>Concrete example of the waste.</b> In ResNet&rsquo;s downsampling block, a $1\\times1$ convolution is applied with <b>stride 2</b>. A $1\\times1$ filter looks at a single pixel; striding it by 2 means it only ever sees one pixel out of every $2\\times2 = 4$ &mdash; it literally skips three-quarters of the input. That is information lost for nothing."},
             {"type": "list", "items": [
-              "ResNet-B: in the downsampling residual path, the original 1x1 convolution with stride 2 skips three-quarters of the input pixels. ResNet-B moves the stride to the following 3x3 convolution so no information is ignored.",
-              "ResNet-C: replace the expensive 7x7 stem convolution with three stacked 3x3 convolutions, which is cheaper and slightly more accurate.",
-              "ResNet-D: in the shortcut (skip) path of the downsampling block, the 1x1 stride-2 convolution also drops pixels; ResNet-D adds a 2x2 average-pooling step before it so the shortcut keeps all the information."
+              "<b>ResNet-B</b>: in the residual path, move the stride-2 from the information-skipping $1\\times1$ conv to the following $3\\times3$ conv. A $3\\times3$ filter with stride 2 still sees every input pixel (its receptive field overlaps), so no information is dropped.",
+              "<b>ResNet-C</b>: replace the single expensive $7\\times7$ stem convolution at the network&rsquo;s input with three stacked $3\\times3$ convolutions. Same receptive field, fewer multiply-adds, and slightly more accurate (more nonlinearity).",
+              "<b>ResNet-D</b>: the <i>shortcut</i> (skip) branch of the downsampling block also uses a $1\\times1$ stride-2 conv that drops 3/4 of pixels. ResNet-D inserts a $2\\times2$ average-pooling step (stride 2) <i>before</i> the now-stride-1 $1\\times1$ conv, so the shortcut downsamples by averaging rather than dropping &mdash; keeping all the information."
             ]},
-            {"type": "p", "html": "Each tweak adds negligible computation but contributes a fraction of a percent, and together (ResNet-D) they account for about a 1% top-1 improvement &mdash; a good deal for changes that leave the model essentially the same size."}
+            {"type": "p", "html": "<b>The gains.</b> Each tweak adds negligible computation but buys a fraction of a percent. Applied together, the fully-tweaked <b>ResNet-D</b> is about <b>1% top-1 better</b> than the vanilla ResNet-50 at almost no extra cost:"},
+            {"type": "table", "headers": ["Model", "Top-1", "Extra FLOPs"], "rows": [
+              ["ResNet-50 (vanilla)", "76.21%", "&mdash;"],
+              ["ResNet-50-B", "76.66%", "~tiny"],
+              ["ResNet-50-C", "76.87%", "slightly less (3&times;3 stem)"],
+              ["ResNet-50-D", "77.16%", "~negligible"]
+            ]},
+            {"type": "p", "html": "<b>Why it matters / trivia.</b> A ~1% gain for changes that leave the model essentially the same size is an excellent deal. The ResNet-D stem and average-pool shortcut became a de-facto standard &mdash; later strong baselines (and timm&rsquo;s default ResNets) ship with these tweaks built in, often without users realizing the original ResNet differed."}
           ]
         }
       ]
@@ -82,9 +97,12 @@
           "pdfPages": [5],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "Instead of dropping the learning rate by a factor of 10 at fixed milestones (step decay), <strong>cosine decay</strong> lowers it smoothly following a half-cosine curve from the initial value down to zero over training:"},
+            {"type": "p", "html": "<b>The problem.</b> The learning rate should be large early (to explore the loss landscape quickly) and small late (to settle precisely into a minimum). The classic <b>step decay</b> does this crudely: keep the rate flat, then divide it by 10 at fixed milestones (say epochs 30, 60, 90). The abrupt drops are jolting and the milestones are arbitrary hyperparameters to tune."},
+            {"type": "p", "html": "<b>The idea.</b> <b>Cosine decay</b> lowers the rate <i>smoothly</i> along a half-cosine curve, from the initial value down to (near) zero over the whole run &mdash; no cliffs, no milestones:"},
             {"type": "math", "tex": "\\eta_t = \\frac{1}{2}\\left(1 + \\cos\\left(\\frac{t\\pi}{T}\\right)\\right)\\eta"},
-            {"type": "p", "html": "Read this as: at step <em>t</em> of <em>T</em> total steps, scale the base rate by a cosine that starts at 1 and eases down to 0. The high rate early explores, and the gentle decay late lets the model converge precisely without the abrupt jolts of step decay."}
+            {"type": "p", "html": "Reading it term by term: $t$ is the current step (or epoch), $T$ is the total number of steps, and $\\eta$ is the base (maximum) learning rate. At $t=0$, $\\cos(0)=1$ so the factor is $\\frac{1}{2}(1+1)=1$ and $\\eta_t = \\eta$. At $t=T$, $\\cos(\\pi)=-1$ so the factor is $\\frac{1}{2}(1-1)=0$ and $\\eta_t = 0$. In between it eases down gently, slowly at first, fastest in the middle, then leveling off near the end."},
+            {"type": "p", "html": "<b>Why it works.</b> The high rate early explores broadly; the long gentle tail lets the model converge precisely without the abrupt destabilizing jolts of step decay. It also removes the need to hand-pick decay milestones. Empirically it slightly outperforms a well-tuned step schedule (here it contributes the jump to ~77.9% top-1)."},
+            {"type": "p", "html": "<b>Trivia.</b> Cosine decay came from Loshchilov &amp; Hutter&rsquo;s SGDR (&lsquo;warm restarts&rsquo;) work; this paper helped popularize the single-cycle, no-restart version that is now the default schedule in countless training recipes."}
           ]
         },
         {
@@ -93,9 +111,13 @@
           "pdfPages": [6],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "<strong>Label smoothing.</strong> Hard one-hot labels push the network to be over-confident, which hurts generalization. Label smoothing replaces the target 1 with $1 - \\varepsilon$ and spreads the remaining $\\varepsilon$ mass over the other classes, so the model aims for a slightly softened distribution and calibrates better."},
-            {"type": "p", "html": "<strong>Mixup.</strong> Train on convex combinations of pairs of examples and their labels: a new sample is $\\lambda x_i + (1-\\lambda) x_j$ with label $\\lambda y_i + (1-\\lambda) y_j$. This strong data augmentation smooths the decision boundary and improves robustness, though it benefits from training longer."},
-            {"type": "p", "html": "<strong>Knowledge distillation.</strong> Use a more accurate teacher network (e.g., ResNet-152) to provide soft targets that a student (ResNet-50) tries to match in addition to the true labels, transferring some of the teacher's knowledge."}
+            {"type": "p", "html": "<b>The shared problem.</b> Standard training pushes the model toward <i>over-confidence</i>: with a hard one-hot label, the cross-entropy loss is only minimized when the model predicts probability 1.0 for the true class and 0.0 for all others &mdash; an impossible, infinitely-confident target that encourages the logits to blow up and hurts generalization and calibration. These three tricks all soften the training signal."},
+            {"type": "p", "html": "<b>Label smoothing.</b> Replace the hard target 1 with $1-\\varepsilon$ and spread the remaining $\\varepsilon$ mass uniformly over the other classes. For $K$ classes, the true class gets $1-\\varepsilon$ and each other class gets $\\varepsilon/(K-1)$ (the paper uses $\\varepsilon=0.1$). The model now aims for a slightly softened distribution, stays better calibrated, and its feature clusters become tighter and more separated."},
+            {"type": "p", "html": "<b>Mixup.</b> Train on convex blends of <i>pairs</i> of examples and their labels. Given two samples $(x_i, y_i)$ and $(x_j, y_j)$, form a new training point:"},
+            {"type": "math", "tex": "\\hat{x} = \\lambda x_i + (1-\\lambda)x_j, \\qquad \\hat{y} = \\lambda y_i + (1-\\lambda)y_j"},
+            {"type": "p", "html": "Reading it: $\\lambda \\in [0,1]$ is drawn from a Beta distribution each step; $\\hat{x}$ is a pixel-wise blend of two images (a faint ghost of a cat over a dog), and $\\hat{y}$ is the same blend of their one-hot labels (e.g. 0.7 dog, 0.3 cat). This forces linear behavior between examples, smooths the decision boundary, and improves robustness &mdash; but because each &lsquo;image&rsquo; is harder, it benefits from training <b>longer</b> (the paper goes from 120 to 200 epochs)."},
+            {"type": "p", "html": "<b>Knowledge distillation.</b> Train the ResNet-50 <b>student</b> to match not only the true labels but also the <i>soft predictions</i> of a stronger, more accurate <b>teacher</b> (here a ResNet-152). The teacher&rsquo;s softened probabilities carry &lsquo;dark knowledge&rsquo; &mdash; e.g. that a particular truck image also looks a bit like a bus &mdash; which the student absorbs via a distillation term (a temperature-scaled cross-entropy against the teacher&rsquo;s outputs) added to the normal loss."},
+            {"type": "p", "html": "<b>Trivia.</b> All three were existing ideas (label smoothing from Inception-v3/Szegedy 2016; mixup from Zhang et al. 2017; distillation from Hinton et al. 2015). The paper&rsquo;s contribution is showing they <i>stack</i> cleanly with each other and with the schedule/architecture tricks on a single strong ResNet baseline."}
           ]
         },
         {
@@ -104,17 +126,18 @@
           "pdfPages": [6, 7],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "The heart of the paper is the progression: start from a baseline ResNet-50 and add the refinements one at a time, watching top-1 ImageNet accuracy climb. The approximate cumulative trajectory:"},
-            {"type": "table", "headers": ["Configuration added", "Top-1 accuracy"], "rows": [
-              ["Baseline ResNet-50", "75.3%"],
-              ["+ Efficient training (large batch, FP16, warmup, zero-gamma, no-bias-decay)", "76.2%"],
-              ["+ Model tweaks (ResNet-D)", "77.2%"],
-              ["+ Cosine learning-rate decay", "77.9%"],
-              ["+ Label smoothing", "78.3%"],
-              ["+ Knowledge distillation", "78.7%"],
-              ["+ Mixup (with longer training)", "79.29%"]
+            {"type": "p", "html": "<b>The heart of the paper.</b> Any single trick is easy to dismiss as noise. The persuasive evidence is the <i>progression</i>: start from a baseline ResNet-50 and switch on the refinements one at a time, watching top-1 ImageNet accuracy climb monotonically. This is the table practitioners actually cite."},
+            {"type": "table", "headers": ["Configuration added", "Top-1 accuracy", "Gain"], "rows": [
+              ["Baseline ResNet-50 (standard recipe)", "75.3%", "&mdash;"],
+              ["+ Efficient training (batch 1024, FP16, warmup, zero-&gamma;, no-bias-decay)", "76.2%", "+0.9"],
+              ["+ Model tweaks (ResNet-D stem &amp; shortcut)", "77.2%", "+1.0"],
+              ["+ Cosine learning-rate decay", "77.9%", "+0.7"],
+              ["+ Label smoothing (&epsilon;=0.1)", "78.3%", "+0.4"],
+              ["+ Knowledge distillation (ResNet-152 teacher)", "78.7%", "+0.4"],
+              ["+ Mixup (with 200-epoch training)", "79.29%", "+0.6"]
             ]},
-            {"type": "p", "html": "No single trick is dramatic on its own, but they accumulate to a roughly <strong>4-point top-1 gain</strong> &mdash; turning a stock ResNet-50 into a model competitive with much newer architectures, all without changing the fundamental network."}
+            {"type": "p", "html": "<b>Reading the trajectory.</b> No single line is dramatic &mdash; the biggest single jump is the ~1% from ResNet-D. But they accumulate to roughly a <b>4-point top-1 gain</b> (75.3% &rarr; 79.29%), turning a stock ResNet-50 into a model competitive with much newer architectures, <i>without changing the fundamental network</i>. (Note: distillation&rsquo;s benefit interacts with the others &mdash; it helps less once mixup and a strong teacher recipe are present.)"},
+            {"type": "p", "html": "<b>Why it matters.</b> This is the paper&rsquo;s thesis made quantitative: the training recipe is worth as much as several years of architecture search. It reframes &lsquo;a fair comparison&rsquo; &mdash; you cannot credit a new architecture for beating an <i>under-trained</i> ResNet baseline, because half the gap may just be tricks the new model happened to use."}
           ]
         },
         {
@@ -123,15 +146,17 @@
           "pdfPages": [8],
           "viz": [],
           "blocks": [
-            {"type": "p", "html": "A natural worry is that these tricks merely overfit the ImageNet classification benchmark. The authors show the opposite: the improved backbones transfer to downstream tasks, giving better results on <strong>object detection</strong> and <strong>semantic segmentation</strong>, evidence that the refinements produce genuinely better features rather than benchmark-specific gains."},
+            {"type": "p", "html": "<b>The worry.</b> A skeptic could argue these tricks merely <i>overfit the ImageNet classification benchmark</i> &mdash; squeezing out validation points that mean nothing for real use. If so, the improved backbones would not help on other tasks."},
+            {"type": "p", "html": "<b>The evidence against it.</b> The authors take the trick-trained ResNet-50 backbone and drop it into downstream systems. On <b>object detection</b> (Faster R-CNN on PASCAL VOC) and <b>semantic segmentation</b> (FCN on ADE20K), the better-trained backbone yields better mAP and mIoU than the vanilla one. Better features in, better results out &mdash; so the refinements produce genuinely better representations, not benchmark-specific quirks."},
             {"type": "h2", "text": "What to remember"},
             {"type": "list", "items": [
-              "Training procedure matters as much as architecture; small, well-known tricks compound into large gains.",
-              "Efficient training: linear LR scaling, warmup, zero-gamma init, no-bias-decay, and FP16 low-precision.",
-              "Model tweaks: ResNet-B/C/D fix information loss in the stem and downsampling blocks for ~1% at almost no cost.",
-              "Training refinements: cosine LR decay, label smoothing, mixup, and knowledge distillation.",
-              "Cumulatively, ResNet-50 goes from 75.3% to 79.29% top-1 on ImageNet, and the gains transfer to detection and segmentation."
-            ]}
+              "<b>Training procedure matters as much as architecture</b>; small, well-known tricks compound into large gains.",
+              "<b>Efficient training</b>: linear LR scaling, warmup, zero-&gamma; init, no-bias-decay, and FP16 mixed-precision &mdash; faster <i>and</i> at least as accurate.",
+              "<b>Model tweaks</b>: ResNet-B/C/D fix information loss in the stem and downsampling blocks for ~1% at almost no cost.",
+              "<b>Training refinements</b>: cosine LR decay, label smoothing, mixup, and knowledge distillation.",
+              "<b>Cumulatively</b>: ResNet-50 goes from 75.3% to 79.29% top-1 on ImageNet, and the gains transfer to detection and segmentation."
+            ]},
+            {"type": "p", "html": "<b>Lasting influence.</b> This paper became a standard citation for &lsquo;train your baseline properly before claiming an architecture win&rsquo;, and its recipe directly shaped the default training pipelines in libraries like GluonCV and timm. Many of its tricks &mdash; cosine decay, label smoothing, mixup, zero-&gamma;, FP16 &mdash; are now simply how everyone trains."}
           ]
         }
       ]

@@ -13,10 +13,11 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "An <strong>adversarial example</strong> is an image with a tiny, carefully crafted perturbation that fools a neural network into the wrong prediction. The perturbation is so small that to a human the image looks unchanged, yet the classifier's output flips completely."},
-            {"type": "p", "html": "There are two attack settings. In a <strong>white-box</strong> attack you know the target model's weights, so you can follow its gradient directly. In a <strong>black-box</strong> attack you do not have the weights, so you craft the example on a substitute model you <em>do</em> control and hope it <em>transfers</em> to the unknown target."},
-            {"type": "p", "html": "The catch: the strongest white-box attacks tend to <strong>overfit</strong> the substitute model. They find a perturbation that exploits that one network's quirks, and when you move to a different architecture the attack quietly fails. There is a real tension between attack strength and transferability."},
-            {"type": "quote", "html": "This paper's idea in one sentence: add a <strong>momentum term</strong> to iterative gradient attacks so the update direction is stable across steps, which escapes poor local maxima and dramatically improves transferability to unseen models."}
+            {"type": "p", "html": "An <strong>adversarial example</strong> is an image with a tiny, carefully crafted perturbation that fools a neural network into the wrong prediction. The change is so small that to a human eye the image looks identical &mdash; a panda is still obviously a panda &mdash; yet the classifier flips to, say, 'gibbon' with 99% confidence. The danger is obvious for any deployed vision system."},
+            {"type": "p", "html": "There are two attack settings, and they pull in opposite directions. In a <strong>white-box</strong> attack you know the target model's weights, so you can follow its gradient straight to a fooling perturbation. In a <strong>black-box</strong> attack you do not have the weights &mdash; the realistic case for a commercial API &mdash; so you craft the example on a <em>substitute</em> model you do control and hope it <strong>transfers</strong> to the unknown target."},
+            {"type": "p", "html": "Here is the painful tension this paper resolves. The strongest white-box attacks (iterative ones) tend to <strong>overfit</strong> the substitute model: they find a perturbation that exploits that one network's idiosyncratic quirks, and when you move to a different architecture the attack quietly collapses. Meanwhile the weak one-shot attacks transfer better but barely dent even the substitute. Strength and transferability seem to trade off."},
+            {"type": "p", "html": "An analogy: a student who memorizes one teacher's exact phrasing aces that teacher's test and fails every other teacher's (overfit, like I-FGSM). A student who learns the rough gist does okay everywhere but excels nowhere (FGSM). The paper wants a student who genuinely understands the material &mdash; strong on the home exam <em>and</em> on every other teacher's."},
+            {"type": "quote", "html": "This paper's idea in one sentence: add a momentum term to iterative gradient attacks so the update direction stays stable across steps, which escapes poor local maxima and dramatically improves transferability to unseen models."}
           ]
         }
       ]
@@ -25,17 +26,29 @@
       "title": "Background",
       "pages": [
         {
-          "title": "FGSM and its Iterative Cousin",
-          "subtitle": "One big step versus many small steps",
+          "title": "FGSM: one big step",
+          "subtitle": "The fast, blunt, one-shot attack",
           "pdfPages": [2],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The <strong>Fast Gradient Sign Method (FGSM)</strong> takes a single step in the direction that most increases the loss. It is fast and, because it is a blunt one-shot move, it transfers reasonably well, but it is weak against the model it was built on."},
+            {"type": "p", "html": "Start with the simplest attack. The <strong>Fast Gradient Sign Method (FGSM)</strong> takes a single step in the direction that most increases the model's loss on the true label. It is fast (one gradient evaluation) and, because it is a blunt one-shot move that does not chase fine detail, it transfers reasonably well &mdash; but it is weak even against the model it was built on, often failing to fool it."},
             {"type": "math", "tex": "x^{*} = x + \\epsilon \\cdot \\text{sign}\\big(\\nabla_{x} J(x, y)\\big)"},
-            {"type": "p", "html": "Read this as: nudge every pixel of the clean image $x$ by a fixed amount $\\epsilon$, moving each pixel in the direction (up or down) that raises the loss $J$ for the true label $y$. The $\\text{sign}$ keeps the total change bounded so the image stays within an $\\ell_\\infty$ budget of $\\epsilon$."},
-            {"type": "p", "html": "<strong>Iterative FGSM (I-FGSM / BIM)</strong> instead takes many tiny steps of size $\\alpha$, re-computing the gradient each time and clipping back into the $\\epsilon$-ball. This is far stronger white-box, because it keeps following the loss surface."},
+            {"type": "p", "html": "Term by term: $x$ is the clean image; $y$ its true label; $J(x,y)$ the classification loss (e.g. cross-entropy); $\\nabla_x J$ the gradient of that loss with respect to the <em>pixels</em> (which pixels, nudged which way, would raise the loss); $\\text{sign}(\\cdot)$ collapses each pixel's gradient to just $+1$ or $-1$; and $\\epsilon$ is the fixed perturbation budget. So every pixel is pushed by exactly $\\epsilon$ in the loss-raising direction."},
+            {"type": "p", "html": "Why the sign, not the raw gradient? Because the threat model bounds the perturbation in the <strong>$\\ell_\\infty$ norm</strong> &mdash; no single pixel may change by more than $\\epsilon$. Taking the sign and scaling by $\\epsilon$ puts every pixel exactly at the budget edge, which is the largest legal step. FGSM is essentially a single, maximal $\\ell_\\infty$ step."}
+          ]
+        },
+        {
+          "title": "I-FGSM: many small steps, and why it hurts transfer",
+          "subtitle": "The strength/transfer trade-off, made concrete",
+          "pdfPages": [2],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "If one step is good, surely many are better? <strong>Iterative FGSM (I-FGSM / BIM)</strong> takes many tiny steps of size $\\alpha$, recomputing the gradient at each new point and clipping back into the $\\epsilon$-ball after every step. Against the model it was built on, this is far stronger than FGSM &mdash; it keeps following the loss surface to a high peak, reaching near-100% white-box success."},
             {"type": "math", "tex": "x^{*}_{t+1} = \\text{Clip}_{x,\\epsilon}\\Big\\{ x^{*}_{t} + \\alpha \\cdot \\text{sign}\\big(\\nabla_{x} J(x^{*}_{t}, y)\\big) \\Big\\}"},
-            {"type": "p", "html": "But iterating is exactly what hurts transfer. Each greedy step chases the current model's gradient, so the trajectory drifts into a sharp, model-specific maximum that other networks do not share. We want the strength of iteration <em>and</em> the generalization of a single step."}
+            {"type": "p", "html": "Term by term: $x^{*}_t$ is the current adversarial image at step $t$; $\\alpha$ is the small per-step size (typically $\\epsilon/T$ for $T$ steps); $\\nabla_x J(x^{*}_t, y)$ is the gradient re-evaluated at the <em>updated</em> point; and $\\text{Clip}_{x,\\epsilon}\\{\\cdot\\}$ projects the result back so it never strays more than $\\epsilon$ from the original $x$ in any pixel."},
+            {"type": "p", "html": "But iterating is exactly what wrecks transfer. Each greedy step chases the <em>current</em> model's gradient, so the trajectory drifts into a sharp, narrow, model-specific maximum of the loss &mdash; a peak that exists because of this one network's particular weights and does not appear in other architectures. The example becomes a key cut for one lock."},
+            {"type": "p", "html": "This is the heart of the trade-off the paper attacks. We want the white-box <em>strength</em> of iteration and the black-box <em>generalization</em> of the single FGSM step at the same time. Momentum is the bridge."},
+            {"type": "quote", "html": "I-FGSM is the specialist that aces the home exam and flunks everywhere else; FGSM is the generalist that is mediocre everywhere. We want both."}
           ]
         }
       ]
@@ -49,35 +62,46 @@
           "pdfPages": [3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Momentum is borrowed from optimization. Instead of trusting only the current gradient, you keep a running <strong>velocity</strong> that accumulates past gradient directions. Noisy, conflicting directions cancel out; the consistent underlying direction survives and gets amplified."},
-            {"type": "h2", "text": "Step 1: accumulate the gradient"},
-            {"type": "math", "tex": "g_{t+1} = \\mu \\cdot g_{t} + \\frac{\\nabla_{x} J(x^{*}_{t}, y)}{\\| \\nabla_{x} J(x^{*}_{t}, y) \\|_{1}}"},
-            {"type": "p", "html": "The new velocity $g_{t+1}$ is the old velocity scaled by the <strong>decay factor</strong> $\\mu$ plus the current gradient. The gradient is divided by its own $\\ell_1$ norm first: this normalization matters because raw gradient magnitudes vary wildly from step to step, and without it a single large-magnitude step would dominate the accumulation."},
+            {"type": "p", "html": "Momentum is borrowed straight from optimization (where it accelerates SGD and smooths noisy gradients). The idea: instead of trusting only the current step's gradient, keep a running <strong>velocity</strong> that accumulates past gradient directions. Step-to-step noise and conflicting directions cancel out in the running sum; the consistent underlying direction survives and gets amplified. The trajectory becomes smooth instead of jittery."},
+            {"type": "p", "html": "Why does smoothing help <em>transfer</em> specifically? Because a jittery I-FGSM trajectory dives into a sharp local maximum unique to the substitute model. A momentum-smoothed trajectory averages over those local quirks and heads toward a broad, flat-topped maximum &mdash; the kind that tends to be shared across architectures, and therefore transfers."},
+            {"type": "h2", "text": "Step 1: accumulate the gradient into a velocity"},
+            {"type": "math", "tex": "g_{t+1} = \\mu \\cdot g_{t} + \\frac{\\nabla_{x} J(x^{*}_{t}, y)}{\\lVert \\nabla_{x} J(x^{*}_{t}, y) \\rVert_{1}}"},
+            {"type": "p", "html": "Term by term: $g_t$ is the accumulated velocity (running gradient memory); $\\mu$ is the <strong>decay factor</strong> that controls how much of the past is retained; and the fraction is the current gradient <em>normalized by its own $\\ell_1$ norm</em>. That normalization is essential: raw gradient magnitudes swing wildly from step to step, and without it a single large-magnitude step would dominate the whole accumulation. Dividing by $\\lVert\\cdot\\rVert_1$ puts every step's gradient on equal footing so the <em>direction</em> is what accumulates, not the magnitude."},
             {"type": "h2", "text": "Step 2: step along the accumulated direction"},
             {"type": "math", "tex": "x^{*}_{t+1} = x^{*}_{t} + \\alpha \\cdot \\text{sign}(g_{t+1})"},
-            {"type": "p", "html": "We move by the <em>sign of the accumulated velocity</em>, not the sign of the raw gradient. This is the whole trick. The direction is now an average of many steps, so it is smoother and points at a maximum that generalizes across models rather than one model's idiosyncratic peak."},
-            {"type": "quote", "html": "$\\mu = 0$ collapses back to plain I-FGSM. Larger $\\mu$ gives the attack a longer memory; the paper finds a decay around $\\mu = 1.0$ works well."}
+            {"type": "p", "html": "We move by the <em>sign of the accumulated velocity</em> $g_{t+1}$, not the sign of the raw gradient. That single substitution is the entire method. The step direction is now an average over many past gradients, so it is smoother and points toward a maximum that generalizes across models rather than one model's idiosyncratic peak."},
+            {"type": "quote", "html": "Setting $\\mu = 0$ collapses MI-FGSM exactly back to plain I-FGSM (no memory). Larger $\\mu$ gives a longer memory; the paper finds a decay around $\\mu \\approx 1.0$ works best."}
           ]
         },
         {
           "title": "MI-FGSM, Step by Step",
           "subtitle": "The full algorithm",
-          "pdfPages": [3, 4],
+          "pdfPages": [3],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Putting the two updates together gives <strong>Momentum Iterative FGSM (MI-FGSM)</strong>. Given a clean image $x$ with label $y$, a perturbation budget $\\epsilon$, and $T$ iterations:"},
+            {"type": "p", "html": "Putting the two updates together gives <strong>Momentum Iterative FGSM (MI-FGSM)</strong>. Given a clean image $x$ with label $y$, a perturbation budget $\\epsilon$, a decay $\\mu$, and $T$ iterations, the loop is:"},
             {"type": "list", "items": [
-              "Initialize the velocity $g_0 = 0$ and $x^{*}_0 = x$, and set the step size $\\alpha = \\epsilon / T$ so the total movement respects the budget.",
-              "Compute the gradient of the loss at the current adversarial image.",
-              "Update the velocity: $g_{t+1} = \\mu \\, g_t + \\nabla_x J / \\| \\nabla_x J \\|_1$.",
+              "Initialize the velocity $g_0 = 0$ and $x^{*}_0 = x$; set the step size $\\alpha = \\epsilon / T$ so the cumulative movement respects the $\\ell_\\infty$ budget.",
+              "Compute the gradient $\\nabla_x J(x^{*}_t, y)$ of the loss at the current adversarial image.",
+              "Update the velocity: $g_{t+1} = \\mu\\, g_t + \\nabla_x J / \\lVert \\nabla_x J \\rVert_1$.",
               "Update the image: $x^{*}_{t+1} = x^{*}_t + \\alpha \\cdot \\text{sign}(g_{t+1})$.",
               "Repeat for $T$ steps; the final $x^{*}_T$ is the adversarial example."
             ]},
-            {"type": "p", "html": "Because each step moves by $\\alpha = \\epsilon/T$ in the $\\ell_\\infty$ sense, the cumulative change stays inside the $\\epsilon$-ball over the $T$ iterations."},
-            {"type": "h2", "text": "Attacking an ensemble"},
-            {"type": "p", "html": "To transfer even better, the authors attack <strong>several models at once</strong> by fusing their logits before the loss. An example that fools an ensemble of diverse architectures is far more likely to fool a held-out model, because it cannot rely on any single network's weaknesses."},
+            {"type": "p", "html": "Because each step moves by $\\alpha = \\epsilon/T$ in the $\\ell_\\infty$ sense and there are $T$ steps, the worst-case cumulative change is $T \\cdot (\\epsilon/T) = \\epsilon$ &mdash; so the result automatically stays inside the $\\epsilon$-ball without even needing an explicit clip in the basic version. The cost is essentially the same as I-FGSM: one extra running-sum update per step, no extra gradient evaluations."},
+            {"type": "p", "html": "Design note: the change is genuinely one line over I-FGSM, which is part of why the method spread so fast. It plugs into any iterative gradient attack &mdash; you can momentum-boost almost anything."}
+          ]
+        },
+        {
+          "title": "Attacking an ensemble",
+          "subtitle": "Fuse several models to transfer even further",
+          "pdfPages": [4],
+          "viz": ["adversarial-perturbation"],
+          "blocks": [
+            {"type": "p", "html": "Momentum smooths the trajectory for <em>one</em> substitute model. To transfer even better, the authors attack <strong>several models at once</strong>. The logic mirrors the student analogy: a perturbation forced to fool an ensemble of diverse architectures simultaneously cannot lean on any single network's private weakness, so whatever fools all of them is far more likely to fool a held-out target too."},
+            {"type": "p", "html": "The subtle question is <em>how</em> to combine the models. The authors compare fusing predictions, fusing losses, and fusing logits &mdash; and find that fusing the <strong>logits</strong> (the pre-softmax scores) before computing the loss gives the strongest transfer."},
             {"type": "math", "tex": "l(x) = \\sum_{k=1}^{K} w_k \\, l_k(x), \\qquad \\sum_{k=1}^{K} w_k = 1"},
-            {"type": "p", "html": "Here $l_k$ are the logits of the $k$-th model and $w_k$ are ensemble weights. Fusing logits (rather than predictions or losses) gave the strongest transfer in their experiments."}
+            {"type": "p", "html": "Term by term: $l_k(x)$ is the logit vector of the $k$-th model; $w_k$ is its ensemble weight; and the weights sum to 1 so the fused logits $l(x)$ are a convex combination. The combined loss is then computed on these fused logits, and MI-FGSM runs on that single combined objective &mdash; one momentum trajectory that all $K$ models must agree to climb."},
+            {"type": "p", "html": "Why fuse logits rather than final softmax predictions? Logits carry the raw, unsquashed evidence each model assigns; averaging them keeps gradient signal from confident and unconfident models alike, whereas averaging post-softmax probabilities can wash out a model that is near-saturated. The empirical gap was clear in their ablations."}
           ]
         }
       ]
@@ -91,14 +115,14 @@
           "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "On ImageNet, MI-FGSM keeps the near-100% white-box success of iterative attacks while massively raising black-box success rates. Where plain I-FGSM transferred poorly, momentum lifts black-box fooling rates by large margins against unseen architectures."},
+            {"type": "p", "html": "On ImageNet, MI-FGSM keeps the near-100% white-box success of iterative attacks while massively raising black-box success rates. Where plain I-FGSM transferred poorly to unseen architectures (often only 20&ndash;40%), momentum lifts black-box fooling rates by large margins, frequently doubling them, against held-out networks like Inception-v3, Inception-v4, Inception-ResNet-v2, and ResNet variants."},
             {"type": "table", "headers": ["Attack", "White-box success", "Black-box transfer"], "rows": [
               ["FGSM (1 step)", "Moderate", "Moderate"],
               ["I-FGSM (iterative)", "Very high", "Low"],
               ["MI-FGSM (momentum)", "Very high", "High"]
             ]},
-            {"type": "p", "html": "The qualitative story: I-FGSM is the specialist that aces the home exam and flunks everywhere else; FGSM is the generalist that is mediocre everywhere; MI-FGSM is strong on both because momentum smooths the attack direction into one that several models agree on."},
-            {"type": "p", "html": "Crucially, MI-FGSM also breaks through models hardened with <strong>adversarial training</strong> more often than baseline attacks, because the transferable perturbations it finds are not the ones such defenses were trained to resist."}
+            {"type": "p", "html": "The qualitative story is the trade-off finally resolved: I-FGSM is the specialist that aces the home exam and flunks elsewhere; FGSM is the mediocre generalist; MI-FGSM is strong on both because momentum smooths the attack direction into one that several models agree on. The single $\\mu$ knob interpolates between them &mdash; $\\mu=0$ is I-FGSM, larger $\\mu$ trades a little white-box edge for a lot of transfer."},
+            {"type": "p", "html": "Crucially, MI-FGSM also breaks through models hardened with <strong>adversarial training</strong> more often than baseline attacks. Adversarially trained defenses were largely tuned to resist the overfit, model-specific perturbations of single-model attacks; the broad, transferable perturbations momentum finds are not the ones those defenses learned to repel."}
           ]
         },
         {
@@ -107,9 +131,10 @@
           "pdfPages": [7, 8],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The method, combined with the ensemble strategy, won <strong>first place in both the targeted and non-targeted attack tracks of the NIPS 2017 adversarial competition</strong>. The competition was the ideal test: attacks had to fool secret defense models they had never seen, which is precisely the transfer setting momentum is built for."},
+            {"type": "p", "html": "The method, combined with the logit-ensemble strategy, won <strong>first place in both the targeted and non-targeted attack tracks of the NIPS 2017 Adversarial Attacks and Defenses competition</strong>. The competition was the ideal proving ground: submitted attacks had to fool <em>secret</em> defense models they had never seen &mdash; precisely the transfer setting momentum is built for. Beating a field of strong competitors on unseen models was the strongest possible validation of the transferability claim."},
             {"type": "quote", "html": "Takeaway: stabilizing the gradient direction with momentum turns brittle, overfit white-box attacks into robust black-box attacks. A one-line change to I-FGSM, a large change in real-world threat."},
-            {"type": "p", "html": "The broader lesson for defenders is sobering. If a defense is only evaluated against attacks that overfit a single model, it looks safe; momentum-boosted, ensemble-transferred attacks reveal that the apparent robustness was an illusion of poor transfer, not genuine security."}
+            {"type": "p", "html": "The broader lesson for defenders is sobering, and it connects directly to the rest of this collection. If a defense is only evaluated against attacks that overfit a single model, it looks safe; momentum-boosted, ensemble-transferred attacks reveal that the apparent robustness was an illusion of poor transfer, not genuine security. This is the same warning the <em>Obfuscated Gradients</em> paper would make about gradient-masking defenses, and it is why robust evaluation must include strong transfer and black-box attacks."},
+            {"type": "p", "html": "Historical note: MI-FGSM became a standard baseline overnight. Later transfer attacks &mdash; diverse-input (DI-FGSM), translation-invariant (TI-FGSM), Nesterov-momentum (NI-FGSM) &mdash; are all direct descendants that bolt additional tricks onto the same momentum backbone introduced here."}
           ]
         }
       ]

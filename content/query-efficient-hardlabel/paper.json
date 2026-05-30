@@ -13,18 +13,23 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "The Boundary Attack proved that label-only attacks are possible, but it explored the boundary with a random walk and paid for it with enormous query counts. This paper reframes the hard-label attack as a <strong>well-defined continuous optimization problem</strong>, so that classic zeroth-order optimization can drive the search far more efficiently."}
+            {"type": "p", "html": "The Boundary Attack proved that label-only attacks are possible, but it explored the boundary with a blind random walk and paid for it with enormous query counts &mdash; often $10^5$ to $10^6$ queries per image. This paper's insight is that the same problem can be written as a <strong>clean, continuous optimization problem</strong>, after which classic optimization machinery drives the search far more efficiently."},
+            {"type": "p", "html": "The mental shift is everything. The Boundary Attack asks <em>'which pixels do I nudge?'</em> and wanders. OPT asks <em>'in which direction is the boundary closest, and how far is it?'</em> &mdash; and then does gradient descent on the answer. The result: the same tiny perturbations as the Boundary Attack, but at roughly 3&ndash;4&times; lower query cost, plus actual convergence guarantees."},
+            {"type": "quote", "html": "Replace the discontinuous label loss with a smooth, real-valued quantity the label oracle <em>can</em> measure: the distance to the decision boundary along a chosen direction."}
           ]
         },
         {
-          "title": "The hard-label setting, recapped",
-          "subtitle": "Why the usual objective fails here",
+          "title": "The hard-label setting, and why the obvious approach fails",
+          "subtitle": "You cannot optimize a step function",
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Recall the <strong>hard-label / decision-based</strong> threat model: the attacker submits inputs and sees only the <em>final predicted label</em> &mdash; no probabilities, no logits, no gradients. Success is measured by <strong>queries-to-success</strong>, i.e. how many model evaluations are needed to reach a small perturbation norm."},
-            {"type": "p", "html": "The reason standard attacks break is that the natural loss function is a <em>step function</em> of the input: as you move an image, the predicted label stays constant and then suddenly jumps. A step function has zero gradient almost everywhere and is undefined at the jump, so you cannot optimize it directly, and you cannot even estimate its gradient by finite differences &mdash; tiny probes return the same label and look like zero change."},
-            {"type": "quote", "html": "The whole trick of this paper is to replace that discontinuous label loss with a smooth, real-valued quantity that the label oracle <em>can</em> measure: the distance to the decision boundary along a chosen direction."}
+            {"type": "p", "html": "Recall the shared <strong>hard-label / decision-based</strong> threat model that unites this whole family of papers: the attacker submits inputs and sees only the <em>final predicted label</em> &mdash; no probabilities, no logits, no gradients. Each query buys exactly one bit: <em>is this point classified the way I want, or not?</em> Success is measured by <strong>queries-to-success</strong>: how many evaluations to reach a small perturbation norm (usually $\\ell_2$)."},
+            {"type": "p", "html": "Now picture why a normal attack collapses here. In white-box land you minimize a smooth loss like the cross-entropy with gradient descent. The hard-label analog &mdash; <em>is the label still correct?</em> &mdash; is a <strong>step function</strong> of the input. As you slide an image around, the predicted label stays constant, then suddenly jumps when you cross the boundary."},
+            {"type": "p", "html": "A step function is poison for optimization on two counts. First, its gradient is <strong>zero almost everywhere</strong> and <strong>undefined at the jump</strong>, so there is no slope to descend. Second, you cannot even estimate the gradient by finite differences: probe two nearby points and they almost always return the <em>same</em> label, so the finite difference reads as exactly zero. The optimizer thinks it is on a flat plain when it is actually next to a cliff."},
+            {"type": "math", "tex": "\\text{loss}(x) = \\mathbb{1}[\\,f(x) = y_0\\,] \\;\\; \\Rightarrow \\;\\; \\nabla_x \\text{loss}(x) = 0 \\text{ a.e.}, \\text{ undefined at boundary}"},
+            {"type": "p", "html": "Reading this: $f(x)$ is the hard-label classifier, $y_0$ the true class, and $\\mathbb{1}[\\cdot]$ the indicator that returns 1 when its condition holds. The loss is flat (gradient zero) everywhere except the boundary, where it has a discontinuous jump. <strong>This dead-flat-then-cliff shape is the central obstacle the paper must engineer around.</strong>"},
+            {"type": "quote", "html": "The whole trick: stop measuring the label directly. Instead measure how far the boundary is along a direction &mdash; a quantity that varies smoothly."}
           ]
         }
       ]
@@ -38,37 +43,41 @@
           "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Instead of asking \"which pixels should I perturb?\", OPT asks \"in which <strong>direction</strong> from the original image is the boundary closest?\". For any unit direction $\\theta$, define $g(\\theta)$ as the distance you must travel from the original image $x_0$ along $\\theta$ before the prediction changes. That distance is exactly the radius at which $\\theta$ first becomes adversarial."},
+            {"type": "p", "html": "Here is the reformulation that makes everything work. Stand at the original image $x_0$ and shine a flashlight in some direction $\\theta$. Walk along that beam; at some distance the model's label flips. Define $g(\\theta)$ as exactly that distance &mdash; how far you travel from $x_0$ along $\\theta$ before the prediction changes. A small $g(\\theta)$ means the boundary is close in that direction, which is exactly where you want to plant a tiny perturbation."},
             {"type": "math", "tex": "g(\\theta) = \\min_{\\lambda > 0} \\; \\lambda \\quad \\text{such that } f\\!\\left(x_0 + \\lambda \\tfrac{\\theta}{\\lVert \\theta \\rVert}\\right) \\neq y_0"},
-            {"type": "p", "html": "In words: walk outward from $x_0$ in direction $\\theta$ and record the first distance $\\lambda$ at which the hard-label classifier $f$ changes its answer. Small $g(\\theta)$ means the boundary is near in that direction &mdash; a good place to plant a small perturbation."},
-            {"type": "math", "tex": "\\min_{\\theta} \\; g(\\theta)"},
-            {"type": "p", "html": "The attack reduces to this clean objective: find the direction whose boundary distance is smallest. The optimal $\\theta^{*}$ gives the smallest adversarial perturbation, of size $g(\\theta^{*})$. Unlike the raw label loss, $g(\\theta)$ is <em>continuous</em> in $\\theta$, so it can actually be optimized."}
+            {"type": "p", "html": "Term by term: $x_0$ is the original image; $\\theta/\\lVert\\theta\\rVert$ is the unit direction (the beam); $\\lambda$ is the distance traveled; $f(\\cdot)$ is the label oracle; $y_0$ the original class. So $g(\\theta)$ is the smallest distance $\\lambda$ at which the label first becomes wrong. (For a <strong>targeted</strong> attack, replace $f(\\cdot)\\neq y_0$ with $f(\\cdot)=y_{\\text{target}}$ and aim the beam toward a target-class image.)"},
+            {"type": "math", "tex": "\\min_{\\theta} \\; g(\\theta) \\qquad \\Rightarrow \\qquad \\theta^{*}, \\;\\; \\text{adversarial perturbation of size } g(\\theta^{*})"},
+            {"type": "p", "html": "The entire attack is now this one line: find the direction $\\theta^{*}$ whose boundary distance is smallest. That direction gives the smallest adversarial perturbation, with norm $g(\\theta^{*})$. The payoff: unlike the raw step-function label loss, <strong>$g(\\theta)$ is continuous in $\\theta$</strong> &mdash; rotate the beam a little and the crossing distance moves a little. Now there is a real surface to descend."},
+            {"type": "p", "html": "Why does this dodge the cliff problem? Because we moved the discontinuity <em>inside</em> $g$. The label still jumps, but it jumps as a function of $\\lambda$ along a fixed beam &mdash; and we handle that jump with binary search (next page), not with gradients. The outer variable $\\theta$ sees only the smooth distance."}
           ]
         },
         {
-          "title": "Measuring g via binary search",
-          "subtitle": "The label oracle is enough",
+          "title": "Measuring g with binary search",
+          "subtitle": "Extracting a real number from a yes/no oracle",
           "pdfPages": [4],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "Computing $g(\\theta)$ needs only hard labels. First do a coarse search outward until the label flips, bracketing the boundary. Then <strong>binary search</strong> between the last adversarial and last non-adversarial radii to pin down the crossing distance to any desired precision. Each query answers one yes/no question, and binary search converts that into a real number with only logarithmically many queries."},
+            {"type": "p", "html": "Computing $g(\\theta)$ needs nothing but hard labels. Two phases: first bracket the boundary with a coarse outward search, then pin it down with binary search. A worked picture: suppose along direction $\\theta$ the label is still correct at $\\lambda=1$ but wrong at $\\lambda=8$. The boundary lies between 1 and 8."},
             {"type": "list", "items": [
-              "Coarse step: increase $\\lambda$ until the predicted label changes, giving a bracket.",
-              "Binary search: halve the bracket repeatedly until $g(\\theta)$ is known to the target tolerance.",
-              "Result: a smooth value extracted from a discontinuous oracle, at a cost of a handful of queries per evaluation."
-            ]}
+              "<b>Coarse step:</b> grow $\\lambda$ (e.g. double it: 1, 2, 4, 8...) querying the label each time, until it flips &mdash; giving a bracket $[\\lambda_{\\text{lo}}, \\lambda_{\\text{hi}}]$ with correct label below and wrong label above.",
+              "<b>Binary search:</b> query the midpoint; if it is adversarial move $\\lambda_{\\text{hi}}$ down, else move $\\lambda_{\\text{lo}}$ up. Each query halves the interval.",
+              "<b>Result:</b> a real-valued $g(\\theta)$ known to tolerance $\\epsilon$ in about $\\log_2(\\text{range}/\\epsilon)$ queries &mdash; a handful per evaluation."
+            ]},
+            {"type": "p", "html": "This is the crux of how a discontinuous oracle yields a smooth number: binary search converts a sequence of one-bit yes/no answers into a precise distance, at logarithmic cost. The trade-off to remember: <strong>every single evaluation of $g$ hides a whole binary search</strong>, so $g$ is not free &mdash; this is the cost Sign-OPT will later attack."}
           ]
         },
         {
           "title": "Zeroth-order optimization of the direction",
-          "subtitle": "Estimating the gradient of g without gradients",
-          "pdfPages": [5],
+          "subtitle": "Estimating the gradient of g without any gradient",
+          "pdfPages": [5, 6],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "We can evaluate $g(\\theta)$ but we have no analytic gradient for it. So OPT uses a <strong>zeroth-order</strong> (gradient-free) estimate: perturb the direction by a random vector $u$, measure how $g$ changes, and use that finite difference as a stand-in for the directional derivative."},
-            {"type": "math", "tex": "\\hat{\\nabla} g(\\theta) \\approx \\frac{g(\\theta + \\beta u) - g(\\theta)}{\\beta}\\, u"},
-            {"type": "p", "html": "Read it as: probe the boundary in a slightly rotated direction $\\theta + \\beta u$, see whether the boundary got nearer or farther, and turn that difference into an estimated gradient pointing toward closer boundaries. Averaging several random $u$ reduces noise. Then take a standard gradient-descent step on $\\theta$ and renormalize."},
-            {"type": "quote", "html": "Each gradient estimate is expensive here: every $g$ evaluation hides a whole binary search, and we need several per step. This is exactly the cost that Sign-OPT later attacks."}
+            {"type": "p", "html": "We can <em>evaluate</em> $g(\\theta)$ but we have no formula for its gradient (the oracle is a black box). So OPT estimates the gradient the gradient-free way, called <strong>zeroth-order optimization</strong>: jiggle $\\theta$ by a small random vector $u$, measure how $g$ responds, and read that finite difference as the slope in direction $u$."},
+            {"type": "math", "tex": "\\hat{g} = \\frac{1}{Q}\\sum_{q=1}^{Q} \\frac{g(\\theta + \\beta u_q) - g(\\theta)}{\\beta}\\, u_q, \\qquad u_q \\sim \\mathcal{N}(0, I)"},
+            {"type": "p", "html": "Term by term: $u_q$ is a random Gaussian direction (a tiny rotation of the beam); $\\beta$ is a small smoothing radius; $g(\\theta+\\beta u_q)-g(\\theta)$ asks <em>did rotating toward $u_q$ bring the boundary nearer or push it farther?</em>; dividing by $\\beta$ turns that into a slope; multiplying by $u_q$ points the estimate along that direction. Averaging over $Q$ random probes (the paper uses around $Q=20$) cancels noise. The result $\\hat{g}$ is an estimated gradient of $g$."},
+            {"type": "math", "tex": "\\theta_{t+1} = \\theta_t - \\eta \\, \\hat{g}, \\qquad \\text{then renormalize } \\theta_{t+1} \\leftarrow \\theta_{t+1} / \\lVert \\theta_{t+1} \\rVert"},
+            {"type": "p", "html": "Then take an ordinary gradient-descent step with learning rate $\\eta$ and renormalize so $\\theta$ stays a unit direction. Iterate until $g(\\theta)$ stops shrinking. The final adversarial example is $x_0 + g(\\theta^{*})\\,\\theta^{*}$."},
+            {"type": "quote", "html": "The hidden bill: each of the $Q$ probes per step requires its own binary search to evaluate $g$. That multiplication &mdash; $Q$ probes &times; many bisection queries &times; many steps &mdash; is exactly what Sign-OPT later slashes."}
           ]
         }
       ]
@@ -78,12 +87,18 @@
       "pages": [
         {
           "title": "Far fewer queries than the random walk",
-          "subtitle": "OPT versus Boundary Attack",
-          "pdfPages": [5],
+          "subtitle": "OPT versus Boundary Attack, by the numbers",
+          "pdfPages": [7],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "By turning exploration into directed optimization, OPT reaches the same perturbation sizes as the Boundary Attack using <strong>3&ndash;4&times; fewer queries</strong>, and it converges in cases where the random walk stalls. It also handles both untargeted and targeted attacks (the latter by walking toward a target-class image), and applies beyond images, for example to discrete or otherwise non-differentiable models, because it only ever needs the label oracle."},
-            {"type": "p", "html": "The provable-convergence framing was itself a contribution: because $g(\\theta)$ is a genuine continuous objective, the attack inherits convergence guarantees from zeroth-order optimization theory, unlike the heuristic random walk."}
+            {"type": "p", "html": "By turning aimless exploration into directed optimization, OPT reaches the same perturbation sizes as the Boundary Attack using roughly <strong>3&ndash;4&times; fewer queries</strong>, and it converges in cases where the random walk stalls. On MNIST, CIFAR-10, and ImageNet it consistently produces a smaller distortion at any fixed query budget."},
+            {"type": "table", "headers": ["Dataset", "Boundary Attack queries", "OPT queries (similar distortion)"], "rows": [
+              ["MNIST", "~60k", "~13k&ndash;20k"],
+              ["CIFAR-10", "~25k", "~7k"],
+              ["ImageNet (untargeted)", "~120k+", "~30k&ndash;70k"]
+            ]},
+            {"type": "p", "html": "Two further wins. (1) It handles <strong>targeted</strong> attacks cleanly &mdash; just initialize the beam toward an image of the target class. (2) It generalizes <strong>beyond images</strong>: because it only ever queries a label oracle, the same method attacks non-differentiable models such as gradient-boosted decision trees, which white-box and finite-difference score-based attacks cannot touch."},
+            {"type": "p", "html": "The provable-convergence framing is itself a contribution. Because $g(\\theta)$ is a genuine continuous (Lipschitz) objective, the attack inherits the convergence guarantees of zeroth-order stochastic gradient descent &mdash; something the heuristic random walk could never claim."}
           ]
         },
         {
@@ -92,9 +107,9 @@
           "pdfPages": [1],
           "viz": ["adversarial-perturbation"],
           "blocks": [
-            {"type": "p", "html": "OPT's lasting contribution is the <strong>direction-and-distance formulation</strong>: $\\min_{\\theta} g(\\theta)$, with $g$ measured by binary search. This single idea makes the hard-label problem differentiable-in-spirit and opens it to the full toolbox of zeroth-order optimization."},
-            {"type": "p", "html": "Its remaining bottleneck is the price of each gradient estimate: every evaluation of $g$ is a binary search, and a gradient needs many of them. Sign-OPT removes most of that cost by noticing you only need the <em>sign</em> of the directional derivative, not its magnitude."},
-            {"type": "quote", "html": "OPT: reformulate the attack as minimizing the distance-to-boundary $g(\\theta)$ along a direction, estimate that distance by binary search, and optimize $\\theta$ with zeroth-order gradients."}
+            {"type": "p", "html": "OPT's lasting gift is the <strong>direction-and-distance formulation</strong>: $\\min_{\\theta} g(\\theta)$, with $g$ measured by binary search. This single move makes the hard-label problem behave like a smooth optimization and opens it to the whole toolbox of zeroth-order methods. Every later hard-label attack in this collection is a variation on it."},
+            {"type": "p", "html": "Its remaining bottleneck is the price of each gradient estimate, and the paper is honest about it: every evaluation of $g$ is a binary search, and one gradient step needs $Q$ of them. <strong>Sign-OPT</strong> removes most of that cost with a sharp observation &mdash; to descend, you only need the <em>sign</em> of each directional derivative, not its magnitude, and the sign can be read from a single comparison rather than a full bisection. <strong>HopSkipJump</strong> takes a different route, estimating the gradient direction at the boundary by Monte-Carlo sampling."},
+            {"type": "quote", "html": "OPT: reformulate the attack as minimizing the distance-to-boundary $g(\\theta)$ along a direction, measure that distance by binary search, and optimize $\\theta$ with zeroth-order gradients."}
           ]
         }
       ]

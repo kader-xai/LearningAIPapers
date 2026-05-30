@@ -8,18 +8,20 @@
       "title": "Abstract",
       "pages": [
         {
-          "title": "Open datasets for cybersecurity LLM training",
+          "title": "Open Datasets for Cybersecurity LLM Training",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "General-purpose LLMs underperform on cybersecurity tasks — the domain has its own vocabulary (CVEs, MITRE ATT&CK techniques, attack chain semantics), its own knowledge graph (vulnerability databases, threat intelligence reports), and its own task structure (incident response, malware analysis, log triage)." },
-            { "type": "p", "html": "<b>PRIMUS</b> is a curated, openly-released collection of cybersecurity datasets covering all three stages of LLM adaptation:" },
-            { "type": "list", "items": [
-              "<b>PRIMUS-SEED</b> — high-quality seed corpus from authoritative sources.",
-              "<b>PRIMUS-FineWeb</b> — large-scale pre-training corpus filtered from CommonCrawl using a classifier trained on PRIMUS-SEED.",
-              "<b>PRIMUS-Instruct</b> — instruction-tuning data tailored to cybersecurity workflows.",
-              "<b>PRIMUS-Reasoning</b> — reasoning-trace data distilled from a teacher model for reflection-style training."
+            {"type": "p", "html": "General-purpose LLMs are good at almost everything except, it turns out, security. The domain has its own vocabulary (<b>CVE</b> identifiers, <b>MITRE ATT&amp;CK</b> techniques, the semantics of an attack chain), its own knowledge base (vulnerability databases, vendor threat-intelligence reports), and its own task structure (incident response, malware analysis, log triage). A model that has only read the open web has seen these things in passing but never been trained to reason about them."},
+            {"type": "p", "html": "Concretely: ask a stock chat model &ldquo;What does MITRE ATT&amp;CK technique T1059.001 enable, and which intrusion sets use it?&rdquo; and you get vague, often wrong answers, because that knowledge is buried in specialist reports the model barely sampled. The fix is not a bigger model &mdash; it is the right <em>data</em>. And until this paper, that data did not exist in the open."},
+            {"type": "p", "html": "<b>PRIMUS</b> is a curated, openly-released collection of cybersecurity datasets from Trend Micro Research, covering all three stages of adapting an LLM to a domain:"},
+            {"type": "list", "items": [
+              "<b>PRIMUS-SEED</b> &mdash; a high-quality seed corpus hand-gathered from authoritative sources (about 100M tokens).",
+              "<b>PRIMUS-FineWeb</b> &mdash; a large pre-training corpus (about 2.57&nbsp;billion tokens) filtered out of CommonCrawl/FineWeb by a classifier trained <em>on</em> PRIMUS-SEED.",
+              "<b>PRIMUS-Instruct</b> &mdash; instruction-tuning data tailored to real cybersecurity workflows.",
+              "<b>PRIMUS-Reasoning</b> &mdash; chain-of-thought reasoning traces distilled from a strong teacher model, for reflection-style training."
             ]},
-            { "type": "p", "html": "Headline result: continued pre-training on PRIMUS-FineWeb gives a <b>15.9% improvement</b> on aggregated cybersecurity benchmarks. All datasets are released under the MIT license; classifiers and code under ODC-BY." }
+            {"type": "quote", "html": "Headline result: continued pre-training on PRIMUS-FineWeb gives a <b>15.9% improvement</b> on aggregated cybersecurity benchmarks, while the model <em>retains</em> its general instruction-following ability."},
+            {"type": "p", "html": "Everything is released openly &mdash; datasets under the MIT license, classifiers and code under ODC-BY &mdash; explicitly so the community can build on it. The resulting models are named <b>Llama-Primus-Base</b>, <b>Llama-Primus-Merged</b>, and <b>Llama-Primus-Reasoning</b>, all built on Llama-3.1-8B-Instruct."}
           ]
         }
       ]
@@ -28,62 +30,108 @@
       "title": "1. Introduction",
       "pages": [
         {
-          "title": "Why a cybersecurity-specific corpus matters",
+          "title": "Why a Cybersecurity-Specific Corpus Matters",
           "pdfPages": [1, 2],
           "blocks": [
-            { "type": "p", "html": "Three observations motivate the work:" },
-            { "type": "list", "items": [
-              "Recent surveys (Zhang 2024, Xu 2024) show base LLMs trained on web text are systematically weak at cybersecurity tasks despite covering many adjacent domains.",
-              "Existing cybersecurity LLM papers (LLaMa-Primus, Lily, CySecBert) all build on private or closed datasets — limiting reproducibility and stalling community progress.",
-              "Other technical domains (medicine, code, math) have benefited enormously from public domain-specific corpora. Cybersecurity has not had its equivalent until now."
-            ]}
+            {"type": "p", "html": "The paper opens from a simple, well-documented gap. Recent surveys (Zhang 2024; Xu 2024) find that base LLMs trained on web text are <em>systematically</em> weak at cybersecurity tasks, even though they cover plenty of adjacent material like general programming and IT. The specialist knowledge &mdash; how a particular malware family behaves, what a CVE actually exploits, how to read an OSINT threat report &mdash; is too sparse and too technical to absorb from generic crawl data."},
+            {"type": "p", "html": "An analogy makes the point. Other technical fields solved exactly this problem with public domain corpora: code models leapt forward once large code datasets existed, and math models improved once math-heavy corpora were curated. Medicine, code, and math each got their dedicated training data. Cybersecurity simply never had its equivalent &mdash; that is the hole PRIMUS fills."},
+            {"type": "p", "html": "Three observations frame the contribution:"},
+            {"type": "list", "items": [
+              "Base LLMs underperform on security despite broad web coverage &mdash; the domain knowledge is too sparse and specialized to pick up incidentally.",
+              "Prior cybersecurity-LLM efforts (LLaMA-Primus precursors, Lily, CySecBERT) were built on <em>private or closed</em> datasets, so nobody could reproduce or extend them &mdash; progress stalled.",
+              "A complete adaptation pipeline needs data for <em>all</em> stages &mdash; pre-training, instruction tuning, and reasoning &mdash; not just one, and PRIMUS supplies all three."
+            ]},
+            {"type": "p", "html": "Figure 2 of the paper shows the payoff visually: across fine-tuned LMs, models trained on the PRIMUS cybersecurity knowledge base outperform their baselines on security benchmarks &mdash; the data, not a new architecture, does the work."}
           ]
         }
       ]
     },
     {
-      "title": "2. Training datasets",
+      "title": "2. Training Datasets",
       "pages": [
         {
-          "title": "PRIMUS-SEED: high-quality seed corpus",
+          "title": "PRIMUS-SEED: The High-Quality Foundation",
           "pdfPages": [2, 3],
           "blocks": [
-            { "type": "p", "html": "PRIMUS-SEED is the curated foundation — scraped from authoritative cybersecurity sources (CISA, NIST, MITRE, security vendor advisories, well-known security blogs, conference proceedings)." },
-            { "type": "p", "html": "Source documents are converted from HTML to clean Markdown using <code>dom-to-semantic-markdown</code>, then deduplicated and lightly filtered. Result: a smaller but very high-quality corpus that's used both as direct training data and as positive examples for the classifier that filters the much larger FineWeb step." }
+            {"type": "p", "html": "PRIMUS-SEED is the hand-curated bedrock that everything else is built on. It is gathered from two kinds of source: an <b>official dump / web crawl</b> of trustworthy security content, and <b>expert curation</b> of structured threat-intelligence (CTI) knowledge."},
+            {"type": "p", "html": "The official-dump side scrapes authoritative, security-relevant text: cybersecurity blogs and news, the cybersecurity slice of <b>Wikipedia</b> (reached by a GPT-4-built category tree starting from &ldquo;Computer Security&rdquo;), and <b>MITRE</b> documentation. The expert-curation side pulls structured CTI entities &mdash; <b>Campaigns, Intrusion Sets, Malware, Reports, Threat Actors, Tools, and Vulnerabilities (CVEs)</b> &mdash; using sources like MITRE ATT&amp;CK, CAPEC, CVE, and CWE plus vendor advisories. This is the part that teaches the model the domain&rsquo;s actual knowledge graph: who attacks, with what tools, exploiting which weaknesses."},
+            {"type": "table", "headers": ["Source category (selected)", "Samples", "Tokens"], "rows": [
+              ["Cybersecurity Blogs/News", "2,946", "9,751,002"],
+              ["Cybersecurity Wikipedia", "6,636", "9,567,196"],
+              ["MITRE", "3,432", "2,435,118"],
+              ["Vulnerabilities (CVEs)", "559,054", "98,006,720 (largest by volume)"],
+              ["Total PRIMUS-SEED", "674,848", "~100,036,516"]
+            ]},
+            {"type": "p", "html": "Roughly 100 million tokens is small by pre-training standards &mdash; deliberately so. Source HTML is converted to clean Markdown with <code>dom-to-semantic-markdown</code>, then put through a quality pipeline (next paragraph). The result is a corpus that is <em>small but pristine</em>, and it serves two distinct jobs: it is direct high-quality training data, <em>and</em> it is the set of positive examples used to train the classifier that will sift the much larger FineWeb corpus."},
+            {"type": "p", "html": "The preprocessing pipeline has three stages, each defining jargon as it goes. <b>LM filtering</b> (drop low-quality text): a 5-gram <em>KenLM</em> language model trained on English Wikipedia scores each document by <b>perplexity</b> (how &ldquo;surprised&rdquo; the model is &mdash; high perplexity means garbled or off-language text), and high-perplexity documents are removed. <b>Deduplication</b>: <em>MinHash</em> on 5-grams flags near-duplicates, and documents more than 75% similar are dropped so the model is not over-trained on repeated text. <b>C4 filtering</b>: the heuristic rules from Google&rsquo;s C4 corpus remove lines without terminal punctuation, boilerplate, JavaScript, and other web cruft."}
           ]
         },
         {
-          "title": "PRIMUS-FineWeb: classifier-filtered scale",
+          "title": "PRIMUS-FineWeb: Classifier-Filtered Scale",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "The scale problem: PRIMUS-SEED alone isn't large enough to meaningfully shift a base model. The solution: train a classifier on PRIMUS-SEED (positive class) and random CommonCrawl text (negative class), then run it across CommonCrawl/FineWeb to extract every document that looks cybersecurity-relevant." },
-            { "type": "p", "html": "This is the same fastText-classifier-on-Common-Crawl recipe used for code and math corpora — applied here to cybersecurity. The yield is on the order of billions of tokens of in-domain text." }
+            {"type": "p", "html": "Here is the scale problem stated bluntly: 100M tokens of seed data is not nearly enough to shift the behavior of an 8-billion-parameter model during continued pre-training. You need <em>billions</em> of in-domain tokens. But you cannot hand-curate billions of tokens. So PRIMUS borrows the trick that built the big code and math corpora and applies it to security."},
+            {"type": "p", "html": "The recipe: train a lightweight <b>fastText</b> text classifier with PRIMUS-SEED documents as the <em>positive</em> class (&ldquo;this is cybersecurity&rdquo;) and random FineWeb/CommonCrawl documents as the <em>negative</em> class (&ldquo;this is generic web text&rdquo;). Then run that classifier across the enormous FineWeb crawl and keep every document it scores as cybersecurity-relevant. The classifier is cheap enough to apply to the whole web, and good enough to find the needles."},
+            {"type": "p", "html": "The key tuning knob is the <b>score threshold</b>. Set it high and you keep only the most obviously-security documents (fewer tokens, very pure); set it low and you keep more but admit noise. The paper sweeps thresholds and reports the trade-off explicitly:"},
+            {"type": "table", "headers": ["Threshold", "Yield (tokens, after dedup)", "Purity"], "rows": [
+              ["High (e.g. 0.9)", "Small (~ tens of M)", "Very high, but too little data"],
+              ["0.003 (chosen)", "~2.57 billion tokens", "Balanced — the operating point"],
+              ["Lower", "More tokens", "More off-topic noise creeps in"]
+            ]},
+            {"type": "p", "html": "At the chosen threshold of <b>0.003</b>, after deduplication, PRIMUS-FineWeb yields about <b>2.57&nbsp;billion tokens</b> of in-domain text &mdash; roughly 25&times; the size of the seed corpus, and enough to meaningfully retrain the base model. A deduplication analysis (Figure 4) confirms a large chunk of raw matches were near-duplicates worth removing, so the 2.57B figure is the <em>clean</em> count."},
+            {"type": "p", "html": "This classifier-on-CommonCrawl approach is the same proven recipe behind public code and math corpora &mdash; the contribution is recognizing that it works just as well for cybersecurity, and releasing both the classifier and the resulting corpus openly."}
           ]
         },
         {
           "title": "PRIMUS-Instruct and PRIMUS-Reasoning",
           "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "<b>PRIMUS-Instruct</b>: instruction-response pairs covering common cybersecurity workflows — explaining a CVE, classifying a log entry, walking through an attack chain, answering policy questions. Seeded from real expert content and expanded with templates." },
-            { "type": "p", "html": "<b>PRIMUS-Reasoning</b>: longer-form reasoning traces (chain-of-thought style) distilled from a strong teacher model on cybersecurity problems. Intended for reflection-style fine-tuning where the model is taught to think step by step before answering." }
+            {"type": "p", "html": "Pre-training teaches the model <em>knowledge</em>; the last two datasets teach it <em>behavior</em>. <b>PRIMUS-Instruct</b> is a set of instruction&ndash;response pairs covering realistic cybersecurity workflows &mdash; explaining a CVE, classifying a log entry, walking through an attack chain, answering a security-policy question. It is seeded from genuine expert content and expanded with GPT-4o, deliberately kept small and high-quality (on the order of a few thousand carefully written examples) rather than mass-generated, because a little clean instruction data goes a long way after good pre-training."},
+            {"type": "p", "html": "<b>PRIMUS-Reasoning</b> targets multi-step problems where the model should <em>think before it answers</em>. It contains longer chain-of-thought reasoning traces on CTI-Bench problems, distilled from strong teacher models &mdash; the paper uses outputs from <b>o1-preview</b> and <b>DeepSeek-R1</b> &mdash; each trace ending in a final answer. Training on these teaches the smaller Llama model a reflection-style habit: lay out the steps, then commit to an answer."},
+            {"type": "p", "html": "A nice secondary finding flagged here and quantified later: this reasoning training does not just raise accuracy, it improves <b>calibration</b> &mdash; the model&rsquo;s stated confidence lines up better with how often it is actually right (a lower Expected Calibration Error). In security, where a confidently-wrong answer is dangerous, that matters as much as raw accuracy."}
           ]
         }
       ]
     },
     {
-      "title": "3. Experiments",
+      "title": "3. Evaluation & Results",
       "pages": [
         {
-          "title": "Continued pre-training and fine-tuning gains",
-          "pdfPages": [6, 7, 8],
+          "title": "The Benchmarks and Evaluation Protocol",
+          "pdfPages": [6],
           "blocks": [
-            { "type": "p", "html": "Key numbers:" },
-            { "type": "list", "items": [
-              "<b>Continued pre-training</b> on PRIMUS-FineWeb gives Llama-3.1-8B-Instruct a 15.9% lift on aggregated cybersecurity benchmarks while retaining general-instruction-following capability.",
-              "<b>Instruction tuning</b> with PRIMUS-Instruct gives a 15.8% gain on security certification benchmarks.",
-              "<b>Reasoning distillation</b> with PRIMUS-Reasoning further improves multi-step reasoning tasks where chain-of-thought helps."
+            {"type": "p", "html": "To make the gains credible, the authors evaluate on <b>seven</b> established cybersecurity benchmarks rather than a single favorable one, spanning both knowledge and applied reasoning. Knowing roughly what each measures helps read the results:"},
+            {"type": "list", "items": [
+              "<b>CISSP</b> &mdash; multiple-choice questions from the widely-recognized security-management certification.",
+              "<b>CTI-Bench</b> (CTI-MCQ, CTI-RCM, CTI-VSP, CTI-ATE) &mdash; a suite testing a model&rsquo;s grasp of threat-intelligence: standards, CVE&rarr;CWE mapping, vulnerability severity (CVSS), and ATT&amp;CK technique extraction.",
+              "<b>CyberMetric</b> &mdash; RAG-validated multiple-choice across cryptography, network security, penetration testing, and more.",
+              "<b>SecEval</b> &mdash; ~2,000 multiple-choice questions built from textbooks and official docs across nine security domains."
             ]},
-            { "type": "p", "html": "Importantly, the gains stack — continued pre-training plus instruction tuning plus reasoning distillation gives larger total improvements than any single stage alone." }
+            {"type": "p", "html": "Evaluation runs through the standard <code>lm-evaluation-harness</code> for reproducibility, and is done in <b>5-shot</b> (give the model five worked examples) to ensure fairness. The aggregate score is the mean across all benchmarks, and the suite covers both rote knowledge (CISSP, SecEval) and applied reasoning (CTI-RCM, CTI-VSP), so a method cannot win just by memorizing facts."}
+          ]
+        },
+        {
+          "title": "Pre-Training: +15.9% on Cyber Benchmarks",
+          "pdfPages": [7],
+          "blocks": [
+            {"type": "p", "html": "The central result. Starting from <b>Llama-3.1-8B-Instruct</b>, the authors continue pre-training on the PRIMUS corpora and measure the aggregate cybersecurity score. The numbers (Table 5) climb at each stage:"},
+            {"type": "table", "headers": ["Model", "Aggregate cyber score"], "rows": [
+              ["Llama-3.1-8B-Instruct (baseline)", "0.5916"],
+              ["+ PRIMUS-SEED", "0.6498"],
+              ["+ PRIMUS-FineWeb", "0.6498"],
+              ["+ PRIMUS-SEED + FineWeb (Llama-Primus-Base)", "0.6858  →  +15.9%"]
+            ]},
+            {"type": "p", "html": "Reading the table: each ingredient helps, and combining the pristine seed corpus with the large FineWeb corpus gives the best result &mdash; <b>0.6858</b>, a <b>15.9%</b> relative lift over the 0.5916 baseline. Crucially, the paper checks that this domain adaptation does <em>not</em> wreck general ability: the model <b>retains its general instruction-following capability</b>, so it is a better security analyst without becoming a worse assistant. (Catastrophic forgetting &mdash; losing old skills while learning new ones &mdash; is the usual risk of continued pre-training, and they confirm it does not happen here.)"},
+            {"type": "p", "html": "To combine the two corpora they use a <em>Mean Absolute Deviation</em> weight-merging step that restores the base model&rsquo;s instruction tuning while keeping the new knowledge &mdash; producing the model they call <b>Llama-Primus-Merged</b>."}
+          ]
+        },
+        {
+          "title": "Instruction Tuning & Reasoning Distillation",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type": "p", "html": "Two further stages stack on top of the pre-trained base. <b>Instruction tuning</b> with PRIMUS-Instruct sharpens the model&rsquo;s ability to follow security-task prompts; evaluated on a cybersecurity <b>MT-Bench</b> (an LLM-as-judge benchmark for instruction quality), it lifts the score by about <b>5.4%</b>, raising MT-Bench from roughly 5.86 toward 8.29 &mdash; despite using only a few thousand instruction examples, underscoring how data-efficient this stage is after good pre-training."},
+            {"type": "p", "html": "<b>Reasoning distillation</b> with PRIMUS-Reasoning trains the model on chain-of-thought traces from o1-preview and DeepSeek-R1 over CTI-Bench problems. The result, <b>Llama-Primus-Reasoning</b>, improves on the CTI-Bench reasoning tasks &mdash; the paper reports a roughly <b>10%</b> gain on CTI-RCM and CTI-VSP &mdash; and, notably, sharply reduces the <b>Expected Calibration Error (ECE)</b>, meaning its confidence is far better aligned with its correctness."},
+            {"type": "p", "html": "The overarching finding is that the gains <em>stack</em>: pre-training, then instruction tuning, then reasoning distillation each adds value, and the full pipeline beats any single stage. A domain-calibration analysis (Table 9) further shows the improvements are spread across security subdomains rather than concentrated in one easy slice."}
           ]
         }
       ]
@@ -92,11 +140,12 @@
       "title": "4. Conclusion",
       "pages": [
         {
-          "title": "Open data as a foundation for cybersecurity AI",
-          "pdfPages": [9, 10],
+          "title": "Open Data as a Foundation for Cybersecurity AI",
+          "pdfPages": [9],
           "blocks": [
-            { "type": "p", "html": "PRIMUS is the first openly licensed, comprehensive cybersecurity LLM training corpus spanning pre-training, instruction tuning, and reasoning. The paper argues this is the first piece of common infrastructure the community has needed to make cybersecurity-LLM research reproducible and cumulative." },
-            { "type": "p", "html": "Future directions called out: multilingual cybersecurity data, more recent threat intelligence, evaluation benchmarks specific to red-team and blue-team workflows, and safety considerations specific to releasing security-capable models openly." }
+            {"type": "p", "html": "PRIMUS is the first openly-licensed, comprehensive cybersecurity LLM training corpus spanning all three adaptation stages &mdash; pre-training (SEED + FineWeb), instruction tuning (Instruct), and reasoning (Reasoning). The paper&rsquo;s framing is that this is the missing <em>common infrastructure</em>: like the public code and math corpora before it, an open dataset is what lets a research community make cumulative, reproducible progress instead of each lab quietly re-curating private data."},
+            {"type": "p", "html": "The authors are candid about <b>limitations</b>: experiments use a single 8B model (Llama-3.1-8B-Instruct), so behavior at other scales is unknown; the reasoning data is distilled rather than learned from scratch (no GRPO-style RL yet); and the corpus is a snapshot, so it ages as new threats appear. They also include an explicit <b>ethics statement</b> &mdash; releasing security-capable models and data carries dual-use risk (the same knowledge that helps a defender can help an attacker), and they argue the openness and defensive framing make the trade-off worthwhile while urging responsible use."},
+            {"type": "p", "html": "Future directions called out: multilingual cybersecurity data, fresher threat intelligence, benchmarks specific to red-team and blue-team workflows, and safety methods tailored to openly-released security models. Within this collection, PRIMUS is the data-and-evaluation counterpart to the modeling papers &mdash; a reminder that for a specialized domain, the right corpus can matter more than the architecture."}
           ]
         }
       ]

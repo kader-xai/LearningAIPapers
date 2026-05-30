@@ -1,8 +1,8 @@
 {
-  "title": "An Image Is Worth 16×16 Words: Transformers for Image Recognition at Scale",
+  "title": "An Image Is Worth 16x16 Words: Transformers for Image Recognition at Scale",
   "authors": "Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, Neil Houlsby",
   "year": "2020",
-  "venue": "ICLR 2021 — arXiv:2010.11929",
+  "venue": "ICLR 2021 - arXiv:2010.11929",
   "sections": [
     {
       "title": "Abstract",
@@ -10,13 +10,15 @@
         {
           "title": "Pure Transformers, no convolutions, beat CNNs at scale",
           "pdfPages": [1],
+          "viz": ["vit-patchify"],
           "blocks": [
-            { "type": "p", "html": "Convolutional networks had dominated image recognition since 2012. Their inductive biases — translation equivariance, locality — match natural images well, and they were the natural answer to 'how do you process pixels.'" },
-            { "type": "p", "html": "<b>Vision Transformer (ViT)</b> proposes throwing all that away: cut an image into fixed-size patches, treat each patch as a 'word,' and apply a standard Transformer encoder (the same one from <i>Attention Is All You Need</i>). No convolutions. No image-specific inductive biases." },
-            { "type": "quote", "html": "When pre-trained on large amounts of data and transferred to multiple mid-sized or small image recognition benchmarks (ImageNet, CIFAR-100, VTAB, etc.), Vision Transformer (ViT) attains excellent results compared to state-of-the-art convolutional networks while requiring substantially fewer computational resources to train." },
-            { "type": "p", "html": "Key empirical finding: <b>at small data scales (ImageNet alone), CNNs win</b> because their inductive biases help. <b>At large data scales (JFT-300M, 14M+ ImageNet-21k), ViT wins</b> — the model learns its own priors from data and ends up generalizing better." }
-          ],
-          "viz": ["vit-patchify"]
+            {"type":"p","html":"<b>The question this page answers:</b> the Transformer had taken over natural-language processing by 2020, but computer vision was still ruled by convolutional networks (CNNs). Could the <i>same</i> Transformer &mdash; with no convolutions at all &mdash; do image recognition, and if so, when does it win? This Google Brain paper&rsquo;s answer reshaped the field."},
+            {"type":"p","html":"<b>Why CNNs ruled, and why that is also a limitation.</b> CNNs bake in two assumptions that match natural images beautifully: <b>locality</b> (a pixel relates most to its neighbors, so a small filter suffices) and <b>translation equivariance</b> (a cat is a cat wherever it appears, so the same filter slides everywhere). These are <i>inductive biases</i> &mdash; built-in priors that let CNNs learn from modest data. But a built-in prior is also a built-in ceiling: it cannot be unlearned when more data would suggest a better one."},
+            {"type":"p","html":"<b>The idea, by analogy.</b> The Transformer reads a sentence as a sequence of word tokens. <b>Vision Transformer (ViT)</b> does the same to an image: chop it into a grid of fixed-size square patches, treat each patch as a &lsquo;word,&rsquo; and feed the sequence of patches into a standard Transformer encoder &mdash; the very one from <i>Attention Is All You Need</i> (2017). The title &lsquo;an image is worth 16&times;16 words&rsquo; is literal: with a patch size of 16 pixels, a 224&times;224 image becomes a 196-token &lsquo;sentence.&rsquo; There are <b>no convolutions and no image-specific machinery</b>."},
+            {"type":"quote","html":"When pre-trained on large amounts of data and transferred to multiple mid-sized or small image recognition benchmarks (ImageNet, CIFAR-100, VTAB, etc.), Vision Transformer (ViT) attains excellent results compared to state-of-the-art convolutional networks while requiring substantially fewer computational resources to train."},
+            {"type":"p","html":"<b>The crucial empirical finding.</b> Without convolutions, ViT lacks the CNN&rsquo;s helpful priors, so it must <i>learn</i> them from data &mdash; which takes a lot of data. The result is a clean crossover: <b>on ImageNet alone (1.3M images), CNNs win</b> because their biases compensate for scarce data; <b>at large scale (ImageNet-21k&rsquo;s 14M images, or Google&rsquo;s internal JFT-300M&rsquo;s 300M images), ViT wins</b>, having learned better priors than humans hand-designed. ViT-Huge pre-trained on JFT reached <b>88.55% top-1 on ImageNet</b> and <b>90.72% on CIFAR-100</b>."},
+            {"type":"p","html":"<b>Why it mattered.</b> ViT showed that the convolution is not a necessity for vision &mdash; it is one inductive bias that data and scale can replace. It unified vision and language under one architecture and kicked off the era of Transformer-everywhere (DETR, Swin, CLIP, diffusion DiTs, multimodal models)."}
+          ]
         }
       ]
     },
@@ -24,23 +26,32 @@
       "title": "3. Method",
       "pages": [
         {
-          "title": "Turning an image into a sequence",
-          "pdfPages": [3, 4],
+          "title": "Turning an image into a sequence of patches",
+          "pdfPages": [3],
+          "viz": ["vit-patchify"],
           "blocks": [
-            { "type": "p", "html": "An image $x \\in \\mathbb{R}^{H \\times W \\times C}$ is reshaped into a sequence of flattened patches $x_p \\in \\mathbb{R}^{N \\times (P^2 \\cdot C)}$, where $P$ is the patch size and $N = HW/P^2$ is the number of patches. For 224×224 images with P=16, that's 196 patches." },
-            { "type": "p", "html": "Each patch is linearly projected to a $d_{\\text{model}}$-dimensional embedding by a single learned matrix (one $P^2 C \\times d_{\\text{model}}$ projection, applied to every patch). This is equivalent to a single convolution with kernel size $P$ and stride $P$ — but conceptually it's just 'tokenize the image.'" },
-            { "type": "p", "html": "A learnable <b>[CLS] token</b> is prepended (borrowed from BERT). Its output state after the encoder is used as the image representation for classification." },
-            { "type": "p", "html": "<b>Learned positional embeddings</b> are added to all tokens. The paper experiments with 2D-aware positional embeddings but finds standard 1D learned positions work as well." }
-          ],
-          "viz": ["vit-patchify"]
+            {"type":"p","html":"<b>The problem.</b> A Transformer eats a <i>sequence</i> of vectors (tokens). An image is a 2D grid of pixels. Feeding every pixel as a token is hopeless &mdash; self-attention costs scale with the square of the sequence length, and 224&times;224 = 50,176 pixels would be ruinous. ViT&rsquo;s trick is to make the tokens be <i>patches</i>, not pixels."},
+            {"type":"p","html":"<b>The reshaping, made concrete.</b> Start from an image $x \\in \\mathbb{R}^{H \\times W \\times C}$ and cut it into a grid of non-overlapping square patches of side $P$. Each patch is flattened into a vector, giving the sequence $x_p \\in \\mathbb{R}^{N \\times (P^2 \\cdot C)}$:"},
+            {"type":"math","tex":"N = \\frac{H \\cdot W}{P^2}"},
+            {"type":"p","html":"<b>Reading the symbols.</b> $H, W$ are the image height and width in pixels and $C$ its channel count (3 for RGB). $P$ is the patch side length. $N$ is the resulting number of patches &mdash; the sequence length. Each flattened patch has $P^2 \\cdot C$ numbers. For the default $224\\times224$ RGB image with $P=16$: $N = (224\\cdot224)/16^2 = 196$ patches, each of dimension $16^2\\cdot3 = 768$. So the image becomes a 196-token sequence &mdash; the &lsquo;16&times;16 words.&rsquo;"},
+            {"type":"p","html":"<b>The patch embedding.</b> Each flattened patch is mapped to the model width $D$ by a single shared learned matrix $E \\in \\mathbb{R}^{(P^2 C)\\times D}$ (the same projection applied to every patch). In code this is exactly one convolution with kernel size $P$ and stride $P$ &mdash; non-overlapping &mdash; but conceptually it is just &lsquo;tokenize the image.&rsquo; This is the <i>only</i> place a convolution-like operation hides, and it touches each patch once, with no spatial overlap, so it carries none of a CNN&rsquo;s locality across patches."},
+            {"type":"math","tex":"z_0 = [\\, x_{\\text{class}} ; \\, x_p^1 E ; \\, x_p^2 E ; \\cdots ; \\, x_p^N E \\,] + E_{\\text{pos}}"},
+            {"type":"p","html":"<b>Reading the input sequence.</b> $z_0$ is the sequence handed to the encoder. $x_p^i E$ is patch $i$ projected to dimension $D$. $x_{\\text{class}}$ is a special learnable <b>[CLS] token</b> prepended to the front (borrowed from BERT): its output after the encoder serves as the whole-image representation fed to the classifier &mdash; a single vector that has attended to every patch. $E_{\\text{pos}} \\in \\mathbb{R}^{(N+1)\\times D}$ are <b>learned positional embeddings</b> added to every token; without them the Transformer, being permutation-invariant, would not know which patch came from where."},
+            {"type":"p","html":"<b>Design rationale &amp; a nice surprise.</b> The authors tried giving the positions explicit 2D structure (separate row/column embeddings) but found plain 1D learned positions work just as well &mdash; the model figures out the 2D layout on its own. The patch+[CLS]+position recipe is deliberately as close to NLP&rsquo;s BERT as possible: the whole point is to change the architecture as little as possible and let scale do the work."}
+          ]
         },
         {
-          "title": "The encoder: vanilla Transformer",
+          "title": "The encoder and the model variants",
           "pdfPages": [4],
+          "viz": [],
           "blocks": [
-            { "type": "p", "html": "After tokenization, the architecture is identical to a standard Transformer encoder: alternating multi-head self-attention and MLP blocks, each preceded by LayerNorm (pre-norm variant), with residual connections. No image-specific machinery." },
-            { "type": "p", "html": "Variants: ViT-Base (12 layers, 12 heads, $d = 768$, 86M params), ViT-Large (24/16/1024, 307M), ViT-Huge (32/16/1280, 632M). Patch sizes 16 or 32." },
-            { "type": "p", "html": "<b>Hybrid model</b>: alternatively, use a small ResNet to extract feature maps, then patchify the feature map instead of raw pixels. The hybrid wins at small scale; pure ViT wins as data grows." }
+            {"type":"p","html":"<b>The body is a stock Transformer encoder.</b> After tokenization, ViT runs the exact encoder from <i>Attention Is All You Need</i>: a stack of identical layers, each with a multi-head self-attention (MSA) block and an MLP block, each sub-block preceded by LayerNorm (the &lsquo;pre-norm&rsquo; variant) and wrapped in a residual connection. One layer computes:"},
+            {"type":"math","tex":"z'_{\\ell} = \\mathrm{MSA}(\\mathrm{LN}(z_{\\ell-1})) + z_{\\ell-1}, \\qquad z_{\\ell} = \\mathrm{MLP}(\\mathrm{LN}(z'_{\\ell})) + z'_{\\ell}"},
+            {"type":"p","html":"<b>Reading it.</b> $z_{\\ell-1}$ is the sequence entering layer $\\ell$; $\\mathrm{LN}$ is LayerNorm; $\\mathrm{MSA}$ is multi-head self-attention, where every token computes a weighted sum over all other tokens (this is how a patch &lsquo;sees&rsquo; the whole image at once); $\\mathrm{MLP}$ is a two-layer feed-forward network with a GELU nonlinearity applied to each token independently. The $+\\,z$ terms are the <b>residual connections</b> &mdash; the very ones introduced by ResNet &mdash; which let gradients flow through the deep stack. There is no convolution, pooling, or any vision-specific component anywhere in this body."},
+            {"type":"p","html":"<b>The three sizes</b>, named after BERT&rsquo;s convention:"},
+            {"type":"table","headers":["Model","Layers","Hidden D","MLP size","Heads","Params"],"rows":[["ViT-Base","12","768","3072","12","86M"],["ViT-Large","24","1024","4096","16","307M"],["ViT-Huge","32","1280","5120","16","632M"]]},
+            {"type":"p","html":"<b>Naming convention.</b> A model is written like &lsquo;ViT-L/16&rsquo; meaning ViT-Large with patch size 16. Smaller patches mean more tokens (a longer sequence), which means more compute but finer resolution &mdash; ViT-L/16 is more expensive but more accurate than ViT-L/32."},
+            {"type":"p","html":"<b>The hybrid alternative.</b> Instead of patchifying raw pixels, you can run a small CNN (a ResNet) first and patchify its <i>feature map</i>. This gives the model some convolutional locality back. The authors find the hybrid edges out pure ViT at small compute budgets, but the advantage vanishes as the models grow &mdash; at large scale pure ViT catches up, reinforcing the paper&rsquo;s thesis that learned priors eventually beat built-in ones."}
           ]
         }
       ]
@@ -51,26 +62,32 @@
         {
           "title": "Pre-training data matters more than anything",
           "pdfPages": [5, 6],
+          "viz": [],
           "blocks": [
-            { "type": "p", "html": "Three pre-training regimes:" },
-            { "type": "list", "items": [
-              "<b>ImageNet</b> (1.3M images): CNNs (BiT) beat ViT.",
-              "<b>ImageNet-21k</b> (14M images): ViT-L matches BiT-L.",
-              "<b>JFT-300M</b> (300M images, Google's internal dataset): ViT-H clearly wins — 88.55% on ImageNet, 90.72% on CIFAR-100, with less pre-training compute than CNN baselines."
+            {"type":"p","html":"<b>The central experiment.</b> The whole paper hinges on one variable: how much data you pre-train on before fine-tuning on the target benchmark. The authors pre-train the <i>same</i> ViT on three datasets of increasing size, then transfer, and watch ViT go from loser to winner as the data grows."},
+            {"type":"list","items":[
+              "<b>ImageNet</b> (~1.3M images): the CNN baseline (BiT, a big pre-trained ResNet) <i>beats</i> ViT &mdash; with little data, ViT overfits and its missing inductive biases hurt.",
+              "<b>ImageNet-21k</b> (~14M images): ViT-Large roughly matches BiT &mdash; the crossover region.",
+              "<b>JFT-300M</b> (~303M labeled images, Google&rsquo;s internal dataset): ViT-Huge clearly wins &mdash; <b>88.55% top-1 on ImageNet</b>, <b>90.72% on CIFAR-100</b>, ~77.6% average on the 19-task VTAB suite &mdash; while using <i>less</i> pre-training compute than the BiT CNN baselines."
             ]},
-            { "type": "p", "html": "The figure on page 6 (the famous 'BiT vs ViT' curve) makes the data-scale story explicit: ViT's accuracy grows faster with pre-training data than CNN's. The crossover sits around 100M images." }
+            {"type":"p","html":"<b>The famous figure (Fig. 3 / Fig. 4).</b> Plot accuracy against pre-training set size and you see two lines crossing: ViT&rsquo;s accuracy climbs steeply with more data while the CNN&rsquo;s flattens earlier. The crossover sits around <b>100M images</b> &mdash; below it, prefer a CNN; above it, prefer ViT. A second plot (accuracy vs. total pre-training compute) shows ViT is also more <i>compute-efficient</i>: at a fixed FLOP budget it generally beats the ResNet, and the hybrid is best only at the smallest budgets."},
+            {"type":"p","html":"<b>Why this happens &mdash; the rationale.</b> A CNN&rsquo;s locality and translation-equivariance are correct priors that save data when data is scarce, but they are <i>approximations</i>. Given hundreds of millions of images, ViT can learn priors that fit the data even better &mdash; including when to be local and when to be global &mdash; so it overtakes the hand-designed biases. This is the paper&rsquo;s one-line thesis: <i>inductive biases matter less as scale grows.</i>"},
+            {"type":"p","html":"<b>Trivia.</b> JFT-300M is a proprietary Google dataset, which limited reproducibility at first. The follow-up &lsquo;How to train your ViT&rsquo; and the DeiT paper later showed strong ViTs can be trained on public ImageNet alone with heavy augmentation and distillation &mdash; loosening the &lsquo;you need 300M images&rsquo; requirement that this paper established."}
           ]
         },
         {
           "title": "Inspecting what ViT learns",
           "pdfPages": [7, 8],
+          "viz": [],
           "blocks": [
-            { "type": "p", "html": "Several analyses from §5 of the paper:" },
-            { "type": "list", "items": [
-              "<b>Patch projection</b> first principal components look like Gabor-style edge detectors — ViT rediscovers CNN-like early features by itself.",
-              "<b>Positional embeddings</b> learn 2D structure: nearby patches end up with similar embeddings even though the layer is 1D-positional.",
-              "<b>Attention distance</b> (analogous to CNN receptive field): in early layers, some heads attend locally and others globally. CNNs are forced to start local. ViT learns when local matters and when global does."
-            ]}
+            {"type":"p","html":"<b>Why this matters.</b> A natural worry: if ViT has no convolutions, is it doing something alien, or is it secretly rediscovering what CNNs are built to do? The paper&rsquo;s analysis (Section on visualizations) shows the latter &mdash; ViT learns CNN-like structure from scratch &mdash; which is reassuring and explains why it works."},
+            {"type":"list","items":[
+              "<b>Patch-embedding filters.</b> The top principal components of the learned patch-projection matrix $E$ look like <b>Gabor-style edge and color-blob detectors</b> &mdash; the same low-level features a CNN&rsquo;s first convolutional layer learns. ViT reinvents early visual features on its own.",
+              "<b>Positional embeddings.</b> Although positions are encoded as plain 1D learnable vectors, after training nearby patches end up with <i>similar</i> embeddings, and the similarity matrix recovers the 2D grid: the model learns the image&rsquo;s row/column topology unsupervised. This is why explicit 2D position encodings gave no benefit.",
+              "<b>Attention distance.</b> The analogue of a CNN&rsquo;s receptive field. In the <i>earliest</i> layers some heads attend very locally (a few patches away) while others already attend across the whole image; by deeper layers nearly all heads are global. A CNN is <i>forced</i> to start local; ViT <i>chooses</i> when to be local and when to be global."
+            ]},
+            {"type":"p","html":"<b>The deeper lesson.</b> ViT does not throw away locality &mdash; it learns to use it where helpful and to reach globally where a CNN cannot (a CNN only attains a global receptive field after many layers). Having global attention available even in layer 1 is part of why ViT can exploit huge datasets so effectively."},
+            {"type":"p","html":"<b>Bonus result &mdash; self-supervision.</b> The authors also ran a masked-patch-prediction experiment (mask some patches, predict them), mirroring BERT&rsquo;s masked-language-modeling objective. A self-supervised ViT-B/16 reached ~79.9% on ImageNet &mdash; a strong hint, later confirmed by DINO, MAE, and BEiT, that ViTs are natural fits for self-supervised pre-training on unlabeled images."}
           ]
         }
       ]
@@ -80,10 +97,13 @@
       "pages": [
         {
           "title": "What ViT changed",
-          "pdfPages": [9, 10],
+          "pdfPages": [9],
+          "viz": [],
           "blocks": [
-            { "type": "p", "html": "Before ViT, vision and NLP architectures were largely separate research traditions. After ViT, they converged. Today the same Transformer block underlies image classification, detection (DETR, Swin), segmentation, video understanding, multimodal models (CLIP, Flamingo, Gemini), diffusion models (DiT), and protein folding (AlphaFold's evoformer)." },
-            { "type": "p", "html": "The bigger lesson: <i>architectural inductive biases matter less as data and compute scale</i>. Given enough of both, a general-purpose model that learns its biases from data tends to beat a specialized model whose biases were hand-designed." }
+            {"type":"p","html":"<b>The before-and-after.</b> Before ViT, vision and NLP were largely separate research traditions with separate toolkits (convolutions here, attention there). After ViT, they converged on one backbone. Today the same Transformer block underlies image classification, object detection (DETR, Swin Transformer), segmentation, video understanding, multimodal models (CLIP, Flamingo, Gemini), image generation (diffusion DiTs), and even protein structure prediction (AlphaFold&rsquo;s Evoformer)."},
+            {"type":"quote","html":"We find that the large scale training trumps inductive bias. Vision Transformer attains excellent results when pre-trained at sufficient scale and transferred to tasks with fewer datapoints."},
+            {"type":"p","html":"<b>The one big lesson.</b> <i>Architectural inductive biases matter less as data and compute scale.</i> Given enough of both, a general-purpose model that learns its priors from data tends to beat a specialized model whose priors were hand-designed. This is the same &lsquo;scale wins&rsquo; story playing out in language with GPT, and ViT is the moment it arrived in vision &mdash; a direct intellectual sibling of the &lsquo;bitter lesson&rsquo; that general methods leveraging computation eventually outrun handcrafted ones."},
+            {"type":"p","html":"<b>Honest limitations the paper flags.</b> The wins required pre-training scale most labs cannot reach (JFT-300M is proprietary); applying ViT beyond classification (to detection/segmentation) was left to follow-up work; and the missing inductive biases mean ViT still underperforms on small datasets without extra tricks. Each of these became a thriving research direction &mdash; DeiT (data-efficient training), Swin (hierarchical ViT for dense tasks), and MAE/DINO (self-supervised pre-training) all trace directly back to this paper."}
           ]
         }
       ]

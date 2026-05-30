@@ -9,14 +9,14 @@
       "pages": [
         {
           "title": "Style Transfer Without the Wait",
-          "subtitle": "Any style, in a single forward pass",
+          "subtitle": "The pitch",
           "pdfPages": [1],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Problem With Gatys"},
-            {"type": "p", "html": "The original neural style transfer (Gatys et al.) is beautiful but slow: it optimizes the pixels of each output image with hundreds of iterations. Faster methods existed, but each was trained for a <i>single</i> fixed style. Switching styles meant training a whole new network."},
-            {"type": "p", "html": "This paper introduces a single feed-forward network that can apply <b>any</b> style, even ones never seen during training, in real time. The trick is a tiny, parameter-free layer called <b>Adaptive Instance Normalization (AdaIN)</b>."},
-            {"type": "quote", "html": "Our method achieves speed comparable to the fastest existing approach, without the restriction to a pre-defined set of styles."}
+            {"type": "p", "html": "Gatys' neural style transfer is beautiful but agonizingly slow: every output image needs hundreds of optimization steps. The first fast methods fixed the speed by training a separate feed-forward network <em>per style</em> — so one network could only paint in Van Gogh, another only in Monet. If you wanted a new style, you trained a new network. That does not scale."},
+            {"type": "p", "html": "AdaIN's promise is the best of both worlds: <strong>arbitrary style in real time</strong>. A single trained network takes <em>any</em> content image and <em>any</em> style image — even ones it never saw in training — and produces the stylized result in one forward pass, hundreds of times faster than optimization."},
+            {"type": "p", "html": "The whole trick rests on one surprisingly simple observation: <strong>the style of an image is encoded in the per-channel mean and variance of its deep feature maps</strong>. So to transfer style, you do not need to run an optimization that matches Gram matrices — you can just take the content's features and rescale and re-centre each channel so its mean and variance match the style's. That single operation is <strong>Adaptive Instance Normalization (AdaIN)</strong>, and it has no learned parameters at all."},
+            {"type": "p", "html": "This page sets up the journey: we will see why normalization layers turned out to secretly control style, define AdaIN term by term, place it inside an encoder–decoder, and look at the real-time and user-controllable results it unlocks."}
           ]
         }
       ]
@@ -26,18 +26,18 @@
       "pages": [
         {
           "title": "From Batch Norm to Instance Norm",
-          "subtitle": "A surprising clue about where style lives",
+          "subtitle": "Why normalization touches style",
           "pdfPages": [4],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Instance Normalization"},
-            {"type": "p", "html": "Earlier fast-style work found that replacing batch normalization with <b>Instance Normalization (IN)</b> dramatically improved stylization. IN normalizes each image (each sample) and each channel separately across spatial positions:"},
-            {"type": "math", "tex": "\\mathrm{IN}(x) = \\gamma \\left( \\frac{x - \\mu(x)}{\\sigma(x)} \\right) + \\beta"},
-            {"type": "p", "html": "Here $\\mu(x)$ and $\\sigma(x)$ are the mean and standard deviation computed per channel, per image, across the height and width. The learned $\\gamma$ and $\\beta$ then rescale and reshift."},
-            {"type": "h2", "text": "The Insight: Style = Feature Statistics"},
-            {"type": "p", "html": "Conditional Instance Normalization (CIN) extended this with a <i>different</i> $\\gamma^s, \\beta^s$ per style $s$, letting one network store many styles. The fact that simply swapping the affine parameters $(\\gamma, \\beta)$ changes the style was the key clue:"},
-            {"type": "quote", "html": "Instance normalization performs style normalization by normalizing feature statistics, which carry the style information of an image."},
-            {"type": "p", "html": "If style is captured by the per-channel mean and variance of features, then transferring style should be as simple as transferring those statistics."}
+            {"type": "p", "html": "To understand AdaIN you first have to understand a puzzle the paper builds on. Earlier fast-style-transfer work found that swapping <strong>batch normalization</strong> for <strong>instance normalization</strong> dramatically improved stylization quality — and nobody fully knew why. AdaIN's contribution starts by explaining it."},
+            {"type": "p", "html": "<strong>Batch Normalization (BN)</strong> normalizes each feature channel using statistics computed over the <em>whole mini-batch</em> of images at once. For a 4-D feature tensor with batch $N$, channels $C$, height $H$, width $W$, BN computes one mean and variance per channel by averaging across $N$, $H$, and $W$:"},
+            {"type": "math", "tex": "\\mu_c(x) = \\frac{1}{NHW}\\sum_{n=1}^{N}\\sum_{h=1}^{H}\\sum_{w=1}^{W} x_{nchw}, \\qquad \\sigma_c(x) = \\sqrt{\\frac{1}{NHW}\\sum_{n,h,w}\\big(x_{nchw}-\\mu_c(x)\\big)^2 + \\epsilon}"},
+            {"type": "p", "html": "Reading it: $x_{nchw}$ is one activation — image $n$, channel $c$, row $h$, column $w$. For each channel $c$ we average over all images and all spatial positions to get a single mean $\\mu_c$ and standard deviation $\\sigma_c$. The small $\\epsilon$ prevents division by zero. The key point: because BN mixes statistics <em>across different images</em>, every image's style gets entangled with its batch-mates'."},
+            {"type": "p", "html": "<strong>Instance Normalization (IN)</strong> makes one change: it computes the mean and variance for each image <em>separately</em> — dropping the sum over the batch dimension $N$:"},
+            {"type": "math", "tex": "\\mu_{nc}(x) = \\frac{1}{HW}\\sum_{h=1}^{H}\\sum_{w=1}^{W} x_{nchw}, \\qquad \\sigma_{nc}(x) = \\sqrt{\\frac{1}{HW}\\sum_{h,w}\\big(x_{nchw}-\\mu_{nc}(x)\\big)^2 + \\epsilon}"},
+            {"type": "p", "html": "Now the statistics are per-image, per-channel: $\\mu_{nc}$ and $\\sigma_{nc}$ depend only on image $n$ and channel $c$. The authors' interpretation is the crux of the whole paper: <strong>those per-channel feature statistics ARE the image's style</strong>. IN works better for stylization because it normalizes away each image's own style, putting the content onto a clean, style-neutral canvas. That is also why IN had previously needed learned, per-style scale/shift parameters (Conditional IN) to inject a fixed style — a setup limited to a discrete set of styles."},
+            {"type": "p", "html": "AdaIN's leap: if style lives in $\\mu_{nc}$ and $\\sigma_{nc}$, then instead of <em>learning</em> a scale and shift per style, just <strong>copy them from whatever style image you are given</strong>. No learned parameters, any style — that is the next page."}
           ]
         }
       ]
@@ -47,15 +47,16 @@
       "pages": [
         {
           "title": "AdaIN: Align the Statistics",
-          "subtitle": "No learned parameters, no optimization",
+          "subtitle": "The core operation",
           "pdfPages": [5],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Core Equation"},
-            {"type": "p", "html": "AdaIN takes a content feature map $x$ and a style feature map $y$. It normalizes $x$ (zeroing out its own style statistics) and then re-scales and re-shifts it to match the channel-wise mean and variance of $y$:"},
-            {"type": "math", "tex": "\\mathrm{AdaIN}(x, y) = \\sigma(y) \\left( \\frac{x - \\mu(x)}{\\sigma(x)} \\right) + \\mu(y)"},
-            {"type": "p", "html": "Reading it plainly: subtract the content's own mean and divide by its own standard deviation (channel by channel) to strip its style, then multiply by the style image's standard deviation and add the style image's mean. The content's spatial structure survives because normalization preserves the <i>pattern</i> of activations; only the scale and offset, which encode style, are replaced."},
-            {"type": "p", "html": "Crucially, AdaIN has <b>no learnable parameters</b>. The affine factors come directly from the style input, computed on the fly. That is what makes arbitrary, unseen styles possible."}
+            {"type": "p", "html": "Here is the heart of the paper. We have the content image's feature map $x$ and the style image's feature map $y$ (both produced by running each image through the same encoder). AdaIN does one thing: it normalizes $x$ to be mean-0, variance-1 per channel, then re-scales it by the style's standard deviation and re-shifts it by the style's mean."},
+            {"type": "math", "tex": "\\mathrm{AdaIN}(x, y) = \\sigma(y)\\left(\\frac{x - \\mu(x)}{\\sigma(x)}\\right) + \\mu(y)"},
+            {"type": "p", "html": "Every term, defined: $x$ is the content feature map and $y$ is the style feature map at the same layer. $\\mu(x)$ and $\\sigma(x)$ are the content's per-channel mean and standard deviation (computed across the spatial $H \\times W$ positions, exactly the instance-norm statistics from the previous page). $\\mu(y)$ and $\\sigma(y)$ are the <em>style's</em> per-channel mean and standard deviation. The fraction $\\tfrac{x-\\mu(x)}{\\sigma(x)}$ standardizes each content channel to mean 0 and variance 1 — stripping the content image of its own style while keeping its spatial structure. Multiplying by $\\sigma(y)$ and adding $\\mu(y)$ then stamps the <strong>style's</strong> statistics onto that structure."},
+            {"type": "p", "html": "Read it as a sentence: 'take the content's feature channel, erase its own colour/texture statistics, and repaint it with the style's colour/texture statistics — while leaving <em>where</em> things are untouched.' The spatial arrangement (content) survives because we only rescale and shift; the per-channel intensities (style) get swapped wholesale."},
+            {"type": "p", "html": "What makes this remarkable: AdaIN has <strong>no learnable parameters</strong>. The affine scale and shift are not weights to be trained — they are simply <em>read off the style image on the fly</em>. That is the single property that lets one network handle arbitrary, never-before-seen styles. Compare it to Conditional Instance Norm, which stores a fixed learned $(\\gamma_s, \\beta_s)$ per style $s$ and so can only do a fixed menu of styles."},
+            {"type": "p", "html": "Intuitively it also explains why Gram-matrix matching (Gatys) and statistic-matching (AdaIN) give similar results: matching the Gram matrix of features is closely related to matching their mean and variance. AdaIN achieves a comparable effect in a single closed-form step instead of an optimization loop — that is the whole speed win."}
           ]
         }
       ]
@@ -65,30 +66,31 @@
       "pages": [
         {
           "title": "Encoder, AdaIN, Decoder",
-          "subtitle": "A fixed VGG front end and a learned decoder",
+          "subtitle": "Where AdaIN sits in the network",
           "pdfPages": [6],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Pipeline"},
-            {"type": "p", "html": "The network has three parts. A fixed VGG-19 <b>encoder</b> $f$ maps both the content image $c$ and style image $s$ into feature space. AdaIN combines them into a target feature map $t$. A learned <b>decoder</b> $g$ maps $t$ back to a stylized image."},
-            {"type": "math", "tex": "t = \\mathrm{AdaIN}\\big( f(c), f(s) \\big)"},
-            {"type": "math", "tex": "T(c, s) = g(t)"},
-            {"type": "p", "html": "Only the decoder $g$ is trained. The encoder stays frozen so its feature statistics keep their meaning as style descriptors."}
+            {"type": "p", "html": "AdaIN is just an operation; we need a network around it. The pipeline has three parts and only the last one is trained."},
+            {"type": "list", "items": ["<strong>Encoder $f$</strong>: the first few layers of a fixed, pretrained VGG-19 (up to <code>relu4_1</code>). It maps both the content image $c$ and the style image $s$ into feature space. It is frozen — never updated.", "<strong>AdaIN layer</strong>: combines the two feature maps as $t = \\mathrm{AdaIN}(f(c), f(s))$. This produces the target feature map carrying content's structure and style's statistics. No parameters.", "<strong>Decoder $g$</strong>: a learned network, roughly a mirror image of the encoder, that maps the feature map $t$ back to a real RGB image. This is the <em>only</em> trainable component."]},
+            {"type": "p", "html": "So a forward pass is: encode content and style, fuse them with AdaIN, decode to an image."},
+            {"type": "math", "tex": "t = \\mathrm{AdaIN}\\big(f(c), f(s)\\big), \\qquad T(c, s) = g(t)"},
+            {"type": "p", "html": "Reading it: $f(c)$ and $f(s)$ are the encoded content and style feature maps; AdaIN fuses them into the target feature map $t$; the decoder $g$ turns $t$ into the final stylized image $T(c,s)$. A design note: the decoder uses <strong>no normalization layers</strong> (no BN or IN inside it), because adding instance norm there would re-normalize away the very style statistics AdaIN just injected. Reflection padding is used to avoid border artifacts, and nearest-neighbour upsampling instead of transposed convolutions to avoid checkerboard patterns."}
           ]
         },
         {
           "title": "Training Losses",
-          "subtitle": "Match content to the AdaIN target, match style statistics",
+          "subtitle": "Content loss + style loss on statistics",
           "pdfPages": [6],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Content Loss"},
-            {"type": "p", "html": "Instead of matching the original content features, the content loss targets the AdaIN output $t$ itself, which the authors found easier to optimize and faster to converge:"},
-            {"type": "math", "tex": "\\mathcal{L}_c = \\big\\| f(g(t)) - t \\big\\|_2"},
-            {"type": "h2", "text": "Style Loss"},
-            {"type": "p", "html": "Style is matched by aligning the mean and standard deviation of features across several VGG layers $\\phi_i$ between the output and the style image, exactly the statistics AdaIN manipulates:"},
-            {"type": "math", "tex": "\\mathcal{L}_s = \\sum_{i=1}^{L} \\big\\| \\mu(\\phi_i(g(t))) - \\mu(\\phi_i(s)) \\big\\|_2 + \\sum_{i=1}^{L} \\big\\| \\sigma(\\phi_i(g(t))) - \\sigma(\\phi_i(s)) \\big\\|_2"},
-            {"type": "p", "html": "The full objective is $\\mathcal{L} = \\mathcal{L}_c + \\lambda \\mathcal{L}_s$. Note this uses simple mean/std matching rather than the heavier Gram-matrix style loss of Gatys, which is cheaper and works well alongside AdaIN."}
+            {"type": "p", "html": "How do we train the decoder so its output actually looks right? We borrow Gatys' idea of a <strong>perceptual loss</strong> computed in VGG feature space — but with a clever twist on the style term. After generating the stylized image $T(c,s)$, we re-encode it with the same frozen VGG and compare it back against the targets."},
+            {"type": "p", "html": "The <strong>content loss</strong> asks: do the generated image's deep features match the AdaIN target $t$? Notably the target is $t$ itself (the AdaIN output), not the raw content features — which the authors found gives slightly faster convergence:"},
+            {"type": "math", "tex": "\\mathcal{L}_c = \\big\\lVert f\\big(g(t)\\big) - t \\big\\rVert_2"},
+            {"type": "p", "html": "Reading it: $g(t)$ is the decoded image, $f(g(t))$ re-encodes it, and we measure its Euclidean distance to the AdaIN target $t$. Driving this to zero means the decoder produced an image whose features really do carry the content structure AdaIN asked for."},
+            {"type": "p", "html": "The <strong>style loss</strong> is where AdaIN's philosophy shows: since style IS feature statistics, we match the <em>mean and standard deviation</em> of features (not Gram matrices) across several VGG layers $\\phi_i$:"},
+            {"type": "math", "tex": "\\mathcal{L}_s = \\sum_{i=1}^{L} \\big\\lVert \\mu\\big(\\phi_i(g(t))\\big) - \\mu\\big(\\phi_i(s)\\big) \\big\\rVert_2 + \\sum_{i=1}^{L} \\big\\lVert \\sigma\\big(\\phi_i(g(t))\\big) - \\sigma\\big(\\phi_i(s)\\big) \\big\\rVert_2"},
+            {"type": "p", "html": "Term by term: $\\phi_i$ is the $i$-th chosen VGG layer (the authors use <code>relu1_1, relu2_1, relu3_1, relu4_1</code>). For each layer we compute the per-channel mean $\\mu(\\cdot)$ and standard deviation $\\sigma(\\cdot)$ of the generated image's features and of the style image's features, and penalize their difference. Matching means and stds at multiple layers reproduces the style's statistics at multiple scales — and it is consistent with the AdaIN operation, which manipulates exactly those statistics."},
+            {"type": "p", "html": "The full objective is $\\mathcal{L} = \\mathcal{L}_c + \\lambda \\mathcal{L}_s$, with $\\lambda$ trading content fidelity against stylization strength (the authors use $\\lambda = 10$). Training data: content images from MS-COCO, style images from a large set of WikiArt paintings — so the decoder learns to invert AdaIN-fused features for a huge variety of style statistics, which is what lets it generalize to unseen styles at test time."}
           ]
         }
       ]
@@ -98,20 +100,16 @@
       "pages": [
         {
           "title": "Real-Time and Controllable",
-          "subtitle": "Speed, style interpolation, and content-style trade-off",
+          "subtitle": "Speed, quality, and user knobs",
           "pdfPages": [7, 8],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Speed"},
-            {"type": "p", "html": "Because stylization is one forward pass, the method runs at interactive rates (the authors report processing on the order of tens of frames per second at 256px), roughly three orders of magnitude faster than the optimization-based Gatys method, while handling arbitrary styles that other fast methods could not."},
-            {"type": "h2", "text": "Free Controls at Test Time"},
-            {"type": "p", "html": "AdaIN exposes several runtime controls without retraining:"},
-            {"type": "list", "items": [
-              "Content-style trade-off: interpolate between the content features and the AdaIN output, e.g. blend f(c) with AdaIN(f(c), f(s)).",
-              "Style interpolation: blend the AdaIN targets of several styles with weights that sum to one.",
-              "Spatial and color control: apply different styles to different regions, or preserve the content's colors."
-            ]},
-            {"type": "p", "html": "These come for free because style is just a set of feature statistics that can be mixed linearly, the central convenience of the AdaIN formulation."}
+            {"type": "p", "html": "The headline result is speed. Gatys' optimization takes on the order of <strong>tens of seconds to minutes</strong> per image; AdaIN runs at roughly <strong>15 frames per second</strong> at 512px on a GPU — a single forward pass — while accepting any style. It is comparable in speed to the fast per-style networks but, unlike them, is not locked to a fixed set of styles."},
+            {"type": "p", "html": "Because the whole method is just statistics, AdaIN hands the user several intuitive runtime controls that need no retraining:"},
+            {"type": "list", "items": ["<strong>Content–style trade-off.</strong> Instead of decoding $t$ directly, decode $g\\big((1-\\alpha)\\,f(c) + \\alpha\\,\\mathrm{AdaIN}(f(c),f(s))\\big)$. With $\\alpha = 0$ you get back the content; $\\alpha = 1$ is full stylization; values between give a smooth dial — at test time, no retraining.", "<strong>Style interpolation.</strong> Feed a convex combination of several styles' AdaIN feature maps, $\\sum_k w_k\\,\\mathrm{AdaIN}(f(c), f(s_k))$ with $\\sum_k w_k = 1$, to blend multiple styles in chosen proportions.", "<strong>Spatial / colour control.</strong> Apply different styles to different spatial regions by masking, or preserve the content's original colours by matching colour statistics — all by manipulating the feature statistics, never the network weights."]},
+            {"type": "p", "html": "The trade-off: AdaIN's results are generally a touch less crisp than a network trained for one specific style, because matching only mean and variance is a looser description of style than the full Gram matrix. But the flexibility — arbitrary styles, real time, runtime control with zero retraining — was a decisive win and made AdaIN a foundational building block."},
+            {"type": "p", "html": "Historical thread worth knowing: the AdaIN idea — predict per-channel scale and shift to inject a desired style — became a core mechanism well beyond style transfer. <strong>StyleGAN</strong> (also in this collection) uses AdaIN to inject a learned style vector $w$ at every resolution of its generator, which is the central reason StyleGAN can disentangle and control image attributes. AdaIN is one of those rare one-line operations that reshaped a whole area."},
+            {"type": "list", "items": ["Style of an image = per-channel mean and variance of its deep features.", "AdaIN aligns content features to the style's mean/variance in one closed-form step — no learned parameters.", "Only the decoder is trained; the VGG encoder is frozen; style loss matches feature mean/std at multiple layers.", "One network handles arbitrary, unseen styles in real time, with runtime knobs for trade-off, interpolation and spatial control.", "The same operation later powered StyleGAN's controllable generator."]}
           ]
         }
       ]

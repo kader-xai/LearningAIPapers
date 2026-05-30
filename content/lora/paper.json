@@ -11,10 +11,14 @@
           "title": "Freeze the big model, train tiny low-rank adapters",
           "pdfPages": [1],
           "blocks": [
-            { "type": "p", "html": "Full fine-tuning of a 175B-parameter model means storing and updating 175B parameters per task. That's expensive in compute, expensive in memory, and impossible to deploy at scale (you'd need a full model copy per downstream task)." },
-            { "type": "p", "html": "<b>LoRA's idea</b>: freeze the pre-trained weights $W$ entirely. For each weight matrix you'd otherwise fine-tune, learn a <i>low-rank update</i> $\\Delta W = B A$ where $B \\in \\mathbb{R}^{d \\times r}$ and $A \\in \\mathbb{R}^{r \\times k}$, with $r \\ll \\min(d, k)$. At inference: $h = (W + BA)x$. The forward pass through $W$ stays unchanged; only $A$ and $B$ are trained." },
-            { "type": "quote", "html": "LoRA can reduce the number of trainable parameters by 10,000× and the GPU memory requirement by 3×, while performing on par or better than fine-tuning on RoBERTa, DeBERTa, GPT-2, and GPT-3." },
-            { "type": "p", "html": "Headline numbers for GPT-3 175B: trainable params drop from 175B → 4.7M (≈10000× fewer), checkpoint size 350GB → 35MB, no added inference latency once $BA$ is merged into $W$." }
+            { "type": "p", "html": "<b>The problem.</b> The standard way to specialize a large language model for your task is <i>full fine-tuning</i>: take all of the model's parameters and keep training them on your data. For GPT-3 that means updating all 175 billion numbers. Every task you care about then needs its own 175B-parameter copy. Storing one such checkpoint takes about 350GB; storing ten takes 3.5TB. And during training you also need memory for the optimizer state — Adam keeps two extra numbers (a running mean and variance of the gradient) per parameter — so the working memory is roughly triple the size of the model itself." },
+            { "type": "p", "html": "<b>The intuition.</b> Imagine you bought a fully-equipped car and you only want to change how it handles on one specific road. You would not rebuild the whole engine — you would add a small tuning module. LoRA does exactly this for neural networks: it <i>freezes</i> the giant pre-trained model and bolts on a small, trainable add-on for each weight matrix you want to influence." },
+            { "type": "p", "html": "<b>The mechanism in one line.</b> For a weight matrix $W$ that full fine-tuning would have changed to $W + \\Delta W$, LoRA does not store the full change $\\Delta W$. Instead it writes the change as a product of two skinny matrices, $\\Delta W = BA$, where $B \\in \\mathbb{R}^{d \\times r}$ and $A \\in \\mathbb{R}^{r \\times k}$, and $r$ (the <b>rank</b>) is tiny — often 1, 2, 4, or 8. Only $A$ and $B$ are trained; $W$ never moves." },
+            { "type": "math", "tex": "h = W x + \\Delta W x = W x + B A x" },
+            { "type": "p", "html": "Reading this term by term: $x \\in \\mathbb{R}^{k}$ is the input vector to the layer; $W \\in \\mathbb{R}^{d \\times k}$ is the frozen pre-trained weight that maps a $k$-dimensional input to a $d$-dimensional output; $h \\in \\mathbb{R}^{d}$ is the layer output. $A \\in \\mathbb{R}^{r \\times k}$ first squeezes the input down to a tiny $r$-dimensional bottleneck, and $B \\in \\mathbb{R}^{d \\times r}$ expands it back up to the $d$-dimensional output space. The two paths ($Wx$ and $BAx$) are simply added." },
+            { "type": "quote", "html": "LoRA can reduce the number of trainable parameters by 10,000x and the GPU memory requirement by 3x, while performing on par or better than fine-tuning on RoBERTa, DeBERTa, GPT-2, and GPT-3." },
+            { "type": "p", "html": "<b>Concrete payoff.</b> For GPT-3 175B, trainable parameters drop from 175,000,000,000 to about 4,700,000 — roughly a 10,000x reduction. The per-task checkpoint shrinks from 350GB to about 35MB (small enough to email). And because $BA$ can be folded back into $W$ before deployment, there is zero extra inference latency." },
+            { "type": "p", "html": "<b>Why this is in the collection.</b> LoRA is now the default parameter-efficient fine-tuning method across the open-source world (it is the core of HuggingFace's PEFT library). It made the next paper, QLoRA, possible, and it underpins the explosion of community fine-tunes that followed." }
           ],
           "viz": ["lora-decomposition"]
         }
@@ -24,19 +28,32 @@
       "title": "1. Introduction",
       "pages": [
         {
-          "title": "The cost of full fine-tuning",
+          "title": "Why full fine-tuning hurts at scale",
           "pdfPages": [1, 2],
           "blocks": [
-            { "type": "p", "html": "Pre-train-then-fine-tune is the standard transfer learning recipe. But as base models cross 100B parameters, fine-tuning becomes operationally hostile: every downstream task needs its own copy of the model, and the optimizer state (Adam's moment estimates) requires ~2× the parameter memory on top of the weights themselves." },
-            { "type": "p", "html": "Earlier parameter-efficient methods — adapter layers (Houlsby et al.) and prefix tuning (Li & Liang) — reduce trainable parameters, but adapters add inference latency (extra sequential layers) and prefix tuning is hard to optimize and reduces usable sequence length." }
+            { "type": "p", "html": "<b>The question this page answers:</b> if fine-tuning already works, what exactly is wrong with it? The answer is operational cost, and it gets worse the bigger the base model is." },
+            { "type": "p", "html": "<b>A concrete scenario.</b> Suppose you run a SaaS product and want a customized model for each of your 1,000 enterprise customers. With full fine-tuning of a 175B model, you would need 1,000 separate 350GB checkpoints — 350TB of storage just for weights, plus the engineering nightmare of loading a fresh 350GB model into GPU memory every time a different customer's request comes in. Hot-swapping is impossible at that size." },
+            { "type": "list", "items": [
+              "<b>Storage</b>: one full checkpoint per task, each the size of the entire model.",
+              "<b>Training memory</b>: weights + gradients + Adam's two moment buffers ≈ 3-4x the model size in VRAM.",
+              "<b>Deployment</b>: you cannot keep many full models warm; switching tasks means reloading hundreds of GB."
+            ]},
+            { "type": "p", "html": "<b>Prior attempts and why they fell short.</b> Two earlier parameter-efficient approaches are the obvious predecessors:" },
+            { "type": "list", "items": [
+              "<b>Adapter layers</b> (Houlsby et al., 2019): insert small new bottleneck layers <i>between</i> the frozen Transformer layers. They train few parameters, but because the adapters run sequentially in the forward pass, they add real inference latency — a problem when you serve at low batch size, as in interactive use.",
+              "<b>Prefix tuning</b> (Li & Liang, 2021): prepend trainable 'virtual tokens' to the input. It works but is finicky to optimize, and the virtual tokens eat into the usable context length, leaving less room for the actual prompt."
+            ]},
+            { "type": "p", "html": "LoRA's design goal was to get adapter-level parameter savings with <i>zero</i> added latency and without stealing context length." }
           ]
         },
         {
-          "title": "The low intrinsic rank hypothesis",
+          "title": "The low-intrinsic-rank hypothesis",
           "pdfPages": [2],
           "blocks": [
-            { "type": "p", "html": "Aghajanyan et al. showed empirically that pre-trained language models have a <b>low intrinsic dimension</b>: the task-specific update needed to solve a downstream task can be represented in a much smaller subspace than the full parameter space." },
-            { "type": "p", "html": "LoRA takes the next step: if the update $\\Delta W$ is intrinsically low-rank, parameterize it that way explicitly. Use $\\Delta W = BA$ with rank $r$, and you've matched the hypothesized structure." }
+            { "type": "p", "html": "<b>The core bet.</b> LoRA is built on an empirical observation: although a model has billions of weights, the <i>change</i> needed to adapt it to a new task lives in a surprisingly small subspace." },
+            { "type": "p", "html": "<b>An analogy.</b> Think of a 1,000-page reference manual (the pre-trained model). To make it useful for a specific job, you do not rewrite it — you add a one-page sticky note of corrections and emphases. The note is low-dimensional relative to the manual. LoRA claims $\\Delta W$ is that sticky note." },
+            { "type": "p", "html": "<b>The evidence it builds on.</b> Aghajanyan et al. (2020) measured the <b>intrinsic dimension</b> of fine-tuning — the smallest number of free parameters you can optimize in a random low-dimensional subspace and still reach good task performance. They found it is shockingly low (often a few hundred to a few thousand) even for models with hundreds of millions of weights." },
+            { "type": "p", "html": "<b>The leap.</b> If the update is intrinsically low-rank, then don't discover that structure by accident — bake it into the parameterization. Writing $\\Delta W = BA$ with rank $r$ forces the update to be at most rank $r$ by construction. The hypothesis is restated formally in the method: <i>the rank of the adaptation $\\Delta W$ can be very low and still match full fine-tuning.</i>" }
           ]
         }
       ]
@@ -45,25 +62,37 @@
       "title": "4. Method",
       "pages": [
         {
-          "title": "The decomposition",
+          "title": "The decomposition, initialization, and scaling",
           "pdfPages": [3, 4],
           "blocks": [
-            { "type": "p", "html": "For a pre-trained weight $W_0 \\in \\mathbb{R}^{d \\times k}$, the LoRA update is:" },
-            { "type": "math", "tex": "W_0 + \\Delta W = W_0 + B A,\\quad B \\in \\mathbb{R}^{d \\times r},\\; A \\in \\mathbb{R}^{r \\times k},\\; r \\ll \\min(d, k)" },
-            { "type": "p", "html": "$W_0$ is frozen (no gradient). Only $A$ and $B$ are trained. The forward pass becomes:" },
-            { "type": "math", "tex": "h = W_0 x + B A x" },
-            { "type": "p", "html": "<b>Initialization</b>: $A$ is initialized to a random Gaussian, $B$ is initialized to zero. So at the start of training, $\\Delta W = BA = 0$ and the model behaves exactly like the frozen base — fine-tuning starts from the pre-trained model and can only improve from there." },
-            { "type": "p", "html": "<b>Scaling</b>: the update is scaled by $\\alpha / r$ where $\\alpha$ is a constant. This makes the update invariant to changes in $r$: doubling $r$ doesn't double the magnitude of $\\Delta W$." }
+            { "type": "p", "html": "<b>The setup.</b> For a frozen pre-trained weight $W_0 \\in \\mathbb{R}^{d \\times k}$, LoRA writes the adapted weight as:" },
+            { "type": "math", "tex": "W_0 + \\Delta W = W_0 + B A, \\quad B \\in \\mathbb{R}^{d \\times r},\\; A \\in \\mathbb{R}^{r \\times k},\\; r \\ll \\min(d, k)" },
+            { "type": "p", "html": "Term by term: $W_0$ is the frozen base matrix (no gradient ever flows to it). $\\Delta W = BA$ is the trainable update. $B$ has $d \\cdot r$ entries; $A$ has $r \\cdot k$ entries; together $r(d+k)$ trainable numbers, versus $d \\cdot k$ for a full update. The constraint $r \\ll \\min(d,k)$ is what makes the saving huge." },
+            { "type": "p", "html": "<b>A worked count.</b> Take a GPT-3 attention projection with $d = k = 12{,}288$. A full $\\Delta W$ has $12{,}288 \\times 12{,}288 \\approx 151$ million entries. With $r = 8$, LoRA needs only $8 \\times (12{,}288 + 12{,}288) \\approx 196{,}608$ entries — about 0.13% of the full update, a 768x reduction <i>for this single matrix</i>." },
+            { "type": "p", "html": "<b>The forward pass</b> becomes the sum of the frozen path and the adapter path:" },
+            { "type": "math", "tex": "h = W_0 x + \\frac{\\alpha}{r} B A x" },
+            { "type": "p", "html": "Here $\\alpha$ is a constant scaling hyperparameter and $r$ the rank. The factor $\\frac{\\alpha}{r}$ scales the adapter's contribution. Why divide by $r$? So that if you later change the rank, you do not also accidentally change the typical magnitude of the update — the scaling keeps $\\Delta W$ roughly the same size whether $r=4$ or $r=64$, which means you do not have to re-tune the learning rate every time you change $r$. In practice you set $\\alpha$ once (e.g. $\\alpha = 16$) and treat $\\alpha/r$ like a fixed gain." },
+            { "type": "p", "html": "<b>Initialization is the clever part.</b> $A$ is initialized with small random Gaussian values; $B$ is initialized to <i>all zeros</i>. Therefore at step 0, $\\Delta W = B A = 0$, so the model is byte-for-byte identical to the pre-trained base. Training starts exactly at the strong pre-trained solution and can only move away as $B$ learns — there is no random-init shock that could damage the model's existing knowledge." },
+            { "type": "p", "html": "<b>Why zero $B$ and not zero $A$?</b> If both were zero, no gradient could flow (the product and its derivatives would all be zero). With random $A$ and zero $B$, the gradient with respect to $B$ is nonzero on the first step, so learning can begin immediately while still starting from $\\Delta W = 0$." }
           ],
           "viz": ["lora-decomposition"]
         },
         {
-          "title": "Which weights to adapt? Where to put LoRA",
+          "title": "Which weights to adapt, and the no-latency trick",
           "pdfPages": [4, 5],
           "blocks": [
-            { "type": "p", "html": "In a Transformer, you could LoRA-fy any weight matrix: the four attention projections ($W_q, W_k, W_v, W_o$), the two FFN matrices, or all of them." },
-            { "type": "p", "html": "Empirically, adapting just $W_q$ and $W_v$ (the query and value projections) gives the best parameter-budget-to-quality tradeoff. Adapting $W_k$ adds little; the FFN matrices benefit somewhat but are huge." },
-            { "type": "p", "html": "<b>No inference latency</b>: once trained, you can absorb $BA$ directly into $W_0$ by computing $W = W_0 + BA$ once. The deployed model has identical shape to the original. (You can also keep them separate if you need to swap tasks.)" }
+            { "type": "p", "html": "<b>The question.</b> A Transformer has many weight matrices. In each attention block there are four projections — query $W_q$, key $W_k$, value $W_v$, output $W_o$ — plus two large feed-forward matrices. Where should the limited LoRA budget go?" },
+            { "type": "p", "html": "<b>The empirical answer.</b> Under a fixed parameter budget, adapting just the query and value projections, $W_q$ and $W_v$, gives the best quality. The paper's ablation on GPT-3 shows that, given the same total number of trainable parameters, spreading rank across $\\{W_q, W_v\\}$ beats putting it all into $W_q$ alone or adding $W_k$." },
+            { "type": "table", "headers": ["Weights adapted", "Rank per matrix", "WikiSQL acc.", "MNLI acc."],
+              "rows": [
+                ["W_q only", "8", "70.4%", "91.0%"],
+                ["W_q, W_v", "4", "73.0%", "91.5%"],
+                ["W_q, W_k, W_v, W_o", "2", "73.7%", "91.7%"]
+              ]},
+            { "type": "p", "html": "The lesson: it is better to adapt <i>more matrices at lower rank</i> than one matrix at high rank. A tiny rank (even $r=1$ or $r=2$) spread across the attention is enough." },
+            { "type": "p", "html": "<b>The no-latency trick — the headline practical advantage.</b> Adapters add latency because they are extra layers. LoRA does not, because $\\Delta W = BA$ has the exact same shape as $W_0$. After training, you compute once:" },
+            { "type": "math", "tex": "W = W_0 + \\frac{\\alpha}{r} B A" },
+            { "type": "p", "html": "and store $W$ as a single matrix. The deployed model is structurally identical to the original — same number of matmuls, same shapes — so inference is exactly as fast as the base model. If you need to serve many tasks, you keep $W_0$ shared and the small $(A,B)$ pairs separate, swapping them in microseconds; if you serve one task, you merge and pay nothing." }
           ]
         }
       ]
@@ -75,24 +104,26 @@
           "title": "Results across models and tasks",
           "pdfPages": [6, 7, 8],
           "blocks": [
-            { "type": "p", "html": "LoRA is benchmarked against full fine-tuning, adapters (multiple variants), prefix tuning, and BitFit on RoBERTa-base/large, DeBERTa-XXL, GPT-2 medium/large, and GPT-3 175B. Tasks: GLUE, WikiSQL, MNLI, SAMSum, E2E NLG." },
+            { "type": "p", "html": "<b>What was tested.</b> LoRA is benchmarked against full fine-tuning, several adapter variants, prefix tuning, and BitFit, across RoBERTa-base/large, DeBERTa-XXL (1.5B), GPT-2 medium/large, and GPT-3 175B. Tasks span GLUE (a suite of language-understanding tasks), WikiSQL (text-to-SQL), MNLI (natural language inference), SAMSum (dialogue summarization), and E2E NLG (data-to-text generation)." },
             { "type": "list", "items": [
-              "<b>RoBERTa large</b> on GLUE: LoRA with 0.8M params matches full fine-tuning (355M params) average score.",
-              "<b>GPT-3 175B</b> on WikiSQL: LoRA with 4.7M params reaches 73.4% — exceeds full fine-tuning (73.8%) within noise, while prefix tuning lags by 2-4 points.",
-              "<b>GPT-3 175B</b> on MNLI-m: LoRA 91.7%, full FT 89.5%. LoRA actually <i>beats</i> full FT here, likely due to the regularization effect of constraining updates to low rank."
-            ]}
+              "<b>RoBERTa-large on GLUE</b>: LoRA with 0.8M trainable params matches the GLUE average of full fine-tuning, which trains all 355M params — a ~440x reduction at equal quality.",
+              "<b>GPT-3 175B on WikiSQL</b>: LoRA with 4.7M trainable params reaches 73.4% accuracy, statistically tied with full fine-tuning (73.8%), while prefix-based methods trail by 2-4 points.",
+              "<b>GPT-3 175B on MNLI-matched</b>: LoRA scores 91.7% versus full fine-tuning's 89.5% — LoRA actually <i>beats</i> full fine-tuning, plausibly because constraining the update to low rank acts as a regularizer and prevents overfitting the relatively small task data."
+            ]},
+            { "type": "p", "html": "<b>Why beating full fine-tuning is not a paradox.</b> Full fine-tuning has enough capacity to memorize quirks of the training set. The low-rank constraint is a strong prior that the adaptation should be simple; on tasks where the true adaptation really is simple, that prior helps generalization, the same way a smaller model can sometimes generalize better than a larger over-parameterized one." }
           ]
         },
         {
-          "title": "Why does it work? Investigating the low-rank update",
+          "title": "Why it works: anatomy of the low-rank update",
           "pdfPages": [9, 10, 11],
           "blocks": [
-            { "type": "p", "html": "Section 7 of the paper digs into <i>what</i> the LoRA update is capturing. They find:" },
+            { "type": "p", "html": "<b>The question.</b> Section 7 of the paper asks: <i>what is the update $\\Delta W$ actually doing to the model?</i> Three findings stand out." },
             { "type": "list", "items": [
-              "Even rank r=1 or r=2 already captures most of the task-specific signal. r=8 is rarely improved on. This validates the low-intrinsic-rank claim.",
-              "$\\Delta W$ amplifies directions in $W$ that the pre-trained model wasn't already emphasizing — i.e. it highlights task-relevant features that were latent but underused, rather than rotating the model entirely.",
-              "The amplification factor is large: $\\Delta W$ has features whose magnitude is ~20× larger than the corresponding directions in $W$ itself."
-            ]}
+              "<b>Rank can be tiny.</b> Even $r = 1$ or $r = 2$ captures most of the task signal; going beyond $r = 8$ rarely helps. This is direct confirmation of the low-intrinsic-rank hypothesis.",
+              "<b>The update amplifies under-used directions.</b> When the authors compare the subspace of $\\Delta W$ to the top singular directions of $W$, they find $\\Delta W$ does <i>not</i> just reinforce what $W$ already emphasizes. Instead it amplifies feature directions that were present in $W$ but had small magnitude — task-relevant signals the pre-trained model knew about but under-weighted.",
+              "<b>The amplification is large.</b> The features $\\Delta W$ emphasizes are scaled up by roughly 20x relative to their weak presence in $W_0$ — a small, sharp, targeted nudge rather than a broad rotation."
+            ]},
+            { "type": "p", "html": "<b>The takeaway.</b> Fine-tuning a big model for a new task is mostly about <i>turning up the volume</i> on a handful of latent features the model already represents, not teaching it fundamentally new structure. That is precisely the kind of change a low-rank matrix can express, which is why LoRA loses nothing." }
           ]
         }
       ]
@@ -104,14 +135,14 @@
           "title": "Why LoRA stuck",
           "pdfPages": [12],
           "blocks": [
-            { "type": "p", "html": "LoRA is now the default parameter-efficient fine-tuning method in open-source ecosystems (HuggingFace PEFT, etc). Reasons:" },
+            { "type": "p", "html": "<b>The lasting impact.</b> LoRA became the default parameter-efficient fine-tuning method almost immediately because it wins on every axis that matters operationally:" },
             { "type": "list", "items": [
-              "Trivially composable — multiple LoRAs can be added together to combine tasks/styles.",
-              "Storage and switching costs collapse: a 7B model + 10 LoRAs takes ~14GB instead of 140GB.",
-              "Zero inference overhead once merged.",
-              "Works as well as full fine-tuning in most regimes, sometimes better."
+              "<b>Composable</b>: multiple LoRAs can be summed to blend tasks or styles, and a single base can host a marketplace of swappable adapters (the entire 'LoRA' ecosystem in image generation works this way).",
+              "<b>Cheap to store and switch</b>: a 7B base plus ten 30MB adapters is ~14.3GB instead of ten 14GB copies (~140GB).",
+              "<b>Zero inference overhead</b> once merged into $W$.",
+              "<b>No quality penalty</b> in most regimes, and occasionally a gain from the regularization effect."
             ]},
-            { "type": "p", "html": "QLoRA (next paper) extends this by quantizing the frozen base to 4-bit, making LoRA fine-tuning of 65B+ models possible on a single consumer GPU." }
+            { "type": "p", "html": "<b>The bridge to the next paper.</b> LoRA still requires the frozen base to sit in GPU memory in full precision (fp16) during fine-tuning — for a 65B model that is ~130GB, beyond a single GPU. QLoRA (the next entry) removes that last barrier by quantizing the frozen base to 4-bit, so a 65B model can be fine-tuned on one 48GB GPU. LoRA is the trainable part; QLoRA shrinks the frozen part underneath it." }
           ]
         }
       ]

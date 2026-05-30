@@ -15,19 +15,27 @@
           "blocks": [
             {
               "type": "p",
-              "html": "Before this paper, deep neural networks were brilliant at fixed-size problems &mdash; classify <em>this</em> image, label <em>this</em> vector &mdash; but they had no clean way to map one <strong>variable-length sequence</strong> to another. Translation is exactly that problem: an English sentence of any length goes in, a French sentence of any length comes out, and the two need not even be the same length."
+              "html": "<strong>The question this page answers:</strong> how can a neural network turn one sentence into another sentence when the two are different lengths? Before this paper, deep networks were brilliant at <em>fixed-size</em> problems &mdash; classify <em>this</em> 224&times;224 image, label <em>this</em> 100-dimensional vector &mdash; but they had no clean way to map a <strong>variable-length sequence</strong> to another variable-length sequence. Translation is exactly that: an English sentence of any length goes in, a French sentence of a <em>different</em> length comes out."
             },
             {
               "type": "p",
-              "html": "The proposal is disarmingly simple. Use one LSTM (the <strong>encoder</strong>) to read the source sentence word by word and squeeze everything it has seen into a single fixed-length vector. Then hand that vector to a second LSTM (the <strong>decoder</strong>) that unrolls it back out into the target sentence, one word at a time. Two general-purpose recurrent networks, glued together by a vector."
+              "html": "<strong>Concrete example.</strong> Take English &ldquo;the cat is black&rdquo; (4 words) &rarr; French &ldquo;le chat est noir&rdquo; (4 words), but also &ldquo;I am hungry&rdquo; (3 words) &rarr; &ldquo;j&rsquo;ai faim&rdquo; (2 words). The input length, the output length, and the alignment between them all change from one example to the next. A network with a fixed-size input layer and a fixed-size output layer simply cannot express this."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The proposal is disarmingly simple.</strong> Use one LSTM (the <strong>encoder</strong>) to read the source sentence word by word and squeeze everything it has seen into a single fixed-length vector &mdash; the paper uses a <strong>1000-dimensional</strong> vector. Then hand that one vector to a second LSTM (the <strong>decoder</strong>) that unrolls it back out into the target sentence, one word at a time. Two general-purpose recurrent networks, glued together by a single vector that acts as the &lsquo;thought&rsquo; of the sentence."
             },
             {
               "type": "quote",
-              "html": "On the WMT'14 English-to-French task, an ensemble of these LSTMs reached a <strong>BLEU score of 34.8</strong> &mdash; the first time a purely neural system was competitive with a mature phrase-based statistical machine translation pipeline."
+              "html": "On the WMT&rsquo;14 English-to-French task, an ensemble of these LSTMs reached a <strong>BLEU score of 34.8</strong> &mdash; the first time a purely neural system was competitive with a mature, heavily-engineered phrase-based statistical machine translation pipeline (which scored 33.3)."
             },
             {
               "type": "p",
-              "html": "Two findings made it work and gave the paper its lasting fame: LSTMs handle long sentences far better than anyone expected, and a single counter-intuitive trick &mdash; <strong>reversing the order of the words in the source sentence</strong> &mdash; produced a large, almost free improvement."
+              "html": "Two findings made it work and gave the paper its lasting fame: LSTMs handle long sentences far better than anyone expected, and a single counter-intuitive trick &mdash; <strong>reversing the order of the words in the source sentence</strong> &mdash; produced a large, almost free improvement (BLEU jumped from 25.9 to 30.6 with no other change)."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Context &amp; trivia.</strong> This paper, alongside Cho et al.&rsquo;s contemporaneous RNN Encoder&ndash;Decoder, launched the era of <strong>neural machine translation</strong>. The &lsquo;sentence in a vector&rsquo; framing it introduced &mdash; encode, then decode &mdash; remains the skeleton of every modern translation, summarization, and dialogue system, even after attention and Transformers replaced the single-vector bottleneck."
             }
           ]
         }
@@ -44,15 +52,35 @@
           "blocks": [
             {
               "type": "p",
-              "html": "A standard feed-forward deep network is a function from a fixed-dimensional input to a fixed-dimensional output. That is a perfect fit for tasks where the shape of the data is known ahead of time. But many of the most interesting problems in language and speech are <strong>sequence-to-sequence</strong>: the length of the input is not known in advance, and the length of the output is different again."
+              "html": "<strong>The intuition.</strong> A standard feed-forward deep network (a DNN) is a function from a fixed-dimensional input to a fixed-dimensional output. That is a perfect fit when the shape of the data is known ahead of time &mdash; an image is always the same number of pixels. But the most interesting problems in language and speech are <strong>sequence-to-sequence</strong>: the input length is not known in advance, and the output length is different again, and unknown too."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;Despite their flexibility and power, DNNs can only be applied to problems whose inputs and targets can be sensibly encoded with vectors of fixed dimensionality. It is a significant limitation, since many important problems are best expressed with sequences whose lengths are not known a-priori.&rdquo;"
             },
             {
               "type": "p",
-              "html": "Recurrent neural networks are the natural tool because they consume a sequence step by step, carrying a hidden state forward. The catch in 2014 was that plain RNNs were hard to train over long ranges &mdash; the gradients vanished &mdash; so they struggled to connect a word at the start of a sentence to a decision at the end."
+              "html": "<strong>Concrete example of the difficulty.</strong> Suppose you tried to force translation into a fixed shape by padding every sentence to, say, 50 words. You would still have to decide the output length before producing a single word, and a 3-word answer would waste 47 slots while an 80-word answer would be truncated. Worse, the network would have to learn an alignment that shifts unpredictably: in English-to-French the verb often moves, adjectives flip after the noun, and one English word can become three French ones. No fixed wiring captures that."
             },
             {
               "type": "p",
-              "html": "The authors' bet was that the <strong>LSTM</strong> &mdash; an RNN variant with gated memory cells designed precisely to preserve information over long spans &mdash; would be strong enough to read an entire sentence and remember it. If that bet held, you could replace an enormous hand-engineered translation system with two neural networks trained end to end on raw text pairs."
+              "html": "<strong>Why an RNN is the natural tool.</strong> A recurrent neural network consumes a sequence step by step, carrying a hidden state forward. At step $t$ it combines the new input with everything it remembers. The standard RNN update is:"
+            },
+            {
+              "type": "math",
+              "tex": "h_t = \\\\sigma\\\\!\\\\left(W^{hx} x_t + W^{hh} h_{t-1}\\\\right), \\\\qquad y_t = W^{yh} h_t"
+            },
+            {
+              "type": "p",
+              "html": "Here $x_t$ is the input at step $t$ (a word embedding), $h_t$ is the hidden state (the running memory), $h_{t-1}$ is the previous state, $\\\\sigma$ is a nonlinearity such as $\\\\tanh$, and $W^{hx}, W^{hh}, W^{yh}$ are weight matrices shared across all time steps. Sharing the weights is what lets one network process sequences of any length. The output $y_t$ is read off the hidden state."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The catch in 2014.</strong> A plain RNN maps an input sequence to an output sequence only when the alignment between them is known in advance &mdash; and even then, training over long ranges fails because the gradients <strong>vanish or explode</strong>. The network cannot reliably connect a word at the start of a sentence to a decision made at the end."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The bet.</strong> The authors wagered that the <strong>LSTM</strong> &mdash; an RNN variant with gated memory cells designed precisely to preserve information over long spans &mdash; would be strong enough to read an entire sentence and remember it well enough to reproduce it in another language. If that bet held, you could replace an enormous hand-engineered statistical translation system with two neural networks trained end to end on raw sentence pairs."
             }
           ]
         }
@@ -64,28 +92,40 @@
         {
           "title": "Encoder, vector, decoder",
           "subtitle": "Estimating one sentence's probability given another",
-          "pdfPages": [3],
+          "pdfPages": [2, 3],
           "viz": ["seq2seq-align"],
           "blocks": [
             {
               "type": "p",
-              "html": "The model's job is to estimate the conditional probability of the output sentence given the input sentence. Call the input $x_1,\\\\dots,x_T$ and the output $y_1,\\\\dots,y_{T'}$, where the two lengths $T$ and $T'$ can differ. The encoder LSTM reads the input and its final hidden state becomes a fixed-dimensional summary vector $v$ &mdash; the entire source sentence boiled down to a list of numbers."
+              "html": "<strong>The goal stated precisely.</strong> The model estimates the <strong>conditional probability</strong> of an output sentence given an input sentence. Call the input $x_1,\\\\dots,x_T$ and the output $y_1,\\\\dots,y_{T'}$, where the two lengths $T$ and $T'$ are allowed to differ. The encoder LSTM reads the input one word at a time, and its <strong>final hidden state</strong> becomes a fixed-dimensional summary vector $v$ &mdash; the entire source sentence boiled down to 1000 numbers."
             },
             {
               "type": "p",
-              "html": "The decoder LSTM is then a language model whose initial state is set to $v$. It generates the target one token at a time, and the probability of the whole target sentence is the product of the probabilities of each token in turn:"
+              "html": "<strong>Walk through an example.</strong> For &ldquo;the cat is black&rdquo;, the encoder reads <code>the</code>, then <code>cat</code>, then <code>is</code>, then <code>black</code>, updating $h_t$ each step. After the last word, $h_T = v$ holds a compressed picture of the whole phrase. The decoder is then a language model whose <em>initial</em> state is set to $v$; it produces <code>le</code>, then <code>chat</code>, then <code>est</code>, then <code>noir</code>, each conditioned on $v$ and on the French words emitted so far."
+            },
+            {
+              "type": "p",
+              "html": "The probability of the whole target sentence is the product of the probabilities of each token in turn:"
             },
             {
               "type": "math",
-              "tex": "p(y_1,\\\\dots,y_{T'} \\\\mid x_1,\\\\dots,x_T) = \\\\prod_{t=1}^{T'} p(y_t \\\\mid v,\\\\; y_1,\\\\dots,y_{t-1})"
+              "tex": "p(y_1,\\\\dots,y_{T'} \\\\mid x_1,\\\\dots,x_T) = \\\\prod_{t=1}^{T'} p\\\\!\\\\left(y_t \\\\mid v,\\\\; y_1,\\\\dots,y_{t-1}\\\\right)"
             },
             {
               "type": "p",
-              "html": "Read this as: the probability of the translation equals the chance of the first word given the source summary $v$, times the chance of the second word given $v$ and the first word, times the third given everything so far, and so on. Each individual factor $p(y_t \\\\mid \\\\dots)$ is produced by a <strong>softmax</strong> over the entire target vocabulary."
+              "html": "Reading it term by term: the left side is the probability of the entire translation given the entire source. On the right, $v$ is the fixed-length summary from the encoder; the product runs over the $T'$ target positions; each factor $p(y_t \\\\mid v, y_1,\\\\dots,y_{t-1})$ is the chance of the $t$-th target word given the summary <em>and</em> all previously generated words. So it is: chance of the first word given $v$, times chance of the second given $v$ and the first, and so on &mdash; an exact factorization of the joint probability by the chain rule."
             },
             {
               "type": "p",
-              "html": "Every sentence ends with a special <code>&lt;EOS&gt;</code> (end-of-sequence) token. This lets the decoder learn <em>when to stop</em>, so the model can emit outputs of any length rather than being told the length in advance."
+              "html": "Each factor $p(y_t \\\\mid \\\\dots)$ is produced by a <strong>softmax</strong> over the entire target vocabulary. With a vocabulary of 80,000 French words, the decoder outputs an 80,000-way probability distribution at every step and the most-likely entries become the candidate next words."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The &lt;EOS&gt; token.</strong> Every sentence ends with a special <code>&lt;EOS&gt;</code> (end-of-sequence) symbol, and crucially the model is allowed to emit it. This lets the decoder learn <em>when to stop</em> on its own, so it can produce outputs of any length rather than being told the length in advance &mdash; the key to defining a distribution over variable-length sequences."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;The LSTM computes this conditional probability by first obtaining the fixed-dimensional representation $v$ of the input sequence given by the last hidden state of the LSTM, and then computing the probability of $y_1,\\\\dots,y_{T'}$ with a standard LSTM-LM formulation whose initial hidden state is set to $v$.&rdquo;"
             }
           ]
         },
@@ -97,19 +137,23 @@
           "blocks": [
             {
               "type": "p",
-              "html": "The actual system departed from the bare sketch in three ways that the authors found important:"
+              "html": "<strong>The intuition.</strong> The bare encoder&ndash;decoder sketch above is correct but would not have beaten statistical MT on its own. Three engineering choices turned the plausible idea into a competitive system:"
             },
             {
               "type": "list",
               "items": [
-                "<strong>Two separate LSTMs.</strong> They used a different LSTM for the encoder and for the decoder, rather than sharing one. This roughly doubles the parameters at little cost and lets each network specialize &mdash; one for reading, one for writing &mdash; and makes it natural to train on multiple language pairs at once.",
-                "<strong>Deep, not shallow.</strong> They stacked four LSTM layers. Deep LSTMs significantly outperformed shallow ones; the extra layers gave the network the capacity to capture the structure needed to remember a whole sentence.",
-                "<strong>Reverse the source.</strong> They fed the input sentence in backwards. This single trick was responsible for a large chunk of the final quality."
+                "<strong>Two separate LSTMs.</strong> They used a different LSTM for the encoder and for the decoder rather than sharing one. This roughly doubles the number of parameters at negligible compute cost and lets each network specialize &mdash; one for reading, one for writing &mdash; and it makes it natural to train on multiple language pairs simultaneously.",
+                "<strong>Deep, not shallow.</strong> They stacked <strong>four</strong> LSTM layers. Deep LSTMs significantly outperformed shallow ones; in the paper's experiments each added layer cut perplexity by nearly 10%, because the extra layers gave the network the capacity to encode a whole sentence faithfully.",
+                "<strong>Reverse the source.</strong> They fed the input sentence in backwards (&ldquo;black is cat the&rdquo; instead of &ldquo;the cat is black&rdquo;). This single trick was responsible for a large chunk of the final quality and is explained on the next page."
               ]
             },
             {
               "type": "p",
-              "html": "These choices turned a plausible idea into a system that could actually compete with statistical machine translation."
+              "html": "<strong>Scale, for context.</strong> The full model had four layers of 1000-cell LSTMs, 1000-dimensional word embeddings, an input vocabulary of 160,000 and an output vocabulary of 80,000, totaling about 384 million parameters. It was trained on a 12-million-sentence subset of WMT&rsquo;14 (348M French and 304M English words). Training took about ten days on an 8-GPU machine, with each LSTM layer placed on its own GPU to parallelize the work."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Why these choices and not others.</strong> Sharing one LSTM would have forced the same weights to both compress and generate, two opposite jobs; depth was the cheapest way to add capacity to a recurrent model; and reversal cost literally nothing &mdash; you only change the order in which words are read."
             }
           ]
         },
@@ -121,44 +165,96 @@
           "blocks": [
             {
               "type": "p",
-              "html": "This is the paper's most memorable trick, and the intuition is geometric. In the normal order, the first source word and the first target word it should influence are separated by the entire length of the sentence inside the network's memory. Every early word has a long lag before its translation is produced, and gradients have to travel that whole distance."
+              "html": "<strong>The intuition, made geometric.</strong> Think of the network's memory as a timeline. In normal order, the first source word and the first target word it should influence are separated by the <em>entire length</em> of the sentence: the encoder reads all $T$ words before the decoder emits anything, so word 1 of the source has to survive $T$ steps before its translation appears. Every early word has a long lag, and gradients must travel that whole distance &mdash; exactly the regime where they vanish."
             },
             {
               "type": "p",
-              "html": "When you reverse the source, the first few source words end up sitting right next to the first few target words in time. The average distance between corresponding words is unchanged, but the <strong>minimum time lag</strong> for the early words collapses. That gives the optimizer easy early wins &mdash; it can quickly learn to line up the beginnings of sentences &mdash; and the benefit propagates to the rest."
+              "html": "<strong>Concrete example.</strong> For &ldquo;the cat is black&rdquo; &rarr; &ldquo;le chat est noir&rdquo;, in normal order the encoder reads <code>the cat is black</code> and the decoder must connect <code>the</code> (read first, 4 steps ago) to <code>le</code> (emitted first). If we reverse the source to <code>black is cat the</code>, then <code>the</code> is now read <em>last</em>, sitting right next to <code>le</code> in the timeline. The first few source words and the first few target words become neighbors."
+            },
+            {
+              "type": "p",
+              "html": "Reversal does not change the <em>average</em> distance between corresponding words &mdash; it stays the same &mdash; but it collapses the <strong>minimum time lag</strong> for the early words to near zero. That gives the optimizer easy early wins: it quickly learns to line up the beginnings of sentences, and once the start is anchored, &lsquo;momentum&rsquo; carries the network to translate the rest correctly."
             },
             {
               "type": "quote",
-              "html": "Reversing the words in the source sentence raised test BLEU from about 25.9 to 30.6 and cut perplexity, with no change to the model itself &mdash; only the order in which the input was read."
+              "html": "&ldquo;While we do not have a complete explanation to this phenomenon, we believe that it is caused by the introduction of many short term dependencies to the dataset. &hellip; As a result, backpropagation has an easier time &lsquo;establishing communication&rsquo; between the source sentence and the target sentence.&rdquo;"
             },
             {
               "type": "p",
-              "html": "Strikingly, the reversed model handled <em>long</em> sentences better, not worse &mdash; evidence that the gain came from easier optimization, not from some quirk that only helped short inputs."
+              "html": "<strong>The payoff in numbers.</strong> Reversing the words in the source raised test BLEU from <strong>25.9 to 30.6</strong> and cut test perplexity from 5.8 to 4.7, with no change to the model itself &mdash; only the order in which the input was read."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The surprising part.</strong> One might expect reversal to help only short sentences. Instead the reversed model handled <em>long</em> sentences <strong>better</strong>, not worse &mdash; strong evidence that the gain came from easier optimization, not from some quirk that only rescues short inputs. This observation foreshadowed attention, which would later remove the long-distance problem entirely."
             }
           ]
         }
       ]
     },
     {
-      "title": "Decoding",
+      "title": "Training & Decoding",
       "pages": [
         {
-          "title": "Beam search at generation time",
-          "subtitle": "Keeping several partial translations alive",
-          "pdfPages": [3],
+          "title": "How the model was trained",
+          "subtitle": "Objective, vocabulary, and the engineering tricks",
+          "pdfPages": [4, 5],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "At training time the model just maximizes the probability of the correct translation. At test time it must <em>produce</em> a translation, and greedily taking the single most likely next word at every step can paint the decoder into a corner &mdash; an early confident-but-wrong choice cannot be undone."
+              "html": "<strong>The training objective.</strong> Training simply maximizes the log-probability of the correct translation $T$ given the source sentence $S$, averaged over the whole training set $\\\\mathcal{S}$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\\\frac{1}{|\\\\mathcal{S}|} \\\\sum_{(T,S)\\\\in\\\\mathcal{S}} \\\\log p(T \\\\mid S)"
             },
             {
               "type": "p",
-              "html": "Instead the authors use <strong>beam search</strong>: at each step keep the $B$ most promising partial sentences (the &lsquo;beam&rsquo;), extend each by every possible next word, and prune back to the best $B$. A hypothesis is finished when it emits <code>&lt;EOS&gt;</code>, and the most probable complete sentence wins."
+              "html": "Here $\\\\mathcal{S}$ is the set of source/target sentence pairs, $|\\\\mathcal{S}|$ its size, and $\\\\log p(T \\\\mid S)$ is the model&rsquo;s log-probability for the true translation (the same product of softmaxes from the model page, in log form so the product becomes a sum). Maximizing this is identical to minimizing cross-entropy: the network is rewarded for putting high probability on the actual reference words."
             },
             {
               "type": "p",
-              "html": "Encouragingly, even a beam of size 2 captured most of the benefit, and a beam of 12 was enough to reach top performance &mdash; the model's probabilities were sharp enough that it did not need to explore a huge number of candidates."
+              "html": "<strong>Key training settings.</strong> The authors used these concrete recipes:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<strong>Initialization &amp; optimizer:</strong> all weights initialized uniformly in $[-0.08, 0.08]$; plain stochastic gradient descent (SGD) with learning rate 0.7, halved every half-epoch after epoch 5, for 7.5 epochs total.",
+                "<strong>Gradient clipping:</strong> because LSTMs rarely <em>vanish</em> but can <em>explode</em>, they hard-clipped the gradient norm. When the L2 norm $g$ of the gradient exceeded 5, they rescaled it to $g \\\\leftarrow 5g/\\\\lVert g\\\\rVert$. This single safeguard was essential for stable training.",
+                "<strong>Sorted minibatches:</strong> a random minibatch of 128 could contain a mix of very short and very long sentences, wasting computation on padding. They sorted sentences by length within a batch so each batch contained sentences of roughly equal length, which sped training about 2&times;."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<strong>Why these matter.</strong> Without gradient clipping, deep LSTMs on long sentences would diverge; without length-sorted batches, most of an 8-GPU machine&rsquo;s time would be spent multiplying by padding tokens. These are the unglamorous details that separated a working system from a failed experiment."
+            }
+          ]
+        },
+        {
+          "title": "Beam search at generation time",
+          "subtitle": "Keeping several partial translations alive",
+          "pdfPages": [3, 4],
+          "viz": [],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<strong>The problem decoding solves.</strong> At training time the model just maximizes the probability of the known correct translation. At test time it must <em>produce</em> a translation it has never seen. Greedily taking the single most likely next word at every step &mdash; <strong>greedy decoding</strong> &mdash; can paint the decoder into a corner: an early confident-but-wrong choice cannot be undone, and the rest of the sentence is built on a mistake."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Concrete example.</strong> Suppose after &ldquo;le&rdquo; the most likely next word is &ldquo;chien&rdquo; (dog) at 0.40 but &ldquo;chat&rdquo; (cat) is close at 0.38. Greedy decoding commits to &ldquo;chien&rdquo; and can never recover. Beam search keeps <em>both</em> alive and lets the rest of the sentence decide which start leads to a higher-probability complete translation."
+            },
+            {
+              "type": "p",
+              "html": "<strong>Beam search</strong> works like this: at each step keep the $B$ most promising partial sentences (the &lsquo;beam&rsquo;), extend each by every possible next word, score all the extended candidates by total log-probability, and prune back to the best $B$. A hypothesis is finished when it emits <code>&lt;EOS&gt;</code>, at which point it is set aside; the most probable complete sentence at the end wins."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;Interestingly, our system performs well even with a beam size of 1, and a beam of size 2 provides most of the benefits of beam search.&rdquo;"
+            },
+            {
+              "type": "p",
+              "html": "<strong>Why this is reassuring.</strong> That a beam of just 1 or 2 nearly matches a beam of 12 means the model&rsquo;s probabilities were already <em>sharp</em> &mdash; it usually knew the right word without needing to explore many alternatives. Beam search is now standard in essentially all sequence-generation systems, from translation to image captioning (see <em>Show and Tell</em> in this collection)."
             }
           ]
         }
@@ -170,12 +266,12 @@
         {
           "title": "Competitive with statistical MT",
           "subtitle": "WMT'14 English to French",
-          "pdfPages": [5],
+          "pdfPages": [5, 6],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "Trained directly on the WMT'14 English-French data, a single reversed deep LSTM already beat a strong phrase-based baseline, and an ensemble pushed further. The headline numbers:"
+              "html": "<strong>The headline result.</strong> Trained directly on the WMT&rsquo;14 English&ndash;French data, a single reversed deep LSTM already approached a strong phrase-based baseline, and an ensemble of five (each initialized differently and using a different random minibatch order) surpassed it. This was the first time a pure neural net competed with phrase-based statistical machine translation on a large task:"
             },
             {
               "type": "table",
@@ -183,45 +279,66 @@
               "rows": [
                 ["Baseline phrase-based SMT", "33.30"],
                 ["Single reversed LSTM", "30.6"],
+                ["Single LSTM, normal order (for comparison)", "25.9"],
                 ["Ensemble of 5 reversed LSTMs", "34.81"],
-                ["Best WMT'14 result (for reference)", "37.0"]
+                ["Best WMT'14 result (state of the art, reference)", "37.0"]
               ]
             },
             {
               "type": "p",
-              "html": "Beyond translating from scratch, the LSTM was also excellent at <strong>rescoring</strong> the n-best lists produced by the statistical system &mdash; reranking the SMT candidates by the LSTM's probabilities lifted quality close to the best published number. This was the first convincing demonstration that a large neural network could go toe to toe with decades of statistical machine translation engineering."
+              "html": "<strong>Rescoring, an even stronger result.</strong> Beyond translating from scratch, the LSTM was excellent at <strong>rescoring</strong> the 1000-best lists produced by the baseline statistical system: reranking those SMT candidates by the LSTM&rsquo;s probabilities lifted BLEU to <strong>36.5</strong>, just 0.5 points below the best published number at the time. So the neural model added real, complementary information to a mature pipeline."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;This is by far the best result achieved by direct translation with large neural networks. For comparison, the BLEU score of an SMT baseline on this dataset is 33.30.&rdquo;"
+            },
+            {
+              "type": "p",
+              "html": "<strong>The long-sentence surprise.</strong> Conventional wisdom said a single fixed vector could not hold a long sentence. Yet the LSTM&rsquo;s quality barely dropped as sentences grew &mdash; it did well even on sentences over 35 words &mdash; which the authors attributed largely to the reversal trick. This robustness is what made the single-vector approach credible."
             }
           ]
         },
         {
           "title": "What the network learned",
           "subtitle": "Sentence vectors with sensible geometry",
-          "pdfPages": [6],
+          "pdfPages": [6, 7],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "Because the encoder compresses each sentence into a single vector, the authors could inspect that vector space directly. Visualizing the summary vectors revealed that the representations were <strong>sensitive to word order</strong> and largely invariant to swapping active and passive voice &mdash; sentences with similar meaning clustered together, while reordering the words moved them apart."
+              "html": "<strong>Why this matters.</strong> Because the encoder compresses each sentence into a single vector, the authors could inspect that vector space directly &mdash; something impossible in a hand-built statistical system. What does the &lsquo;thought vector&rsquo; actually encode?"
             },
             {
               "type": "p",
-              "html": "This was an early hint at a now-familiar idea: a sequence model trained only to predict the next word ends up building a meaningful, structured representation of meaning as a side effect."
+              "html": "<strong>Concrete finding.</strong> A 2-D PCA projection of the sentence vectors showed clear, interpretable structure. Sentences with the same meaning but different surface forms clustered together, while reordering the words pushed a sentence away. For example, &ldquo;Mary admires John&rdquo; and &ldquo;Mary is in love with John&rdquo; landed close together, but &ldquo;Mary admires John&rdquo; and &ldquo;John admires Mary&rdquo; &mdash; same words, different roles &mdash; landed far apart."
+            },
+            {
+              "type": "quote",
+              "html": "&ldquo;The representations are sensitive to the order of words, while being fairly invariant to the replacement of an active voice with a passive voice.&rdquo;"
+            },
+            {
+              "type": "p",
+              "html": "<strong>Why this is remarkable.</strong> The network was never told about syntax, voice, or word roles. It was trained only to predict the next French word. Yet to do that well it discovered that <em>who did what to whom</em> matters (so it separates active/passive subject&ndash;object) while <em>how you phrase it</em> often does not. This was an early, vivid demonstration of the now-familiar idea that a model trained purely on next-word prediction builds a structured representation of meaning as a side effect &mdash; the same principle later scaled up in word2vec, BERT, and GPT."
             }
           ]
         },
         {
           "title": "Why this paper still matters",
           "subtitle": "The template behind everything that followed",
-          "pdfPages": [1],
+          "pdfPages": [7, 1],
           "viz": [],
           "blocks": [
             {
               "type": "p",
-              "html": "Seq2seq established the <strong>encoder-decoder template</strong> that underlies modern translation, summarization, dialogue, and code generation. Frame a problem as &lsquo;read a sequence, write a sequence,&rsquo; train end to end, decode with beam search &mdash; that recipe is now everywhere."
+              "html": "<strong>The lasting contribution.</strong> Seq2seq established the <strong>encoder&ndash;decoder template</strong> that underlies modern translation, summarization, dialogue, question answering, and code generation. The recipe &mdash; frame the task as &lsquo;read a sequence, write a sequence,&rsquo; train end-to-end on raw pairs, decode with beam search &mdash; is now everywhere, and the phrase &lsquo;thought vector&rsquo; entered the field&rsquo;s vocabulary because of it."
             },
             {
               "type": "p",
-              "html": "It also exposed the model's one obvious weakness, which set the agenda for the next breakthrough. Cramming an entire sentence into a <strong>single fixed-length vector</strong> is a bottleneck: the longer the sentence, the more the network has to forget. The very next year, Bahdanau and colleagues removed that bottleneck with <strong>attention</strong> &mdash; the direct ancestor of the Transformer."
+              "html": "<strong>The weakness it exposed.</strong> Cramming an entire sentence into a <strong>single fixed-length vector</strong> is a bottleneck: the longer the sentence, the more the network must forget to make room. Reversal mitigated it but did not remove it. The very next year, Bahdanau, Cho, and Bengio removed the bottleneck with <strong>attention</strong> &mdash; letting the decoder look back at <em>all</em> encoder states (see &ldquo;Neural Machine Translation by Jointly Learning to Align and Translate&rdquo; in this collection)."
+            },
+            {
+              "type": "p",
+              "html": "<strong>The line of descent.</strong> Attention, in turn, was distilled three years later into the <strong>Transformer</strong> (&ldquo;Attention Is All You Need&rdquo;), which kept seq2seq&rsquo;s encoder&ndash;decoder shape but threw out recurrence entirely. So this paper sits at the root of a family tree that runs straight through to GPT and modern large language models. Its core lesson &mdash; that a single large network trained end-to-end can replace a tower of hand-engineered components &mdash; defined the decade of deep learning that followed."
             }
           ]
         }

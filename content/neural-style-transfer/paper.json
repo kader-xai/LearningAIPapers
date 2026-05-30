@@ -9,16 +9,15 @@
       "pages": [
         {
           "title": "Painting a Photograph",
-          "subtitle": "Separating the content of an image from its artistic style",
+          "subtitle": "The pitch",
           "pdfPages": [1],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Big Idea"},
-            {"type": "p", "html": "What if you could take an ordinary photograph and repaint it in the style of Van Gogh's <i>Starry Night</i>, while keeping the same buildings, trees, and people recognizable? This paper shows that a neural network trained for object recognition has, as a side effect, learned representations that let us do exactly that."},
-            {"type": "p", "html": "The key insight is that <b>content</b> and <b>style</b> are encoded separately inside a deep convolutional neural network (CNN). The arrangement of objects in a scene (content) lives in one part of the network's response, while the local textures, colors, and brushstrokes (style) live in another. Because these two can be measured independently, we can hold one fixed and replace the other."},
-            {"type": "quote", "html": "Here we introduce A Neural Algorithm of Artistic Style that can separate and recombine the image content and style of natural images."},
-            {"type": "h2", "text": "Why This Mattered"},
-            {"type": "p", "html": "Before this work, transferring artistic style required hand-crafted texture features tied to specific images. Gatys et al. showed that the <i>same</i> features a network learns to recognize cats and cars are general enough to capture artistic style. This reframed style transfer as an optimization problem driven entirely by a pretrained CNN (VGG-19)."}
+            {"type": "p", "html": "Imagine handing a computer two pictures: a photo of your street, and Van Gogh's <em>Starry Night</em>. You want back a single image that keeps the <strong>layout</strong> of your street — the buildings, the cars, where everything sits — but renders it in Van Gogh's swirling brushstrokes and colour palette. That is <strong>neural style transfer</strong>, and this 2016 paper by Gatys, Ecker and Bethge is the work that first did it convincingly."},
+            {"type": "p", "html": "The deep insight is that a convolutional network trained for object recognition (here, VGG-19) has, almost by accident, learned to separate two things we usually think are tangled together: <strong>what is in an image</strong> (content) and <strong>how it looks</strong> (style/texture). Once you can measure those two things separately, you can hold one fixed and change the other."},
+            {"type": "p", "html": "Crucially, there is <strong>no training of a new network</strong> here. VGG-19 is frozen. The method instead starts from a noise image and <em>optimizes the pixels themselves</em> by gradient descent until the image simultaneously matches the content of the photo and the style of the painting. The image is the only thing that changes — it is treated as the parameters."},
+            {"type": "p", "html": "Why did this matter? Before this, texture synthesis and 'painterly' filters were hand-engineered and brittle. Gatys et al. showed that the internal feature statistics of a recognition network are a general, learnable description of artistic style. This single idea launched an entire subfield — and several other papers in this collection (AdaIN, the fast feed-forward methods) are largely attempts to make this slow optimization run in real time."},
+            {"type": "p", "html": "This walkthrough builds up, layer by layer: how <strong>content</strong> is read off deep feature maps, why <strong>style</strong> is captured by the <em>Gram matrix</em> (correlations between feature channels), and how the two are combined into one loss you minimize over the image."}
           ]
         }
       ]
@@ -28,17 +27,17 @@
       "pages": [
         {
           "title": "Content Lives in Deep Feature Maps",
-          "subtitle": "Higher layers care about objects, not pixels",
+          "subtitle": "What the network 'sees'",
           "pdfPages": [3, 4],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "What the Network Sees at Each Layer"},
-            {"type": "p", "html": "A CNN processes an image layer by layer. Early layers respond to edges and colors at the exact pixel locations. Deeper layers throw away precise pixel detail and instead respond to <i>what</i> is in the image (a face, a wheel) and <i>roughly where</i>. Gatys et al. call the deep-layer responses the <b>content representation</b>."},
-            {"type": "p", "html": "Formally, layer $l$ has $N_l$ filters, each producing a feature map. Stacking them gives a matrix $F^l \\in \\mathbb{R}^{N_l \\times M_l}$, where $M_l$ is the number of spatial positions (height times width) and $F^l_{ij}$ is the activation of filter $i$ at position $j$."},
-            {"type": "h2", "text": "The Content Loss"},
-            {"type": "p", "html": "To make a generated image $\\vec{x}$ match the content of a photo $\\vec{p}$, we minimize the squared difference between their feature maps $F^l$ (generated) and $P^l$ (photo) at a chosen deep layer:"},
+            {"type": "p", "html": "First question: how do we tell the computer 'keep the content the same' without telling it 'keep the pixels the same'? If we matched pixels we could never repaint anything. We need a description of content that ignores surface appearance."},
+            {"type": "p", "html": "The answer comes from how a CNN processes an image. Push an image through VGG-19 and at each layer you get a stack of <strong>feature maps</strong> — the responses of that layer's filters at every spatial location. Early layers respond to edges and colours; deeper layers respond to higher-level arrangements (an eye, a wheel, a window). The deep layers care about <em>what objects are where</em> but throw away the exact pixel values — which is exactly the notion of content we want."},
+            {"type": "p", "html": "Formally, layer $l$ has $N_l$ distinct filters (channels), each producing a feature map of size $M_l$ (height times width, flattened). We store all of layer $l$'s responses in a matrix $F^l \\in \\mathbb{R}^{N_l \\times M_l}$, where the entry $F^l_{ij}$ is the activation of the $i$-th filter at position $j$ in layer $l$."},
+            {"type": "p", "html": "To define a content loss, we run both the target photo (giving feature matrix $P^l$) and our generated image (giving $F^l$) through VGG and ask: do their deep feature maps match? We measure that with squared error."},
             {"type": "math", "tex": "\\mathcal{L}_{content}(\\vec{p}, \\vec{x}, l) = \\frac{1}{2} \\sum_{i,j} \\left( F^l_{ij} - P^l_{ij} \\right)^2"},
-            {"type": "p", "html": "Reading it plainly: walk over every filter $i$ and position $j$ in layer $l$, take how far the generated activation is from the photo's activation, square it, and add it all up. Driving this to zero makes the generated image produce the same high-level features as the photo, so the same objects appear in the same places."}
+            {"type": "p", "html": "Reading it term by term: $\\vec{p}$ is the original photo and $\\vec{x}$ is the image we are generating. $P^l_{ij}$ is the photo's activation of filter $i$ at location $j$ in layer $l$; $F^l_{ij}$ is the generated image's corresponding activation. We take the difference, square it, and sum over every filter $i$ and every position $j$. The $\\tfrac{1}{2}$ is just there to make the derivative clean. When this loss is zero, the two images produce identical deep features — i.e. the same content."},
+            {"type": "p", "html": "The gradient of this loss with respect to the generated image's activations is simply $(F^l - P^l)$ where layer $l$ is active and zero elsewhere; backpropagating it through the frozen VGG tells each pixel how to move. The authors use layer <code>conv4_2</code> for content — deep enough to capture object layout, but not so deep that fine positioning is lost."}
           ]
         }
       ]
@@ -48,20 +47,21 @@
       "pages": [
         {
           "title": "Style Is Correlation, Not Location",
-          "subtitle": "The Gram matrix captures texture by ignoring where things are",
+          "subtitle": "The Gram matrix",
           "pdfPages": [4],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Trick: Throw Away Position"},
-            {"type": "p", "html": "Style is about texture, color, and brushstrokes, things that should look the same anywhere in the image. So the style representation deliberately discards spatial location. It does this by measuring how often pairs of features <i>fire together</i>, summed over the whole image."},
-            {"type": "p", "html": "This co-occurrence is captured by the <b>Gram matrix</b> $G^l \\in \\mathbb{R}^{N_l \\times N_l}$, the inner product between feature maps $i$ and $j$ within layer $l$:"},
-            {"type": "math", "tex": "G^l_{ij} = \\sum_k F^l_{ik} \\, F^l_{jk}"},
-            {"type": "p", "html": "Reading it plainly: for each pair of filters $i$ and $j$, multiply their activations at the same position $k$ and sum over all positions. A large $G^l_{ij}$ means filters $i$ and $j$ tend to be active in the same places, which describes a recurring texture pattern without caring where it sits."},
-            {"type": "h2", "text": "The Style Loss"},
-            {"type": "p", "html": "We match the Gram matrices of the generated image ($G^l$) to those of the artwork ($A^l$). Each layer contributes a term, then layers are combined with weights $w_l$:"},
+            {"type": "p", "html": "Now the hard part. What <em>is</em> style? Van Gogh's style is not a thing located at a particular spot — it is a property of the whole canvas: thick curved strokes, a particular blue-and-yellow palette, a certain roughness of texture. Whatever we measure must therefore be <strong>spatially agnostic</strong>: it should describe the look of the image while forgetting <em>where</em> each feature occurred."},
+            {"type": "p", "html": "Gatys et al.'s elegant answer: style is captured by the <strong>correlations between feature channels</strong>. Suppose in some layer one filter fires for 'curved stroke' and another fires for 'yellow blob'. If these two filters tend to activate together across the image, that co-occurrence is a fingerprint of the texture — and it does not depend on location, because we sum the correlation over all positions. The object that holds these correlations is the <strong>Gram matrix</strong>."},
+            {"type": "math", "tex": "G^l_{ij} = \\sum_{k} F^l_{ik}\\, F^l_{jk}"},
+            {"type": "p", "html": "Term by term: $F^l_{ik}$ is the activation of filter $i$ at spatial position $k$, and $F^l_{jk}$ is filter $j$ at the same position $k$. We multiply them and sum over <em>all</em> positions $k$ (from $1$ to $M_l$). The result $G^l_{ij}$ measures how much filters $i$ and $j$ light up together across the whole image. $G^l$ is an $N_l \\times N_l$ matrix — its size depends only on the number of filters, never on the image dimensions. Summing over $k$ is exactly what discards spatial layout: a stroke in the top-left and the same stroke in the bottom-right contribute identically."},
+            {"type": "p", "html": "Why does this work as 'style'? The Gram matrix is, up to scaling, the (uncentred) covariance of the feature responses. Two images with the same channel covariances at several layers will have the same textures, palette and stroke statistics — they will <em>look</em> the same — even if they depict completely different scenes. This connects to classic texture-synthesis theory: a texture is well described by the statistics of filter responses, and the Gram matrix is precisely such a statistic, read from a recognition network."},
+            {"type": "p", "html": "The style loss at a single layer $l$ compares the Gram matrix $G^l$ of the generated image to the Gram matrix $A^l$ of the style image, again with squared error:"},
             {"type": "math", "tex": "E_l = \\frac{1}{4 N_l^2 M_l^2} \\sum_{i,j} \\left( G^l_{ij} - A^l_{ij} \\right)^2"},
-            {"type": "math", "tex": "\\mathcal{L}_{style}(\\vec{a}, \\vec{x}) = \\sum_{l=0}^{L} w_l \\, E_l"},
-            {"type": "p", "html": "Using Gram matrices from several layers (not just one) captures style at multiple scales: fine brush texture from early layers and larger compositional patterns from deeper ones."}
+            {"type": "p", "html": "Reading it: $A^l_{ij}$ is the style image's Gram entry for filters $i,j$ in layer $l$; $G^l_{ij}$ is the generated image's. We sum the squared difference over every pair of filters $(i,j)$. The normalizer $\\tfrac{1}{4 N_l^2 M_l^2}$ keeps layers with many filters or large maps from dominating — $N_l$ is the number of filters and $M_l$ the number of positions in layer $l$."},
+            {"type": "p", "html": "Because style is a property of the whole image, we do not read it from one layer but blend several. The total style loss is a weighted sum across layers:"},
+            {"type": "math", "tex": "\\mathcal{L}_{style}(\\vec{a}, \\vec{x}) = \\sum_{l=0}^{L} w_l\\, E_l"},
+            {"type": "p", "html": "Here $\\vec{a}$ is the style image, $\\vec{x}$ the generated image, $E_l$ the per-layer style error above, and $w_l$ a weight controlling how much each layer contributes (the authors use equal weights on five layers: <code>conv1_1</code> through <code>conv5_1</code>). Using multiple layers matters: shallow layers capture fine texture and colour, deep layers capture larger stroke patterns. Combining them reproduces style across scales."}
           ]
         }
       ]
@@ -71,22 +71,17 @@
       "pages": [
         {
           "title": "Optimizing an Image From Scratch",
-          "subtitle": "No new network is trained, the image itself is the variable",
+          "subtitle": "The joint loss and the optimization",
           "pdfPages": [4, 5],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "One Loss to Balance Both"},
-            {"type": "p", "html": "To get a stylized result we want an image that simultaneously has the content of the photo and the style of the artwork. We add the two losses together with weights $\\alpha$ and $\\beta$:"},
-            {"type": "math", "tex": "\\mathcal{L}_{total}(\\vec{p}, \\vec{a}, \\vec{x}) = \\alpha \\, \\mathcal{L}_{content}(\\vec{p}, \\vec{x}) + \\beta \\, \\mathcal{L}_{style}(\\vec{a}, \\vec{x})"},
-            {"type": "p", "html": "The ratio $\\alpha / \\beta$ is the single dial that trades off fidelity to the photo versus strength of the artistic style. A low ratio yields a heavily painted look; a high ratio keeps the photo crisp with only a hint of style."},
-            {"type": "h2", "text": "How the Picture Is Made"},
-            {"type": "p", "html": "The clever part: nothing about the network changes. Instead, we start from a noise image (or the photo) and run gradient descent <i>on the pixels themselves</i>, using backpropagation to nudge each pixel until $\\mathcal{L}_{total}$ is minimized. The authors use L-BFGS for this optimization."},
-            {"type": "list", "items": [
-              "Pass the photo through VGG-19 once, record its content features $P^l$.",
-              "Pass the artwork through once, record its style Gram matrices $A^l$.",
-              "Start the generated image $\\vec{x}$ as white noise.",
-              "Repeatedly compute $\\mathcal{L}_{total}$, backpropagate to the pixels, and update $\\vec{x}$."
-            ]}
+            {"type": "p", "html": "We now have two yardsticks: a content loss that wants the generated image to depict the photo's scene, and a style loss that wants it to wear the painting's texture. Style transfer is just minimizing both at once. We add them into a single objective:"},
+            {"type": "math", "tex": "\\mathcal{L}_{total}(\\vec{p}, \\vec{a}, \\vec{x}) = \\alpha\\, \\mathcal{L}_{content}(\\vec{p}, \\vec{x}) + \\beta\\, \\mathcal{L}_{style}(\\vec{a}, \\vec{x})"},
+            {"type": "p", "html": "Term by term: $\\vec{p}$ is the content photo, $\\vec{a}$ the style painting, $\\vec{x}$ the image we are building. $\\alpha$ weights how strongly we insist on preserving content; $\\beta$ weights how strongly we impose style. Their ratio $\\alpha/\\beta$ is the single most important knob: a large ratio gives a lightly stylized photo, a small ratio gives an almost abstract painting that barely shows the original scene. Typical ratios run from $10^{-3}$ to $10^{-4}$."},
+            {"type": "p", "html": "The radical part is <em>what gets optimized</em>. In normal training you fix the input and update the network's weights. Here it is the opposite: <strong>VGG-19 is frozen</strong> and the <strong>image $\\vec{x}$ is the variable</strong>. We compute $\\partial \\mathcal{L}_{total} / \\partial \\vec{x}$ — the gradient with respect to every pixel — and descend it. Each step nudges the pixels so the deep features drift toward the photo's content and the Gram matrices drift toward the painting's style."},
+            {"type": "p", "html": "Concretely the loop is: (1) start $\\vec{x}$ as white noise (or a copy of the content photo for faster convergence); (2) forward-pass $\\vec{x}$ through VGG and read off $F^l$ and $G^l$; (3) compute $\\mathcal{L}_{total}$ against the precomputed targets $P^l$ (from the photo) and $A^l$ (from the painting); (4) backpropagate to get the pixel gradient; (5) update the pixels with <strong>L-BFGS</strong>, a second-order optimizer the authors found works well here; (6) repeat for a few hundred iterations."},
+            {"type": "p", "html": "An important property: starting from different noise seeds yields different but equally valid stylizations, because many images are consistent with a given content/style pair. This is unlike a deterministic filter — style transfer samples from a family of solutions."},
+            {"type": "p", "html": "The cost of this elegance is speed. Every single output image requires hundreds of forward-and-backward passes through a large network — minutes per image on a GPU in 2016. That bottleneck is precisely what AdaIN and the feed-forward 'perceptual loss' methods later attacked, replacing the optimization loop with one forward pass of a learned network."}
           ]
         }
       ]
@@ -96,15 +91,15 @@
       "pages": [
         {
           "title": "What the Layer Choice Controls",
-          "subtitle": "Where you read content changes how the result looks",
+          "subtitle": "Design knobs and takeaways",
           "pdfPages": [6, 7],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Deeper Content Layers Are More Forgiving"},
-            {"type": "p", "html": "Matching content at a deep layer (e.g. <code>conv4_2</code>) preserves the high-level layout but lets the network freely repaint fine detail in the chosen style, giving a more painterly result. Matching at an early layer would lock pixels in place and leave little room for style."},
-            {"type": "p", "html": "Because the optimization works directly on pixels with no learned generator, the method is flexible (any photo, any artwork) but slow: each image takes many optimization iterations. This trade-off is exactly what later feed-forward methods like AdaIN set out to fix."},
-            {"type": "h2", "text": "Why It Was a Landmark"},
-            {"type": "p", "html": "The paper demonstrated that a network trained only for classification implicitly separates content from style, and that the separation is good enough to produce convincing artwork. It launched the entire field of neural style transfer and inspired feed-forward, real-time, and arbitrary-style successors."}
+            {"type": "p", "html": "The paper is, in effect, an extended study of how the two representations behave when you turn the knobs. Three choices dominate the result: which layer reads content, which layers read style, and the $\\alpha/\\beta$ trade-off."},
+            {"type": "table", "headers": ["Knob", "Setting", "Effect on output"], "rows": [["Content layer", "Shallow (e.g. conv1/2)", "Pixel-accurate but resists stylization"], ["Content layer", "Deep (conv4_2)", "Preserves layout, frees appearance to change — the chosen setting"], ["Style layers", "Few / shallow only", "Fine texture matched, large stroke patterns missing"], ["Style layers", "conv1_1 to conv5_1", "Style matched across all scales — the chosen setting"], ["alpha/beta", "Large", "Lightly stylized photo"], ["alpha/beta", "Small", "Heavily abstract, scene dissolves"]]},
+            {"type": "p", "html": "A key empirical finding: matching style on <strong>multiple layers</strong> is what makes results look like real artworks rather than a flat texture overlay. Each layer contributes structure at its own scale, so the combination reproduces both the fine brush grain and the broad compositional rhythm of the painting."},
+            {"type": "p", "html": "Limitations the authors are candid about: it is <strong>slow</strong> (optimization per image); it can introduce low-level noise artifacts that a total-variation smoothness term helps suppress; and because content is read from high-level features, very fine photographic detail (text, faces) can get scrambled when the style is pushed hard."},
+            {"type": "list", "items": ["A frozen recognition network already encodes a usable split between content (deep feature maps) and style (channel correlations / Gram matrices).", "Content loss = squared error on deep activations; style loss = squared error on Gram matrices summed over several layers.", "The image itself is optimized by gradient descent — no new network is trained.", "The alpha/beta ratio trades content fidelity against stylization strength.", "The whole field of fast style transfer (AdaIN, perceptual-loss feed-forward nets) exists to remove this method's per-image optimization cost while keeping its loss formulation."]}
           ]
         }
       ]

@@ -13,10 +13,12 @@
           "pdfPages": [1],
           "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"Before this paper, stacking more layers onto a convolutional network often made it <i>worse</i>, not just at test time but on the training set too. That was surprising: a deeper model can in principle copy a shallower one and add identity layers, so it should never do worse. ResNet's insight is that the problem is one of <b>optimization</b> &mdash; very deep plain networks are simply hard for gradient descent to fit."},
-            {"type":"p","html":"The fix is a <b>residual learning</b> framework. Instead of asking a few stacked layers to learn a desired mapping $H(x)$ directly, we ask them to learn the <i>residual</i> $F(x) = H(x) - x$, and then add the input back: the layers output $F(x) + x$. If the best thing to do is nothing, the network just has to push the weights toward zero, which is far easier than learning an identity through nonlinear layers."},
+            {"type":"p","html":"<b>The question this page answers:</b> why did making a neural network deeper &mdash; which should only add capacity &mdash; suddenly start making it <i>worse</i>, and how does one trick fix it? By 2015, researchers at Microsoft Research Asia (Kaiming He and colleagues) had hit a wall. Adding more layers to a convolutional network past a couple of dozen made accuracy <i>drop</i>, and not because of overfitting: the <i>training</i> error itself got worse. That should be impossible in theory."},
+            {"type":"p","html":"<b>A concrete way to see the paradox.</b> Suppose a 20-layer network already works well. Now build a 56-layer network. In principle the deep one could copy the 20-layer network exactly in its first 20 layers and make the remaining 36 layers do <i>nothing</i> &mdash; just pass their input straight through (the identity mapping). That construction guarantees the 56-layer net is at least as good as the 20-layer one. Yet in practice gradient descent could not find that solution: the 56-layer plain net had higher training error. So the bottleneck was not the model's capacity &mdash; it was the <b>optimization</b>. Plain stacks of layers are simply hard for SGD to fit once they get deep."},
+            {"type":"p","html":"<b>The fix &mdash; residual learning.</b> Instead of asking a few stacked layers to learn the full desired mapping $H(x)$ directly, ask them to learn only the <i>difference</i> from the input, the <b>residual</b> $F(x) = H(x) - x$, and then add the input back so the block outputs $F(x) + x$. If the best thing a block can do is nothing (the identity), the layers only have to push their weights toward zero &mdash; trivial &mdash; rather than laboriously learning an identity through nonlinear layers."},
             {"type":"quote","html":"We explicitly reformulate the layers as learning residual functions with reference to the layer inputs, instead of learning unreferenced functions."},
-            {"type":"p","html":"With this one change the authors trained networks of unprecedented depth. A <b>152-layer</b> ResNet won the ILSVRC 2015 classification challenge, and an ensemble reached <b>3.57% top-5 error</b> on ImageNet &mdash; while still being lower in computational complexity than VGG. The same idea also won detection and segmentation tracks, showing it is a general-purpose building block, not an ImageNet trick."}
+            {"type":"p","html":"<b>The numbers.</b> With this one change the authors trained networks of unprecedented depth. A <b>152-layer</b> ResNet &mdash; 8&times; deeper than VGG-19 &mdash; won the ILSVRC 2015 ImageNet classification challenge, and an ensemble reached <b>3.57% top-5 error</b>, while still having <i>lower</i> computational complexity (FLOPs) than VGG. The same residual building block also won the ImageNet detection, ImageNet localization, COCO detection, and COCO segmentation tracks that year &mdash; a clean sweep that proved it was a general-purpose tool, not an ImageNet-specific trick."},
+            {"type":"p","html":"<b>Why it still matters.</b> The skip connection introduced here is now nearly universal: it is the reason Transformers, DenseNets, U-Nets, and almost every modern deep architecture can stack dozens or hundreds of layers without collapsing. ResNet turned <i>depth</i> from a liability into a resource."}
           ]
         }
       ]
@@ -28,11 +30,15 @@
           "title": "The degradation problem",
           "subtitle": "Deeper is not automatically better",
           "pdfPages": [1, 2],
+          "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"A natural expectation is that adding layers can only help, since extra layers could learn to do nothing. In practice the opposite was observed: as plain networks got deeper, accuracy saturated and then <b>degraded rapidly</b>. Crucially this is not overfitting &mdash; the <i>training</i> error also goes up. A 56-layer plain net had higher training error than a 20-layer one."},
-            {"type":"p","html":"This tells us the issue is not capacity but trainability. Deep stacks of nonlinear layers struggle to approximate even the identity mapping, so the solver cannot find a solution that is at least as good as the shallower network it contains."},
+            {"type":"p","html":"<b>The intuition first.</b> The deep learning revolution of 2012&ndash;2014 had a clear theme: depth helps. AlexNet (8 layers) beat shallow methods; VGG (16&ndash;19 layers) and GoogLeNet (22 layers) pushed further. The natural extrapolation was &lsquo;just keep stacking.&rsquo; But there was a hidden ceiling, and this paper is about smashing through it."},
+            {"type":"p","html":"<b>The surprising observation.</b> As plain networks got deeper, accuracy first saturated and then <b>degraded rapidly</b>. The authors stress that this is <i>not</i> caused by overfitting, because overfitting would lower training error while raising test error. Here the <i>training</i> error itself rises. Their headline example: on CIFAR-10, a 56-layer plain network had <b>higher training error</b> than a 20-layer plain network (their Figure 1), and the same effect appeared on ImageNet with 18 vs 34 layers."},
+            {"type":"table","headers":["Plain net depth","Training error","What this rules out"],"rows":[["20 layers","lower","&mdash;"],["56 layers","higher (worse)","not overfitting: train error went UP"]]},
+            {"type":"p","html":"<b>What this tells us.</b> The issue is not capacity &mdash; the deeper net contains the shallower one as a special case &mdash; it is <b>trainability</b>. Deep stacks of nonlinear layers struggle to approximate even the identity mapping, so the solver cannot reach a solution at least as good as the shallow network nested inside it. The authors are careful to note this is unlikely to be caused by vanishing gradients alone, since these networks already used normalized initialization and Batch Normalization, which keep early-layer gradients healthy; something about the optimization landscape of very deep plain nets is intrinsically hard."},
             {"type":"h2","text":"Why identity is the key"},
-            {"type":"p","html":"If the optimal function for some block is close to the identity, a residual block only needs to drive $F(x)$ toward zero. Zero is a comfortable place for weight matrices to sit. Learning an exact identity by composing several ReLU and convolution layers, by contrast, requires a precise nonlinear conspiracy. Residual connections give the optimizer an easy default to fall back on."}
+            {"type":"p","html":"<b>A concrete picture.</b> Imagine the optimal job for some block is &lsquo;leave the features alone.&rsquo; For a plain block to do that, several convolution + ReLU layers must conspire to compute an exact identity &mdash; a precise nonlinear arrangement that SGD rarely stumbles onto. For a residual block, &lsquo;leave it alone&rsquo; just means $F(x) \\approx 0$, i.e. drive the weights toward zero. Zero is the most comfortable place a weight matrix can sit (it is where weight decay already pulls it). Residual connections hand the optimizer an easy default to fall back on, so adding a layer can never hurt much &mdash; in the worst case it learns to do nothing."},
+            {"type":"p","html":"<b>Trivia.</b> The degradation problem had been observed by others, but ResNet was the first to give a clean, scalable remedy. The idea of skip connections itself echoes earlier work (Highway Networks, LSTM gating), but ResNet's choice of a <i>parameter-free identity</i> shortcut &mdash; rather than a learned gate &mdash; is what made it cheap enough to scale to hundreds of layers."}
           ]
         }
       ]
@@ -46,27 +52,34 @@
           "pdfPages": [2, 3],
           "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"The building block takes an input $x$, runs it through a couple of weight layers to produce $F(x)$, and then adds the untouched input through a <b>shortcut (skip) connection</b>:"},
+            {"type":"p","html":"<b>The building block.</b> Take an input $x$, run it through a couple of weight layers to produce a residual $F(x)$, then add the untouched input back through a <b>shortcut (skip) connection</b>. Concretely the block computes:"},
             {"type":"math","tex":"y = F(x, \\{W_i\\}) + x"},
-            {"type":"p","html":"Reading this: $y$ is the block output, $F(x, \\{W_i\\})$ is the residual learned by the stacked layers (for two layers, $F = W_2\\,\\sigma(W_1 x)$ with $\\sigma$ the ReLU), and the $+\\,x$ term is the identity shortcut. The shortcut adds no parameters and almost no compute, so residual nets cost the same as their plain counterparts."},
-            {"type":"p","html":"When $F$ and $x$ have different dimensions (for example when the number of channels changes), the shortcut applies a linear projection $W_s$ so the addition is well defined:"},
+            {"type":"p","html":"<b>Reading it term by term.</b> $y$ is the block&rsquo;s output (a tensor of the same shape as $x$). $x$ is the block&rsquo;s input. $F(x, \\{W_i\\})$ is the residual function learned by the stacked weight layers, with $\\{W_i\\}$ their weights. For a typical two-layer block, $F = W_2\\,\\sigma(W_1 x)$, where $W_1, W_2$ are convolution weights and $\\sigma$ is the ReLU nonlinearity $\\max(0,\\cdot)$. The $+\\,x$ term is the identity shortcut: it carries the input forward unchanged and adds it element-wise to $F$. Crucially the shortcut has <b>no parameters and almost no extra compute</b>, so a residual net costs essentially the same as its plain twin &mdash; making the plain-vs-residual comparison perfectly fair."},
+            {"type":"p","html":"<b>When the shapes do not match.</b> If $F(x)$ and $x$ have different dimensions &mdash; which happens when a block changes the number of channels or downsamples spatially &mdash; the plain addition is undefined. The fix is a linear projection $W_s$ on the shortcut so the dimensions line up:"},
             {"type":"math","tex":"y = F(x, \\{W_i\\}) + W_s x"},
-            {"type":"p","html":"The element-wise sum is followed by a final ReLU. Because the gradient of the addition flows straight through the identity branch, signals can reach early layers undiminished &mdash; this is why very deep ResNets stay trainable."}
+            {"type":"p","html":"<b>Reading it.</b> $W_s$ is a learned matrix (implemented as a $1\\times1$ convolution with the right stride) that maps $x$ into the same shape as $F(x)$ before the sum. The authors found this is only needed for matching dimensions; using projections on <i>every</i> shortcut gives marginally better accuracy but costs more, so identity shortcuts are the default and projections are reserved for the few dimension-changing blocks."},
+            {"type":"p","html":"<b>The order of operations.</b> Each weight layer is followed by Batch Normalization, the element-wise sum happens after the second BN, and a final ReLU is applied <i>after</i> the addition. So the structure is: conv &rarr; BN &rarr; ReLU &rarr; conv &rarr; BN &rarr; (add shortcut) &rarr; ReLU."},
+            {"type":"h2","text":"Why this fixes the gradient flow"},
+            {"type":"p","html":"<b>The deep reason it works.</b> Because the output is $F(x)+x$, the gradient of the loss with respect to $x$ contains a term that flows <i>straight through the identity branch</i> &mdash; the derivative of $+x$ is just 1. So even if the gradient through the weight layers $F$ becomes tiny, a clean copy of the gradient still reaches earlier layers undiminished. This additive &lsquo;gradient highway&rsquo; is exactly why stacking 100+ residual blocks stays trainable while the equivalent plain stack does not."},
+            {"type":"p","html":"<b>Design rationale &amp; alternatives.</b> One could imagine making the shortcut a learned gate (as in Highway Networks, where a gate decides how much of $x$ to pass). ResNet deliberately keeps it a plain identity: a gate adds parameters, can saturate, and can choke the gradient highway when closed. The parameter-free identity is simpler, never blocks the gradient, and scales to extreme depth &mdash; a recurring lesson that the simplest version of an idea is often the one that scales."}
           ]
         },
         {
           "title": "Going very deep: the bottleneck",
           "subtitle": "1x1 convolutions to stay cheap at 50+ layers",
           "pdfPages": [5, 6],
+          "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"To reach 50, 101, and 152 layers without exploding the cost, the authors replace the two-layer block with a <b>bottleneck</b> design: a $1\\times1$ convolution that <i>reduces</i> the channel dimension, a $3\\times3$ convolution that does the spatial work on the smaller representation, and a $1\\times1$ convolution that <i>restores</i> the dimension."},
+            {"type":"p","html":"<b>The problem at 50+ layers.</b> The basic two-$3\\times3$-conv block is fine up to 34 layers, but stacking many of them at full channel width (256, 512, &hellip;) is expensive: a $3\\times3$ convolution&rsquo;s cost grows with the <i>square</i> of the channel count. To reach 50, 101, and 152 layers within a sane compute budget, the authors redesigned the block as a <b>bottleneck</b>."},
+            {"type":"p","html":"<b>The analogy.</b> Think of squeezing the data through a narrow neck before doing the expensive work, then expanding it back. Three convolutions do this: a cheap $1\\times1$ conv shrinks the channels, the costly $3\\times3$ conv does its spatial work on the now-thin tensor, and a final $1\\times1$ conv restores the width so the shortcut sum lines up."},
             {"type":"list","items":[
-              "$1\\times1$ conv: squeeze channels (e.g. 256 &rarr; 64) so the expensive $3\\times3$ runs on a thin tensor.",
-              "$3\\times3$ conv: the actual feature extraction, now cheap.",
-              "$1\\times1$ conv: expand back (64 &rarr; 256) so the shortcut sum lines up."
+              "$1\\times1$ conv: <b>squeeze</b> channels (e.g. 256 &rarr; 64), so the expensive $3\\times3$ runs on a thin tensor.",
+              "$3\\times3$ conv: the actual feature extraction, now cheap because it operates on 64 channels instead of 256.",
+              "$1\\times1$ conv: <b>expand</b> back (64 &rarr; 256) so the output matches the shortcut for the element-wise add."
             ]},
-            {"type":"p","html":"Here the parameter-free identity shortcut matters even more: if the shortcut had to be a projection, it would connect the two high-dimensional ends and double the block's size. Keeping it identity is what makes deep bottleneck models efficient."},
-            {"type":"table","headers":["Model","Layers","Block type"],"rows":[["ResNet-18 / 34","18 / 34","basic (two 3x3)"],["ResNet-50","50","bottleneck"],["ResNet-101","101","bottleneck"],["ResNet-152","152","bottleneck"]]}
+            {"type":"p","html":"<b>Why the identity shortcut matters even more here.</b> The bottleneck&rsquo;s two ends are high-dimensional (256 channels). If the shortcut had to be a learned projection, it would connect those two fat ends and roughly <i>double</i> the block&rsquo;s parameters and FLOPs. Keeping the shortcut a parameter-free identity is precisely what makes the deep bottleneck models efficient &mdash; a 152-layer ResNet (11.3 billion FLOPs) is still cheaper than VGG-16/19 (~15&ndash;20 billion FLOPs)."},
+            {"type":"table","headers":["Model","Layers","Block type","Top-1 / context"],"rows":[["ResNet-18 / 34","18 / 34","basic (two 3x3)","entry models; 34 beats 18 (degradation gone)"],["ResNet-50","50","bottleneck","workhorse backbone for years"],["ResNet-101","101","bottleneck","standard detection backbone"],["ResNet-152","152","bottleneck","ILSVRC&rsquo;15 winner, lower FLOPs than VGG"]]},
+            {"type":"p","html":"<b>Trivia.</b> The architecture follows two simple design rules borrowed from VGG: layers with the same output feature-map size have the same number of filters, and whenever the spatial size is halved the number of filters is doubled (so the per-layer compute stays roughly constant). Downsampling is done with stride-2 convolutions rather than pooling, and the network ends in a single global-average-pooling layer plus one fully-connected classifier &mdash; far fewer FC parameters than VGG&rsquo;s heavy classifier head."}
           ]
         }
       ]
@@ -78,20 +91,24 @@
           "title": "Depth finally pays off",
           "subtitle": "ImageNet classification",
           "pdfPages": [5, 6],
+          "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"On ImageNet the plain-vs-residual comparison is decisive. A plain 34-layer net does worse than a plain 18-layer net (the degradation problem), but the residual 34-layer net <b>beats</b> the residual 18-layer net and trains faster. Adding depth now helps, exactly as intuition originally suggested."},
-            {"type":"p","html":"Pushing to extreme depth, ResNet-152 had the lowest single-model error, and the winning ensemble reached <b>3.57% top-5 error</b> on the ImageNet test set &mdash; first place in ILSVRC 2015. Notably, the 152-layer model still has lower complexity (FLOPs) than the much shallower VGG-16/19."},
-            {"type":"table","headers":["Model","top-5 error"],"rows":[["VGG (ILSVRC'14)","~7.3%"],["GoogLeNet (ILSVRC'14)","~6.7%"],["ResNet-152 (single)","~4.5%"],["ResNet ensemble","3.57%"]]}
+            {"type":"p","html":"<b>The decisive comparison.</b> On ImageNet the authors trained matched plain and residual nets at 18 and 34 layers. The result is a clean controlled experiment: a plain 34-layer net does <i>worse</i> than a plain 18-layer net (the degradation problem in action), but the <i>residual</i> 34-layer net <b>beats</b> the residual 18-layer net and also converges faster. The only difference between each plain/residual pair is the skip connections &mdash; same depth, same FLOPs &mdash; so the gain is attributable to residual learning alone."},
+            {"type":"p","html":"<b>Pushing to the extreme.</b> Going deeper kept helping. ResNet-152 had the lowest single-model error, and the winning ensemble reached <b>3.57% top-5 error</b> on the ImageNet test set &mdash; first place in ILSVRC 2015, roughly halving the previous year&rsquo;s best. For perspective, that is at or below the often-cited ~5% human top-5 error on ImageNet."},
+            {"type":"table","headers":["Model","ImageNet top-5 error"],"rows":[["VGG (ILSVRC&rsquo;14)","~7.3%"],["GoogLeNet (ILSVRC&rsquo;14)","~6.7%"],["ResNet-152 (single model)","~4.5%"],["ResNet ensemble (winner)","3.57%"]]},
+            {"type":"p","html":"<b>Why this was a big deal.</b> Before ResNet, the field genuinely did not know whether networks much deeper than ~30 layers were trainable at all. ResNet showed the answer was yes &mdash; the obstacle had been optimization, not principle &mdash; and it did so while being computationally <i>lighter</i> than the previous champion. Depth had become a knob you could simply turn up."}
           ]
         },
         {
           "title": "It generalizes everywhere",
           "subtitle": "CIFAR-10, detection, and segmentation",
           "pdfPages": [7, 8],
+          "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"On CIFAR-10 the authors trained networks past <b>1000 layers</b> to probe the limits of optimization; even a 110-layer ResNet trains cleanly where a plain net of that depth fails. This is direct evidence that residual learning addresses an optimization problem, not just a regularization one."},
-            {"type":"p","html":"The same backbone, dropped into the detection pipeline, also won the COCO 2015 and ImageNet detection and localization tracks. Replacing a VGG backbone with ResNet-101 gave large gains in mAP essentially for free, which is why ResNet became the default feature extractor across computer vision."},
-            {"type":"quote","html":"Solely due to our extremely deep representations, we obtain a 28% relative improvement on the COCO object detection dataset."}
+            {"type":"p","html":"<b>The optimization stress test (CIFAR-10).</b> To probe how far depth could go, the authors trained ResNets on the small CIFAR-10 dataset out to <b>110 layers and even 1202 layers</b>. A 110-layer ResNet trains cleanly where a plain net of that depth fails outright. The 1202-layer net still optimizes fine (no degradation) though it slightly overfits this tiny dataset &mdash; which is itself the point: the failure mode is now <i>overfitting</i> (a capacity/regularization issue), not the <i>optimization</i> wall that stopped plain nets. This is direct evidence that residual learning solves an optimization problem."},
+            {"type":"p","html":"<b>Transfer to detection and segmentation.</b> The same ResNet backbone, dropped into the Faster R-CNN detection pipeline in place of VGG-16, gave large gains essentially for free. The ResNet-based entry won the ImageNet detection, ImageNet localization, COCO detection, and COCO segmentation challenges of 2015 &mdash; a near sweep with a single underlying idea."},
+            {"type":"quote","html":"Solely due to our extremely deep representations, we obtain a 28% relative improvement on the COCO object detection dataset."},
+            {"type":"p","html":"<b>Why a better classifier backbone helps detection.</b> Detectors like Faster R-CNN compute one shared convolutional feature map and reuse it for both region proposals and classification. A stronger, deeper backbone produces richer features, so <i>everything</i> downstream improves at once. This is exactly why ResNet-50/101 became the default feature extractor across computer vision for the rest of the decade."}
           ]
         }
       ]
@@ -103,14 +120,17 @@
           "title": "Why ResNet mattered",
           "subtitle": "Skip connections everywhere",
           "pdfPages": [1],
+          "viz": ["residual-block"],
           "blocks": [
-            {"type":"p","html":"ResNet did more than win a competition: it made <b>depth a usable resource</b>. The skip connection is now a near-universal component &mdash; it appears in DenseNets, U-Nets, and, importantly, inside the Transformer, where every attention and feed-forward sub-layer is wrapped in a residual connection for the same reason: to let gradients flow through very deep stacks."},
+            {"type":"p","html":"<b>The lasting legacy.</b> ResNet did more than win a competition; it made <b>depth a usable resource</b>. The skip connection is now a near-universal component. It appears in DenseNets (which connect every layer to every later one), U-Nets (which skip encoder features to the decoder for segmentation), and &mdash; most consequentially &mdash; inside the <b>Transformer</b>, where every self-attention and feed-forward sub-layer is wrapped in a residual connection for exactly the same reason ResNet introduced it: to let gradients flow through very deep stacks. The GPT and BERT families, and modern LLMs, are residual networks at heart."},
             {"type":"list","items":[
-              "Residual learning reframes the target as $F(x)=H(x)-x$, making identity-like mappings trivial to learn.",
-              "Identity shortcuts add no parameters and let gradients bypass nonlinear layers.",
-              "Enabled 152-layer (and 1000+ on CIFAR) networks with state-of-the-art accuracy at lower cost than VGG.",
-              "Became the standard backbone for detection, segmentation, and beyond."
-            ]}
+              "Reframed the learning target as the residual $F(x)=H(x)-x$, making identity-like mappings trivial to learn (drive $F$ toward 0).",
+              "Identity shortcuts add no parameters and create a gradient highway that bypasses the nonlinear layers.",
+              "Bottleneck blocks ($1\\times1$&ndash;$3\\times3$&ndash;$1\\times1$) keep 50/101/152-layer models cheap &mdash; ResNet-152 has fewer FLOPs than VGG.",
+              "Won ILSVRC 2015 at 3.57% top-5 error and swept the detection/segmentation tracks.",
+              "Became the standard backbone for detection, segmentation, and the residual idea underpins the Transformer era."
+            ]},
+            {"type":"p","html":"<b>Common misconception.</b> ResNet is sometimes described as &lsquo;solving vanishing gradients.&rsquo; That is only part of the story &mdash; the networks already used Batch Normalization, so gradients were not literally vanishing. The deeper contribution is reshaping the <i>optimization landscape</i> so that deep stacks become easy to fit, with the identity as an effortless fallback. Kaiming He won the Marr Prize / best-paper recognition for this work, and it is among the most cited papers in all of computer science."}
           ]
         }
       ]

@@ -13,11 +13,11 @@
           "pdfPages": [1],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "The Scalability Problem"},
-            {"type": "p", "html": "Image-to-image translation (e.g. changing hair color, age, or expression) had a painful limitation. To translate between $k$ domains, prior methods needed a separate generator for nearly every pair, which scales as roughly $k(k-1)$ models. Training and storing all of them is wasteful, and each model only sees data from its own two domains."},
+            {"type": "p", "html": "Suppose you want to edit faces: change hair colour, flip gender, age someone up, add a smile. With the image-translation tools of 2017 (like pix2pix or CycleGAN), each of those edits is a separate translation between two <strong>domains</strong> — and you needed a separate generator for nearly every direction. Want to go blond&rarr;brown, brown&rarr;black, black&rarr;blond, plus young&rarr;old and back? The number of models explodes."},
+            {"type": "p", "html": "Concretely, for $k$ domains the pair-wise approach needs about $k(k-1)$ generators. With just the four hair colours and two genders of the CelebA dataset you are already drowning in models, each trained only on its own narrow slice of data, none sharing what they learn about, say, the general structure of a face."},
             {"type": "quote", "html": "We propose StarGAN, a novel and scalable approach that can perform image-to-image translations for multiple domains using only a single model."},
-            {"type": "h2", "text": "The Idea in One Sentence"},
-            {"type": "p", "html": "Use <b>one</b> generator that also takes a <b>target domain label</b> as input, telling it which translation to perform. Because the single generator learns from all domains at once, it shares knowledge across them and can even handle multiple datasets together."}
+            {"type": "p", "html": "The name is the picture: instead of a tangle of pairwise arrows between domains, StarGAN puts a single generator at the centre and every domain radiates from it like a star. The trick that makes this possible is to feed the generator a <strong>target domain label</strong> alongside the image, so one network can be <em>told</em> which translation to perform: $G(x, c)$ means 'translate image $x$ into domain $c$.'"},
+            {"type": "p", "html": "Because that one generator trains on images from every domain at once, it amortizes everything they share (face shape, lighting, pose) and only has to learn the small differences each attribute makes. That shared training acts like free data augmentation and actually <em>improves</em> quality over the pairwise baselines, not just efficiency. This walkthrough builds up the label-conditioned generator, the three losses that make it behave, and the mask-vector trick that lets a single StarGAN learn from several datasets with different label sets."}
           ]
         }
       ]
@@ -31,9 +31,13 @@
           "pdfPages": [3],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "How Conditioning Works"},
-            {"type": "p", "html": "The generator $G$ takes an input image $x$ and a target domain label $c$ (for example, \"blond hair\" or \"smiling\"), and produces a translated image $G(x, c)$. The label is fed in as extra channels appended to the image. By randomly varying $c$ during training, one $G$ learns to map any image into any domain."},
-            {"type": "p", "html": "The discriminator $D$ does double duty. It judges whether an image is real or fake <i>and</i> predicts which domain it belongs to. The authors write this as $D : x \\rightarrow \\{ D_{src}(x), D_{cls}(x) \\}$, a real/fake head and a domain-classification head sharing the same body."}
+            {"type": "p", "html": "The central question: how do you make <em>one</em> network perform <em>many</em> different translations? StarGAN's answer is almost obvious in hindsight — make the desired translation an <strong>input</strong>. The generator $G$ takes two things: the input image $x$ and a target domain label $c$, and outputs the translated image $G(x, c)$."},
+            {"type": "p", "html": "Concretely, the label $c$ is a vector (e.g. one-hot or binary attributes like 'black hair = 1, male = 0, young = 1'). It is spatially broadcast into extra channels — a full-resolution map where every pixel of an 'attribute channel' carries that attribute's value — and concatenated to the image's RGB channels before being fed into $G$. So if the image is $H\\times W\\times 3$ and there are $n$ attributes, the generator's input is $H\\times W\\times(3+n)$. During training $c$ is varied randomly so $G$ has to handle every target."},
+            {"type": "p", "html": "Worked example: feed in a photo of a brown-haired person with $c$ = 'blond hair'. $G$ should output the same face, same pose, same background, but with blond hair. Feed the same photo with $c$ = 'add smile' and it should change only the mouth. The label is the steering wheel."},
+            {"type": "p", "html": "The discriminator $D$ does double duty, with two output heads sharing one convolutional body:"},
+            {"type": "math", "tex": "D : x \\rightarrow \\{\\, D_{src}(x),\\; D_{cls}(x) \\,\\}"},
+            {"type": "p", "html": "Reading it: given an image $x$, $D_{src}(x)$ is the usual <strong>real-vs-fake</strong> verdict (a probability the image is a genuine photo, computed PatchGAN-style over local regions), and $D_{cls}(x)$ is a <strong>domain classifier</strong> — a probability distribution over which domain/attributes the image belongs to. Sharing the body is efficient and forces the realism and classification signals to come from the same learned features."},
+            {"type": "p", "html": "Why does $D$ need a classification head at all? Because 'looks like a real face' is not enough — a real-looking face with the <em>wrong</em> hair colour would fool a plain discriminator. The classification head is what ties the output to the <em>requested</em> attribute, as the next page makes precise."}
           ]
         }
       ]
@@ -42,28 +46,42 @@
       "title": "Training Objective",
       "pages": [
         {
-          "title": "Three Losses Working Together",
-          "subtitle": "Adversarial, domain-classification, and cycle-consistency",
+          "title": "Two Losses: Realism and the Right Domain",
+          "subtitle": "Adversarial loss + domain-classification loss",
           "pdfPages": [3, 4],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "1. Adversarial Loss"},
-            {"type": "p", "html": "Standard GAN pressure makes translated images look real. $G$ tries to fool $D_{src}$ while $D$ tries to tell real from generated:"},
+            {"type": "p", "html": "StarGAN's behaviour is shaped by three losses, each fixing a specific failure mode. This page covers the first two — making outputs <em>realistic</em> and making them land in the <em>correct domain</em> — and the next page covers the third, which stops $G$ from changing more than it should."},
+            {"type": "h2", "text": "1. Adversarial loss: make it look real"},
+            {"type": "p", "html": "Standard GAN pressure. The generator wants its translations to be indistinguishable from real photos; the discriminator's real/fake head tries to catch them:"},
             {"type": "math", "tex": "\\mathcal{L}_{adv} = \\mathbb{E}_{x}\\big[ \\log D_{src}(x) \\big] + \\mathbb{E}_{x,c}\\big[ \\log \\big( 1 - D_{src}(G(x, c)) \\big) \\big]"},
-            {"type": "h2", "text": "2. Domain Classification Loss"},
-            {"type": "p", "html": "Realism alone does not guarantee the output lands in the <i>requested</i> domain. So $D$ learns to classify real images into their true domains, and $G$ is rewarded when its outputs are classified as the target domain $c$:"},
+            {"type": "p", "html": "Term by term: the first expectation is over real images $x$ — $D_{src}$ wants $\\log D_{src}(x)$ large, i.e. to output 1 (real) on genuine photos. The second is over input image $x$ and random target label $c$ — $D_{src}$ wants $D_{src}(G(x,c))$ near 0 (fake), so it maximizes $\\log(1 - D_{src}(G(x,c)))$, while $G$ wants the opposite, pushing $D_{src}(G(x,c))$ toward 1 to fool it. In practice StarGAN uses the <strong>Wasserstein GAN with gradient penalty (WGAN-GP)</strong> form of this term, which replaces the log with a smoother objective plus a penalty on the discriminator's gradient norm — this stabilizes training and avoids mode collapse."},
+            {"type": "h2", "text": "2. Domain classification loss: land in the requested domain"},
+            {"type": "p", "html": "Realism alone does not guarantee the output is <em>blond</em> when you asked for blond. So the discriminator's classification head $D_{cls}$ is trained to read an image's domain, and the generator is rewarded when its output is classified as the target $c$. This splits into two terms — one for training $D$ on real images, one for training $G$ on fakes."},
             {"type": "math", "tex": "\\mathcal{L}_{cls}^{r} = \\mathbb{E}_{x, c'}\\big[ -\\log D_{cls}(c' \\mid x) \\big]"},
+            {"type": "p", "html": "Reading it: $x$ is a real image whose true domain is $c'$. $D_{cls}(c' \\mid x)$ is the classifier's predicted probability that $x$ belongs to its <em>actual</em> domain $c'$. The $-\\log$ is ordinary cross-entropy: it is minimized (driven toward 0) when the classifier confidently and correctly identifies the real image's domain. This term updates only $D$ — it teaches the classifier head what each domain looks like, using ground-truth labels."},
             {"type": "math", "tex": "\\mathcal{L}_{cls}^{f} = \\mathbb{E}_{x, c}\\big[ -\\log D_{cls}(c \\mid G(x, c)) \\big]"},
-            {"type": "p", "html": "Reading it plainly: $\\mathcal{L}_{cls}^{r}$ trains $D$ to recognize the original domain $c'$ of real images; $\\mathcal{L}_{cls}^{f}$ pushes $G$ to make images the classifier reads as the target domain $c$."},
-            {"type": "h2", "text": "3. Cycle-Consistency Loss"},
-            {"type": "p", "html": "Nothing so far stops $G$ from changing more than necessary. To force it to preserve content (identity, background) and only edit the targeted attribute, StarGAN borrows cycle consistency: translating to $c$ and back to the original domain $c'$ should recover the input:"},
+            {"type": "p", "html": "Reading it: now $G(x,c)$ is the <em>generated</em> image and $c$ is the target domain we asked for. $D_{cls}(c \\mid G(x,c))$ is the probability the classifier assigns to the generated image being in the target domain $c$. Minimizing $-\\log$ of it pushes $G$ to make outputs that the (fixed) classifier confidently reads as domain $c$. This term updates only $G$ — it is the force that actually makes the requested attribute appear."},
+            {"type": "p", "html": "The elegant division of labour: $D$ learns 'what does each real domain look like' from $\\mathcal{L}_{cls}^{r}$, then $G$ chases that learned notion via $\\mathcal{L}_{cls}^{f}$. Without this pair, $G$ could produce a realistic face that ignores the label entirely."}
+          ]
+        },
+        {
+          "title": "Cycle Consistency and the Full Objective",
+          "subtitle": "Don't change what you weren't asked to",
+          "pdfPages": [4],
+          "viz": ["image-translation"],
+          "blocks": [
+            {"type": "p", "html": "Two losses still leave a hole. Nothing so far stops $G$ from producing a realistic, correctly-blond face that happens to be a <em>different person</em> in a <em>different pose</em>. The adversarial and classification losses only care about realism and domain — not about preserving the input's identity and background. We need a force that says 'change only the targeted attribute, keep everything else.'"},
+            {"type": "h2", "text": "3. Cycle-consistency (reconstruction) loss"},
+            {"type": "p", "html": "Borrowed from CycleGAN: if you translate an image to the target domain $c$ and then translate the result back to its original domain $c'$, you should recover the original image. If $G$ had thrown away identity or background, you could not reconstruct it. So we penalize any reconstruction error:"},
             {"type": "math", "tex": "\\mathcal{L}_{rec} = \\mathbb{E}_{x, c, c'}\\big[ \\big\\| x - G(G(x, c), c') \\big\\|_1 \\big]"},
-            {"type": "p", "html": "The same single generator is reused for both the forward and backward translation, which is what keeps the model count at one."},
-            {"type": "h2", "text": "Full Objective"},
-            {"type": "p", "html": "Combining the pieces, with weights $\\lambda_{cls}$ and $\\lambda_{rec}$:"},
+            {"type": "p", "html": "Term by term: $x$ is the original image, $c'$ its original domain label, $c$ a random target. The inner $G(x,c)$ translates to the target; the outer $G(\\cdot, c')$ translates that result <em>back</em> toward the original domain. The $\\ell_1$ norm $\\lVert \\cdot \\rVert_1$ sums the absolute pixel differences between the round-trip result and the original $x$. Driving it to zero means the only information $G$ changed was the attribute — everything else survived the round trip. Crucially the <strong>same single generator</strong> is used for both the forward and backward translation (just with different labels), which is what keeps the total model count at one."},
+            {"type": "h2", "text": "Putting it together"},
+            {"type": "p", "html": "The discriminator and generator each optimize their own weighted combination of these terms:"},
             {"type": "math", "tex": "\\mathcal{L}_D = -\\mathcal{L}_{adv} + \\lambda_{cls} \\, \\mathcal{L}_{cls}^{r}"},
             {"type": "math", "tex": "\\mathcal{L}_G = \\mathcal{L}_{adv} + \\lambda_{cls} \\, \\mathcal{L}_{cls}^{f} + \\lambda_{rec} \\, \\mathcal{L}_{rec}"},
-            {"type": "p", "html": "The authors use $\\lambda_{cls} = 1$ and $\\lambda_{rec} = 10$, emphasizing content preservation, and use a Wasserstein-GAN gradient-penalty form of the adversarial term for stable training."}
+            {"type": "p", "html": "Reading it: $D$ minimizes $\\mathcal{L}_D$ — it wants to win the adversarial game (the $-\\mathcal{L}_{adv}$ sign) and classify real images correctly ($\\mathcal{L}_{cls}^{r}$). $G$ minimizes $\\mathcal{L}_G$ — it wants to fool $D$ ($\\mathcal{L}_{adv}$), have its outputs classified as the target ($\\mathcal{L}_{cls}^{f}$), and reconstruct on the round trip ($\\mathcal{L}_{rec}$). The weights $\\lambda_{cls}$ and $\\lambda_{rec}$ balance them; the authors use $\\lambda_{cls} = 1$ and $\\lambda_{rec} = 10$, deliberately weighting reconstruction heavily so the model strongly preserves content and edits only the requested attribute."},
+            {"type": "p", "html": "Notice how each loss plugs a specific hole: adversarial = realism, classification = correct attribute, cycle = preserve identity. Remove any one and a predictable failure returns — blurry or fake-looking outputs, the wrong attribute, or a mangled identity."}
           ]
         }
       ]
@@ -77,9 +95,10 @@
           "pdfPages": [4],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Mixing CelebA and RaFD"},
-            {"type": "p", "html": "A subtle problem: different datasets label different things. CelebA has hair color and gender; RaFD has facial expressions. An image from one dataset has no labels for the other's attributes. Training naively would corrupt the unknown labels."},
-            {"type": "p", "html": "StarGAN solves this with a <b>mask vector</b> that tells the model which dataset a sample comes from, so the generator ignores the unspecified labels for that sample. This lets a single StarGAN jointly learn attributes from multiple datasets and even combine them, e.g. change hair color (CelebA) and expression (RaFD) on the same face."}
+            {"type": "p", "html": "Here is a subtle obstacle to scaling further. Different datasets label different things. <strong>CelebA</strong> annotates hair colour, gender, age. <strong>RaFD</strong> annotates facial expressions (happy, angry, sad...). A CelebA image simply has no expression label, and a RaFD image has no hair-colour label. If you trained naively on the union, the model would see 'unknown' attributes and could learn to corrupt them — for instance overwriting expression with garbage whenever it processed a CelebA face."},
+            {"type": "p", "html": "StarGAN's fix is a <strong>mask vector</strong> $m$. The full label fed to $G$ becomes the concatenation of every dataset's label slots plus a one-hot mask that says which dataset this sample came from. For attributes belonging to <em>other</em> datasets, the label entries are simply zeroed and the mask tells the network to ignore them — so the generator does not try to manufacture or destroy attributes it has no ground truth for."},
+            {"type": "p", "html": "Worked example: a CelebA face is fed with its real hair/gender/age labels, the RaFD expression slots zeroed, and the mask set to 'CelebA'. During the classification loss, only the CelebA classifier head is held responsible for that image; the RaFD head is not penalized on it. The reverse holds for RaFD images."},
+            {"type": "p", "html": "The payoff is <strong>composable, cross-dataset edits</strong>. Because one generator now understands both label spaces, you can hand it a single face and ask for 'blond hair (from CelebA) <em>and</em> angry expression (from RaFD)' at once — an edit neither dataset alone could supervise. This is the feature that turned StarGAN from 'efficient' into genuinely more capable than the pairwise approach."}
           ]
         }
       ]
@@ -93,13 +112,10 @@
           "pdfPages": [5],
           "viz": ["image-translation"],
           "blocks": [
-            {"type": "h2", "text": "Quality and Efficiency"},
-            {"type": "p", "html": "In user studies on facial attribute transfer, StarGAN's outputs were strongly preferred over pair-wise baselines like DIAT, CycleGAN, and IcGAN, especially for multi-attribute edits. Because the single generator sees every domain, it learns shared facial structure once instead of relearning it per pair."},
-            {"type": "list", "items": [
-              "One generator and one discriminator handle all domains, instead of O(k^2) models.",
-              "Joint training across domains acts as data augmentation, improving image quality.",
-              "Multiple datasets can be combined via the mask vector for richer, composable edits."
-            ]}
+            {"type": "p", "html": "Does collapsing everything into one model hurt quality? The opposite. In human preference studies on facial-attribute transfer, StarGAN's outputs were strongly preferred over the pairwise baselines — DIAT, CycleGAN, and IcGAN — and the gap was <em>largest</em> on multi-attribute edits (changing several things at once), exactly where the shared-knowledge advantage should show up."},
+            {"type": "p", "html": "The intuition for why sharing helps: a pairwise model trained only on brown&rarr;blond never sees old faces, side profiles, or unusual lighting unless they happen to appear in that one pair's data. StarGAN's single generator sees the union of all domains, so it learns the common structure of a face <em>once</em>, from far more examples, and only specializes the small per-attribute differences. Joint training is effectively large-scale data augmentation."},
+            {"type": "p", "html": "On the engineering side, replacing roughly $k(k-1)$ generators with one is a huge saving in training time, GPU memory, and storage — and it means adding a new attribute is just another label dimension, not a combinatorial rebuild."},
+            {"type": "list", "items": ["One generator and one discriminator handle all domains, instead of O(k^2) pairwise models — domains radiate from a central network like a star.", "The generator is conditioned on a target-domain label fed in as extra channels; the discriminator has a real/fake head and a domain-classification head.", "Three losses do the work: adversarial (realism), domain-classification (correct attribute), cycle-consistency (preserve identity), weighted with lambda_cls = 1, lambda_rec = 10.", "Joint training across domains acts as data augmentation, improving image quality over pairwise baselines.", "The mask vector lets a single StarGAN learn from multiple datasets with different label sets, enabling composable cross-dataset edits."]}
           ]
         }
       ]
