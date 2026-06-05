@@ -84,11 +84,12 @@ function renderPage(si, pi) {
   if (!pg) return renderNotFound();
   const c = document.getElementById("content");
   const pdfPages = pg.pdfPages || (pg.pdfPage ? [pg.pdfPage] : null);
+  const venueTag = (PAPER.venue || "").match(/arXiv:[0-9.]+|[A-Za-z]+ \d{4}/);
   const pdfBlock = pdfPages ? `
     <div class="pdf-shot-wrap">
       <div class="pdf-shot-head">
         <span class="left"><span class="dot"></span><span class="ttl">paper.pdf — ${escapeHTML(PAPER.title)}</span></span>
-        <span>arXiv:1706.03762</span>
+        <span>${escapeHTML(venueTag ? venueTag[0] : (PAPER.year || ""))}</span>
       </div>
       <div class="pdf-shot-grid" style="grid-template-columns: repeat(${Math.min(pdfPages.length, 2)}, 1fr);">
         ${pdfPages.map(n => {
@@ -101,6 +102,7 @@ function renderPage(si, pi) {
       </div>
     </div>
   ` : "";
+  c.classList.remove("is-library");
   c.innerHTML = `
     <div class="pill">${escapeHTML(sec.title)}</div>
     <h1>${escapeHTML(pg.title || "Untitled")}</h1>
@@ -178,21 +180,43 @@ async function renderLibrary() {
     if (!byCat[cat]) { byCat[cat] = []; groups.push(cat); }
     byCat[cat].push(p);
   });
-  const card = p => `
-    <a class="lib-card" href="#/p/${p.slug}">
-      <div class="t">${escapeHTML(p.title)}</div>
-      <div class="a">${escapeHTML(p.authors || "")}</div>
-      <div class="meta">${escapeHTML(p.year || "")} · ${escapeHTML(p.venue || "")}</div>
+  // short accent color per category (cycles)
+  const accents = ["#7aa2ff","#b48cff","#6ad7a3","#f0b86e","#ff7b9c","#5bd0e0","#dcd271","#a3a8b8"];
+  const row = p => `
+    <a class="lib-row" href="#/p/${p.slug}" title="${escapeHTML(p.title)} — ${escapeHTML(p.authors || "")}">
+      <span class="lib-row-yr">${escapeHTML(p.year || "")}</span>
+      <span class="lib-row-body">
+        <span class="lib-row-t">${escapeHTML(p.title)}</span>
+        <span class="lib-row-a">${escapeHTML(p.authors || "")}</span>
+      </span>
+      <span class="lib-row-go">›</span>
     </a>`;
+  const col = (cat, i) => `
+    <section class="lib-col" style="--col-accent:${accents[i % accents.length]}">
+      <header class="lib-col-head">
+        <span class="lib-col-title">${escapeHTML(cat)}</span>
+        <span class="lib-col-n">${byCat[cat].length}</span>
+      </header>
+      <div class="lib-col-list">${byCat[cat].map(row).join("")}</div>
+    </section>`;
+  c.classList.add("is-library");
   c.innerHTML = `
-    <h1>Learning Papers</h1>
-    <h3>A paragraph-by-paragraph reader for ${LIB.papers.length} landmark AI papers — with the original PDF page beside every explanation and interactive visualizations.</h3>
-    <p>Pick a paper to start, or <a href="#/upload">add a new one</a>. <span class="pill">${groups.length} topics · ${LIB.papers.length} papers</span></p>
-    ${groups.map(cat => `
-      <h2 class="lib-cat">${escapeHTML(cat)} <span class="lib-cat-n">${byCat[cat].length}</span></h2>
-      <div class="lib-grid">${byCat[cat].map(card).join("")}</div>
-    `).join("")}
+    <div class="lib-top">
+      <h1>Learning Papers</h1>
+      <p class="lib-sub">${LIB.papers.length} landmark AI papers, explained paragraph-by-paragraph with the original PDF page and interactive visualizations. <span class="pill">${groups.length} categories</span> <a class="lib-add" href="#/upload">+ Add paper</a></p>
+      <p class="lib-hint">Scroll sideways to browse all categories →</p>
+    </div>
+    <div class="lib-board" id="lib-board">
+      ${groups.map((cat, i) => col(cat, i)).join("")}
+    </div>
   `;
+  // enable drag / wheel horizontal scroll on the board
+  const board = document.getElementById("lib-board");
+  if (board) {
+    board.addEventListener("wheel", e => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { board.scrollLeft += e.deltaY; e.preventDefault(); }
+    }, { passive: false });
+  }
 }
 
 function renderUpload() {
@@ -200,6 +224,7 @@ function renderUpload() {
   renderTOC();
   document.getElementById("viz").innerHTML = "";
   document.getElementById("pager").innerHTML = "";
+  document.getElementById("content").classList.remove("is-library");
   document.getElementById("content").innerHTML = `
     <h1>Add a paper</h1>
     <h3>This site is a template. To add a new paper:</h3>

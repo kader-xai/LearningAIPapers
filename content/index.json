@@ -40,6 +40,7 @@
     { "slug": "rag", "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks", "authors": "Lewis, Perez, Piktus, Petroni, Karpukhin, Goyal, Küttler, et al.", "year": "2020", "venue": "NeurIPS 2020 — arXiv:2005.11401", "category": "Alignment, RAG & Agents" },
     { "slug": "agents-survey", "title": "The Rise and Potential of LLM Based Agents: A Survey", "authors": "Xi, Chen, Guo, He, Ding, Hong, et al.", "year": "2023", "venue": "arXiv:2309.07864", "category": "Alignment, RAG & Agents" },
     { "slug": "mcp", "title": "Model Context Protocol (MCP)", "authors": "Anthropic — open standard", "year": "2024", "venue": "modelcontextprotocol.io", "category": "Alignment, RAG & Agents" },
+    { "slug": "agents-last-exam", "title": "Agents' Last Exam: A Benchmark of Real-World Professional Work", "authors": "Recursal / community", "year": "2026", "venue": "arXiv:2606.05405", "category": "Alignment, RAG & Agents" },
 
     { "slug": "fgsm", "title": "Explaining and Harnessing Adversarial Examples (FGSM)", "authors": "Goodfellow, Shlens, Szegedy", "year": "2014", "venue": "ICLR 2015 — arXiv:1412.6572", "category": "Adversarial ML & Robustness" },
     { "slug": "carlini-wagner", "title": "Towards Evaluating the Robustness of Neural Networks (C&W)", "authors": "Carlini, Wagner", "year": "2016", "venue": "IEEE S&P 2017 — arXiv:1608.04644", "category": "Adversarial ML & Robustness" },

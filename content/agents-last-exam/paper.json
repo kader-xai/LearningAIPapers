@@ -1,0 +1,147 @@
+{
+  "title": "Agents' Last Exam: A Benchmark of Real-World Professional Work for AI Agents",
+  "authors": "Recursal / community authors (see paper)",
+  "year": "2026",
+  "venue": "arXiv:2606.05405",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A benchmark of real professional work, not toy puzzles",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "<b>The question this page answers.</b> We can now build AI <i>agents</i> — systems that plan, call tools, browse, write code, and act over many steps. But how good are they really at the kind of open-ended, multi-hour work a human professional does for a living? Most existing agent benchmarks are narrow (one website, one toy task) or have saturated (frontier models already score near 100%), so they no longer tell us much." },
+            { "type": "p", "html": "<b>The idea, by analogy.</b> Think of it as a bar exam or board exam — but for agents, and across many professions at once. <b>Agents' Last Exam (ALE)</b> collects tasks that real experts actually get paid to do, then checks whether an agent's deliverable would pass professional review." },
+            { "type": "p", "html": "<b>What ALE is.</b> A large, hand-curated benchmark of real-world professional tasks spanning many domains (software engineering, data science, finance, law, consulting, design, and more). Each task ships with the materials a professional would receive, a clear deliverable, and an expert-written rubric for grading — so scoring measures whether the <i>output</i> is acceptable work, not whether a single string matches." },
+            { "type": "p", "html": "<b>The headline finding.</b> Even the strongest frontier agents score well below human professionals: the benchmark is deliberately built to be hard and far from saturated, leaving large headroom to measure real progress. (Exact numbers are in the Results section below.)" },
+            { "type": "p", "html": "<b>Why it belongs in this collection.</b> The agent survey and MCP entries describe how to <i>build</i> agents; ALE is about how to <i>measure</i> them honestly. As models move from chat to autonomous work, the benchmark that defines 'good' shapes what the whole field optimizes for." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "Why current agent benchmarks fall short",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem.</b> Over the past few years AI systems crossed from one celebrated benchmark to the next — world champions (games), olympiad mathematics, and competitive programming. Those are real achievements, but they are <i>contests with clean answers</i>: a single number, a proof, a passing test suite. Professional work rarely looks like that." },
+            { "type": "p", "html": "<b>A concrete example of the gap.</b> 'Solve this competitive-programming problem' has one correct output a judge can check instantly. 'Audit this company's quarterly numbers and write a memo flagging the three biggest risks' has no single right answer — it needs judgement, has many acceptable forms, and can only be graded by an expert who knows the domain. Most agent benchmarks live in the first world; most paid work lives in the second." },
+            { "type": "list", "items": [
+              "<b>Narrow scope</b>: many agent benchmarks cover a single environment (one shopping site, one OS, one codebase), so a high score does not generalize.",
+              "<b>Saturation</b>: as soon as frontier models pass ~90-100% on a benchmark, it stops discriminating between models — it can no longer tell you who is better.",
+              "<b>Cheap-to-check bias</b>: benchmarks favor tasks with automatically verifiable answers, which systematically excludes exactly the open-ended professional work we most want agents to do."
+            ]},
+            { "type": "p", "html": "<b>The design goal.</b> Build a benchmark that is broad (many professions), realistic (tasks sourced from people who do them for pay), and far from saturated (hard enough that there is years of headroom), while still being <i>gradable</i> — which is the hard part this paper solves with expert rubrics." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Benchmark Design",
+      "pages": [
+        {
+          "title": "What tasks count as 'professional work'",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "<b>The selection bar.</b> Not every hard task qualifies. ALE targets tasks that are <i>economically valuable</i> — work a real organization would pay a skilled human to produce — and that have a concrete <b>deliverable</b> (a report, a working program, a spreadsheet model, a design, a legal memo) rather than just a short answer." },
+            { "type": "list", "items": [
+              "<b>Sourced from practitioners</b>: tasks come from people who actually do the job, so the inputs, constraints, and expected outputs look like the real thing — not a textbook exercise.",
+              "<b>Self-contained</b>: each task bundles the materials an expert would be handed (data files, documents, a spec), so the agent has what a human would have — no more, no less.",
+              "<b>Multi-step and tool-using</b>: tasks are meant to require planning, file and tool use, browsing, and iteration over a meaningful stretch of work, not a one-shot reply."
+            ]},
+            { "type": "p", "html": "<b>Why this matters.</b> By insisting on economic value and a real deliverable, the benchmark measures the thing organizations actually care about — can the agent do the job? — instead of a proxy that is convenient to score." }
+          ]
+        },
+        {
+          "title": "The domains covered",
+          "pdfPages": [2, 4],
+          "blocks": [
+            { "type": "p", "html": "<b>Breadth is the point.</b> ALE deliberately spans a wide range of white-collar professions so that a single aggregate score reflects general professional competence, not a niche skill. The task taxonomy (the paper's Figure 1 sunburst) groups hundreds of tasks across domains such as:" },
+            { "type": "list", "items": [
+              "<b>Software engineering</b> — implement features, fix bugs, work across a real codebase.",
+              "<b>Data science &amp; analysis</b> — clean data, build models, draw and defend conclusions.",
+              "<b>Finance &amp; accounting</b> — financial modeling, analysis, reconciliation-style work.",
+              "<b>Law</b> — drafting and review tasks that require careful, constrained reasoning.",
+              "<b>Consulting / business</b> — research, synthesis, and recommendation memos.",
+              "<b>Design and other knowledge work</b> — deliverables judged on craft, not just correctness."
+            ]},
+            { "type": "p", "html": "<b>Why spread it this wide.</b> A model can be strong at code and weak at financial reasoning. Averaging across many independent professional domains gives a number that is hard to game by over-fitting one skill — and exposes where each model is lopsided." }
+          ]
+        },
+        {
+          "title": "Grading with expert rubrics",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "<b>The core difficulty.</b> If a task has no single right answer, how do you score it automatically and fairly? ALE's answer: every task carries an <b>expert-written rubric</b> — a checklist of the specific things a competent deliverable must get right, written by someone who does that job." },
+            { "type": "p", "html": "<b>A concrete example.</b> For a financial-analysis task, the rubric might award points for: pulling the correct figures from the source documents, applying the right method, arriving at a defensible conclusion, and flagging the key risks. An agent that produces a polished but wrong memo loses the points for the substance, even though it 'looks' professional." },
+            { "type": "p", "html": "<b>How grading is run.</b> The deliverable is checked against the rubric criterion by criterion. Using a structured rubric (rather than a holistic 'rate this 1-10') makes scoring reproducible and makes <i>partial credit</i> meaningful — an agent that nails 6 of 10 requirements scores 60%, which is far more informative than pass/fail on an open-ended task." },
+            { "type": "p", "html": "<b>Why rubrics, not exact-match.</b> Exact-match scoring only works when there is one right string. Rubric scoring is what lets ALE grade genuinely open-ended work the way a human reviewer would — which is the whole reason the benchmark can cover real professional tasks at all." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Evaluation Setup",
+      "pages": [
+        {
+          "title": "How an agent is run and scored",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "<b>The agent's environment.</b> An agent is given the task's materials and a working environment in which it can act — read and write files, run code, browse, and use tools — over many steps, mirroring how a professional would actually tackle the job rather than answering in one shot." },
+            { "type": "p", "html": "<b>The deliverable, then the rubric.</b> When the agent finishes, its produced deliverable (the report, program, model, or document) is collected and graded against that task's expert rubric. The task score is the fraction of rubric criteria satisfied; the benchmark score aggregates across all tasks and domains." },
+            { "type": "p", "html": "<b>Why this separation matters.</b> Decoupling 'do the work in a realistic environment' from 'grade the artifact against expert criteria' means the score reflects the <i>quality of the output</i>, independent of how the agent got there — exactly how professional work is judged in the real world." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Results",
+      "pages": [
+        {
+          "title": "Frontier agents are still far from professional level",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            { "type": "p", "html": "<b>The headline.</b> Across the benchmark, even the best current frontier agents score well below the level of human professionals on the same tasks. ALE is far from saturated — there is large, measurable headroom, which is precisely what a useful benchmark needs in order to keep tracking progress for years." },
+            { "type": "p", "html": "<b>What the numbers show (see the paper's results tables/figures on pages 6-9):</b>" },
+            { "type": "list", "items": [
+              "Models are <b>uneven across domains</b> — strong in some professional areas (e.g. coding-adjacent tasks) and notably weaker in others that demand domain judgement (e.g. finance, law).",
+              "Scores <b>spread out</b> across models rather than bunching near the ceiling, so the benchmark actually discriminates between systems — the saturation problem of older benchmarks is avoided.",
+              "Better base models and stronger agent scaffolding both help, but neither closes the gap to human experts."
+            ]},
+            { "type": "p", "html": "<b>How to read this.</b> A score well under the human bar is the <i>intended</i> result: it means the benchmark is hard enough to remain informative. As agents improve, ALE can chart the climb toward professional competence instead of flat-lining at 100%." }
+          ]
+        },
+        {
+          "title": "What the failures reveal",
+          "pdfPages": [8, 9],
+          "blocks": [
+            { "type": "p", "html": "<b>Where agents lose points.</b> Beyond the aggregate score, ALE's rubric structure lets the authors see <i>which</i> requirements agents miss — a far richer signal than a single pass/fail." },
+            { "type": "list", "items": [
+              "<b>Substance over polish</b>: agents often produce confident, well-formatted deliverables that are wrong on the parts that need real domain reasoning — they lose the rubric points that matter most.",
+              "<b>Long-horizon execution</b>: tasks that require many correct steps in a row are where errors compound; a single early mistake can sink the whole deliverable.",
+              "<b>Following the brief</b>: missing an explicit constraint or requirement in the task spec is a common, avoidable way to lose rubric credit."
+            ]},
+            { "type": "p", "html": "<b>Why this is useful.</b> Because each miss maps to a specific rubric criterion, ALE doubles as a diagnostic: it tells builders not just <i>that</i> an agent failed but <i>what</i> professional competency it lacked — exactly the feedback needed to improve the next generation." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Significance",
+      "pages": [
+        {
+          "title": "Why a benchmark like this matters now",
+          "pdfPages": [9, 10],
+          "blocks": [
+            { "type": "p", "html": "<b>Benchmarks steer the field.</b> Whatever the community can measure is what it optimizes. ImageNet steered vision; GLUE and SuperGLUE steered language understanding; HumanEval steered code generation. As the frontier shifts from chat to <i>autonomous professional work</i>, the field needs a yardstick aimed at that target — which is the role ALE is built to play." },
+            { "type": "p", "html": "<b>The honest-difficulty design.</b> By sourcing real paid tasks, demanding real deliverables, and grading with expert rubrics, ALE resists the two failure modes of older agent benchmarks: being too narrow to generalize, and saturating so fast they stop being informative." },
+            { "type": "p", "html": "<b>The bigger picture.</b> A large gap between agents and professionals, measured carefully and broken down by domain and by rubric criterion, turns a vague question ('are agents good enough to do real jobs yet?') into a concrete, trackable metric. That is the contribution: not a new model, but a credible way to know how far we actually are." }
+          ]
+        }
+      ]
+    }
+  ]
+}

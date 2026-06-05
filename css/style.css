@@ -243,35 +243,113 @@ a:hover { text-decoration: underline; }
 #pager .ttl { font-family: var(--serif); }
 #pager .spacer { flex: 1; }
 
-/* library */
-.lib-cat {
-  font-family: var(--sans) !important;
-  font-size: 14px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent-2);
-  margin: 36px 0 14px !important;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-  display: flex; align-items: center; gap: 10px;
+/* ===== library: horizontally-scrolling category board ===== */
+/* On the library view, collapse the sidebar so the board gets full width. */
+body:has(#content.is-library) { grid-template-columns: 1fr; }
+body:has(#content.is-library) #sidebar { display: none; }
+/* When the content area is showing the library, let it use the full width
+   and own the vertical space so the board can manage its own scroll. */
+#main:has(#content.is-library) {
+  max-width: none;
+  padding: 28px 0 0 0;
+  height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
-.lib-cat-n {
+#content.is-library { font-family: var(--sans); display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.lib-top { padding: 0 36px; flex: 0 0 auto; }
+#content.is-library h1 { font-family: var(--serif); font-size: 30px; margin: 0 0 6px; }
+.lib-sub { font-size: 14px; color: var(--ink-dim); margin: 0 0 2px; line-height: 1.5; }
+.lib-add {
+  margin-left: 8px; font-size: 12.5px; padding: 2px 10px; border: 1px solid var(--rule);
+  border-radius: 999px; color: var(--ink-dim);
+}
+.lib-add:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.lib-hint { font-size: 12px; color: var(--accent-2); margin: 8px 0 0; letter-spacing: 0.02em; }
+
+.lib-board {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 16px 36px 28px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+.lib-board::-webkit-scrollbar { height: 10px; }
+.lib-board::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 6px; }
+.lib-board::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+.lib-col {
+  flex: 0 0 300px;
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--col-accent, var(--accent));
+  border-radius: 12px;
+  min-height: 0;
+  scroll-snap-align: start;
+}
+.lib-col-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+  position: sticky; top: 0;
+}
+.lib-col-title {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--col-accent, var(--accent));
+}
+.lib-col-n {
   font-size: 11px; color: var(--ink-dim); background: var(--panel-2);
-  border-radius: 999px; padding: 1px 9px; letter-spacing: 0;
+  border-radius: 999px; padding: 1px 9px; min-width: 22px; text-align: center;
 }
-.lib-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px; font-family: var(--sans);
+.lib-col-list {
+  flex: 1 1 auto; overflow-y: auto; padding: 0 10px 12px;
+  display: flex; flex-direction: column; gap: 7px;
+  scrollbar-width: thin;
 }
-.lib-card {
-  background: var(--panel); border: 1px solid var(--rule);
-  border-radius: 10px; padding: 18px; color: var(--ink);
-  display: block;
+.lib-col-list::-webkit-scrollbar { width: 7px; }
+.lib-col-list::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 6px; }
+
+.lib-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--ink);
 }
-.lib-card:hover { border-color: var(--accent); text-decoration: none; }
-.lib-card .t { font-family: var(--serif); font-size: 19px; margin-bottom: 4px; }
-.lib-card .a { font-size: 13px; color: var(--ink-dim); }
-.lib-card .meta { margin-top: 10px; font-size: 12px; color: var(--ink-dim); }
+.lib-row:hover {
+  border-color: var(--col-accent, var(--accent));
+  background: #20283a;
+  text-decoration: none;
+  transform: translateX(2px);
+}
+.lib-row { transition: transform .08s ease, border-color .08s ease, background .08s ease; }
+.lib-row-yr {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 11px; color: var(--ink-dim);
+  background: var(--bg); border-radius: 5px; padding: 2px 6px; min-width: 38px; text-align: center;
+}
+.lib-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.lib-row-t {
+  font-size: 13.5px; line-height: 1.3; color: var(--ink);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lib-row-a {
+  font-size: 11px; color: var(--ink-dim); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lib-row-go { flex: 0 0 auto; color: var(--ink-dim); font-size: 18px; opacity: 0; }
+.lib-row:hover .lib-row-go { opacity: 1; color: var(--col-accent, var(--accent)); }
+
+@media (max-width: 880px) {
+  #main:has(#content.is-library) { height: auto; overflow: visible; }
+  .lib-board { flex-direction: column; overflow-x: hidden; padding: 16px 18px 40px; }
+  .lib-col { flex: 0 0 auto; }
+  .lib-top { padding: 0 18px; }
+}
 
 /* upload */
 .upload-box {
