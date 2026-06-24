@@ -1,0 +1,324 @@
+{
+  "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+  "authors": "Schick, et al. (Meta)",
+  "year": "2023",
+  "venue": "arXiv:2302.04761",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The model that taught itself to use a calculator",
+          "subtitle": "What the paper claims, in one breath",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Large language models are dazzling at writing essays and code, yet they fail at embarrassingly simple things: multiplying two three-digit numbers, telling you today's date, or naming the population of a city they've never seen the latest figure for. The reason is structural. A language model is a frozen snapshot of text statistics; it has no calculator, no clock, no live database. It can only <i>recall</i> what its weights memorized, and it cannot <i>look anything up</i>."
+            },
+            {
+              "type": "p",
+              "html": "The obvious fix is to bolt external tools onto the model — a calculator API, a search engine, a translation service. But how does the model know <b>which</b> tool to call, <b>when</b> to call it, <b>what arguments</b> to pass, and <b>how to fold the answer back</b> into its sentence? The usual answer is heavy human supervision: thousands of hand-annotated examples of 'here a human used a calculator.' That doesn't scale, and it bakes in a human's idea of when a tool is useful rather than the model's."
+            },
+            {
+              "type": "p",
+              "html": "<b>Toolformer's idea is that the model should teach itself.</b> It writes its own training data: it guesses where an API call might help, actually executes the call, and then keeps the call <i>only if the result makes the upcoming text easier to predict</i>. No human labels which calls are useful — the language-modeling loss itself is the judge. The model then fine-tunes on this self-generated, self-filtered data and emerges knowing how to use tools on its own."
+            },
+            {
+              "type": "quote",
+              "html": "Toolformer, a model trained to decide which APIs to call, when to call them, what arguments to pass, and how to best incorporate the results into future token prediction. This is done in a self-supervised way, requiring nothing more than a handful of demonstrations for each API."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: a 6.7-billion-parameter GPT-J model, after this treatment, beats the much larger 175B GPT-3 on a suite of reasoning and knowledge tasks — purely because it learned to reach for a calculator, a Wikipedia search, a Q&A system, a translator, and a calendar at the right moments. Crucially, its core language-modeling ability is <i>not</i> degraded in the process."
+            },
+            {
+              "type": "p",
+              "html": "Tools used in the paper, and the gap they each fill:"
+            },
+            {
+              "type": "table",
+              "headers": ["Tool", "Fills the gap of"],
+              "rows": [
+                ["Calculator", "Arithmetic the model can't do reliably in its head"],
+                ["Wikipedia search (BM25)", "Facts not memorized in the weights"],
+                ["Question-Answering system", "Composed factual lookups"],
+                ["Machine translation (NLLB)", "Understanding low-resource-language text"],
+                ["Calendar", "The current date — something a frozen model can never know"]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "An API call is just text",
+          "subtitle": "Turning tool use into next-token prediction",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The first move is the cleverest and the simplest: <b>represent every tool call as a piece of text</b>, embedded inline in the sentence, in exactly the format the model already knows how to read and write. If tool use is just more text, then teaching the model to use tools is just ordinary language modeling — no new architecture, no new loss, no reinforcement learning."
+            },
+            {
+              "type": "p",
+              "html": "An API call is written as a special bracketed span. Take the sentence <code>The New England Journal of Medicine is a registered trademark of the MMS.</code> The model might insert a question-answering call right before the answer it needs:"
+            },
+            {
+              "type": "quote",
+              "html": "The New England Journal of Medicine is a registered trademark of the [QA(\"Who is the publisher of The New England Journal of Medicine?\") &rarr; Massachusetts Medical Society] MMS."
+            },
+            {
+              "type": "p",
+              "html": "Read the anatomy of that span. <code>QA</code> is the tool name. The string in parentheses is the <b>input</b> the model writes for the tool. The arrow <code>&rarr;</code> separates input from output; everything after it up to the closing bracket is the <b>result</b> that the real API returned. Formally an API call is a pair $c = (a_c, i_c)$ — the API name $a_c$ and the input string $i_c$ — and once executed it has a result $r$."
+            },
+            {
+              "type": "p",
+              "html": "The paper defines the linearized text form with three helper pieces of notation:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathsf{e}(c) = \\langle\\text{API}\\rangle\\, a_c(i_c)\\, \\langle/\\text{API}\\rangle, \\qquad \\mathsf{e}(c,r) = \\langle\\text{API}\\rangle\\, a_c(i_c) \\to r\\, \\langle/\\text{API}\\rangle"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $\\mathsf{e}(c)$ is the encoding of a call <i>without</i> its result — just the open token $\\langle\\text{API}\\rangle$, the API name $a_c$, the input $i_c$ in parentheses, and the close token $\\langle/\\text{API}\\rangle$. $\\mathsf{e}(c,r)$ is the same thing but with the result $r$ spliced in after the arrow $\\to$. (In the paper's actual text the special tokens are the literal strings <code>[</code>, <code>]</code>, and <code>&rarr;</code>, so no vocabulary changes are needed.) The model is trained to produce the part up to the arrow; the environment fills in the rest."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this representation is the whole trick.</b> Because a call is just tokens, generating a call is just decoding, and learning to call is just fine-tuning on a corpus that happens to contain calls. At inference, the model decodes normally until it emits the $\\to$ token, at which point the decoder is <i>paused</i>, the real API is invoked, the response is pasted in after the arrow, the $\\langle/\\text{API}\\rangle$ token is appended, and decoding resumes. The model never knows it was interrupted — to it, the API result looks like text it 'predicted.'"
+            }
+          ]
+        },
+        {
+          "title": "Generating candidate calls",
+          "subtitle": "Let the model guess where a tool might help",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "We have a plain text corpus $\\mathcal{C}$ with no API calls in it. We need to turn it into a corpus $\\mathcal{C}^*$ that is full of <i>useful</i> calls — without anyone hand-labeling a single one. The pipeline has three stages: <b>sample</b> candidate calls, <b>execute</b> them, and <b>filter</b> to keep only the helpful ones. This page is the first stage."
+            },
+            {
+              "type": "p",
+              "html": "The only human input is tiny: for each API, a handful of in-context examples (a prompt $P(\\mathbf{x})$) showing what a call looks like. For the QA tool, the prompt literally says 'Your task is to add calls to a Question Answering API... here are some examples,' followed by a few sentences with calls inserted. That prompt steers the base model to propose calls for new sentences it has never seen."
+            },
+            {
+              "type": "p",
+              "html": "For a text $\\mathbf{x} = x_1,\\dots,x_n$, the model scans every position and asks: how likely is it that an API call should start <i>here</i>? Concretely it reads off the probability the model assigns to emitting the $\\langle\\text{API}\\rangle$ token at position $i$:"
+            },
+            {
+              "type": "math",
+              "tex": "p_i = p_M\\big(\\langle\\text{API}\\rangle \\mid P(\\mathbf{x}),\\, x_{1:i-1}\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $p_M(\\cdot)$ is the base language model's probability. $P(\\mathbf{x})$ is the few-shot prompt for this API. $x_{1:i-1}$ is the text seen so far, the first $i-1$ tokens. So $p_i$ is the model's own opinion of how natural it would be to begin a tool call right before token $x_i$. The method keeps the top-$k$ positions whose $p_i$ exceeds a threshold $\\tau_s$ (sampling threshold), so calls are only proposed where the model already 'feels' a tool is wanted."
+            },
+            {
+              "type": "p",
+              "html": "At each of those kept positions, the model then samples up to $m$ candidate calls (different argument strings) by continuing from the $\\langle\\text{API}\\rangle$ token until it produces the $\\langle/\\text{API}\\rangle$ token. So one sentence might yield several positions, each with several candidate calls — a wide net of guesses, most of which will be useless. The next page is about throwing the useless ones away."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why sample broadly and filter later?</b> The alternative — asking a human to decide where calls belong — is exactly the supervision the paper wants to avoid. Letting the model over-generate and then pruning with an automatic, objective signal is what makes the whole thing self-supervised. Over-generation is cheap; good supervision is expensive."
+            }
+          ]
+        },
+        {
+          "title": "The self-supervision trick: keep calls that lower loss",
+          "subtitle": "Let the language-modeling objective be the judge",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "This is the heart of the paper. We have a flood of candidate calls; most are wrong, irrelevant, or unhelpful. We need an automatic referee to decide which ones to keep — with <b>no human and no separate reward model</b>. The insight: a tool call is useful exactly when knowing its result makes the <i>rest of the text easier to predict</i>. Easier-to-predict means lower language-modeling loss. So the loss itself ranks the calls."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> Sentence: 'Out of 1400 participants, 400 passed the test.' Suppose the model proposes <code>[Calculator(400 / 1400) &rarr; 0.29]</code> right before the word 'roughly 29%.' If the model is shown that result as context, predicting '29%' becomes trivial — the loss on those tokens plummets. The call earns its keep. A call like <code>[Calculator(1400 / 2)]</code> placed at the same spot returns 700, which does nothing to help predict '29%' — loss barely changes, so the call is discarded."
+            },
+            {
+              "type": "p",
+              "html": "Formally, we define a weighted loss over the tokens that come <i>after</i> position $i$, conditioned on some prefix $\\mathbf{z}$ that the model gets to see:"
+            },
+            {
+              "type": "math",
+              "tex": "L_i(\\mathbf{z}) = -\\sum_{j=i}^{n} w_{j-i}\\, \\log p_M\\big(x_j \\mid \\mathbf{z},\\, x_{1:j-1}\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: the sum runs over the future tokens $x_i,\\dots,x_n$. For each, $\\log p_M(x_j \\mid \\mathbf{z}, x_{1:j-1})$ is the model's log-probability of the true next token given the prefix $\\mathbf{z}$ plus the natural text so far — so $-\\log p_M$ is the per-token cross-entropy loss, and lower is better. The weights $w_{j-i}$ decay with distance from the call, so tokens right after the call (where the result matters most) count more than tokens far downstream. $\\mathbf{z}$ is whatever context we choose to put in front: it is the lever we vary to measure the call's value."
+            },
+            {
+              "type": "p",
+              "html": "Now compare two settings of $\\mathbf{z}$. Let $L_i^{+}$ be the loss when the model is given the <b>full call with its result</b>, $\\mathbf{z} = \\mathsf{e}(c_i, r_i)$. Let $L_i^{-}$ be the loss with <b>no help at all</b> — the better of (i) giving no API call and (ii) giving the call's input but withholding the result. The criterion for keeping a call is simply:"
+            },
+            {
+              "type": "math",
+              "tex": "L_i^{-} - L_i^{+} \\geq \\tau_f"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $L_i^{-}$ is the loss without the tool's answer, $L_i^{+}$ is the loss with it, and their difference is how much the tool's <i>result</i> reduced the prediction loss. $\\tau_f$ is the filtering threshold. We keep the call only if the result lowers the loss by at least $\\tau_f$ nats. Defining $L_i^{-}$ as the <i>minimum</i> over 'no call' and 'call but no result' is what isolates the value of the answer specifically: a call is rewarded only when its <b>output</b> helps, not merely when writing a plausible-looking call helps."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the elegant part.</b> No reward model, no human preference data, no reinforcement learning — the pretraining objective the model already optimizes <i>is</i> the usefulness signal. Calls that genuinely supply missing information survive; decorative or wrong calls die. The surviving calls are then interleaved into the original text to build $\\mathcal{C}^*$, and the model is fine-tuned on $\\mathcal{C}^*$ with the standard language-modeling loss."
+            }
+          ]
+        },
+        {
+          "title": "Fine-tuning and inference",
+          "subtitle": "Same text, same objective — now with tools",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "After filtering, every surviving call is merged back into its original sentence at the position it was sampled. For a text $\\mathbf{x} = x_1,\\dots,x_n$ with a kept call $(c_i, r_i)$ at position $i$, the augmented text is $\\mathbf{x}^* = x_{1:i-1},\\, \\mathsf{e}(c_i, r_i),\\, x_{i:n}$ — the original tokens, with the linearized call-and-result spliced in. Do this for every text in $\\mathcal{C}$ and you get the augmented corpus $\\mathcal{C}^*$."
+            },
+            {
+              "type": "p",
+              "html": "The model is then fine-tuned on $\\mathcal{C}^*$ using a <b>standard language modeling objective</b> — the exact same loss it was pretrained with. The paper stresses a subtle but important point:"
+            },
+            {
+              "type": "quote",
+              "html": "Crucially, apart from inserted API calls the augmented dataset C* contains the exact same texts as C, the original dataset. As a consequence, finetuning M on C* exposes it to the same content as finetuning on C."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why that matters.</b> Because the only difference between $\\mathcal{C}$ and $\\mathcal{C}^*$ is the inserted calls, fine-tuning cannot teach the model anything except <i>when and how to use tools</i> — it can't drift in style or forget facts, because the surrounding text is identical. The model learns to decide, on its own feedback, when a tool will help future tokens. This is why Toolformer keeps its base language-modeling ability intact while gaining tool use."
+            },
+            {
+              "type": "p",
+              "html": "<b>Inference is interleaved decoding.</b> The model generates text normally until it emits the $\\to$ token, which signals it expects an API response. Decoding halts, the real API is called, the response and the $\\langle/\\text{API}\\rangle$ token are inserted, and generation continues:"
+            },
+            {
+              "type": "quote",
+              "html": "we perform regular decoding until M produces the \"&rarr;\" token, indicating that it next expects the response for an API call. At this point, we interrupt the decoding process, call the appropriate API to get a response, and continue the decoding process after inserting both the response and the </API> token."
+            },
+            {
+              "type": "p",
+              "html": "<b>One implementation footnote worth knowing.</b> During loss-based filtering the call-and-result is supplied to the model as a <i>prefix</i> rather than literally inserted mid-sentence. The reason: the base model has not yet been fine-tuned on any text containing API calls, so a bracketed span dropped into the middle of a normal sentence would look alien and inflate perplexity, corrupting the very loss comparison the filter depends on. Presenting it as a prefix keeps the measurement clean."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "A 6.7B model beating GPT-3",
+          "subtitle": "What the tools actually buy you",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Does the self-taught tool use actually help on real tasks? The experiments evaluate Toolformer (built on the 6.7B GPT-J) in a <b>zero-shot</b> setting against the same base model without tools, a vanilla GPT-J, OPT (66B), and GPT-3 (175B) — models 10x and 26x larger. The tasks are chosen to be ones where a tool <i>should</i> help: factual Q&A, math word problems, multilingual question answering, and temporal questions about dates."
+            },
+            {
+              "type": "p",
+              "html": "<b>Math reasoning (calculator).</b> On ASDiv, SVAMP, and the MAWPS benchmarks, the calculator transforms the model. The jump is dramatic — Toolformer roughly doubles the base model's accuracy on these arithmetic word problems and clears GPT-3, which has no calculator. Representative numbers:"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "ASDiv", "SVAMP", "MAWPS"],
+              "rows": [
+                ["GPT-J (6.7B)", "7.5", "5.2", "9.9"],
+                ["GPT-J + CC (fine-tuned, no tools)", "9.6", "5.0", "9.3"],
+                ["Toolformer (disabled calls)", "14.8", "6.3", "15.0"],
+                ["Toolformer (calls enabled)", "40.4", "29.4", "44.0"],
+                ["GPT-3 (175B)", "14.0", "10.0", "19.8"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read that table carefully. Toolformer with calls <i>disabled</i> already edges out the baselines — but the leap to 40.4 / 29.4 / 44.0 happens only when the calculator is actually invoked. A 6.7B model with a calculator crushes a 175B model without one. The lesson: for arithmetic, the bottleneck was never model size — it was the absence of an exact tool."
+            },
+            {
+              "type": "p",
+              "html": "<b>Factual question answering (search & QA tools).</b> On LAMA knowledge-probing splits (SQuAD, GoogleRE, T-REx), Toolformer's Q&A tool lets the 6.7B model outperform GPT-3 and OPT-66B. On open-domain QA (WebQS, NaturalQuestions, TriviaQA) the Wikipedia search tool gives large gains over the no-tool baseline, though the paper is candid that here it still trails GPT-3 — partly because its simple search can only return short snippets and the model can't yet interact with results."
+            },
+            {
+              "type": "p",
+              "html": "<b>Multilingual QA (translation) and temporal (calendar).</b> On MLQA, the NLLB translation tool helps the model handle the non-English question by translating it. On temporal datasets (TEMPLAMA, and a new DATESET the authors built), the calendar tool supplies the current date — something no frozen model can ever memorize — and improves date-grounded answers."
+            }
+          ]
+        },
+        {
+          "title": "What makes it work — and where it breaks",
+          "subtitle": "Ablations, scaling, and honest limitations",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The single most important control: <b>does tool use hurt the model's ordinary language ability?</b> The paper checks perplexity on held-out text (WikiText and a CCNet subset). The answer is reassuring — fine-tuning on the API-augmented corpus $\\mathcal{C}^*$ leaves language-modeling perplexity essentially unchanged from the base model. The model gains tools without paying a tax on fluency, exactly because $\\mathcal{C}^*$ contains the same text as $\\mathcal{C}$."
+            },
+            {
+              "type": "p",
+              "html": "<b>Does the loss-based filter matter?</b> Yes, decisively. An ablation that skips filtering — keeping <i>all</i> sampled calls rather than only loss-reducing ones — sharply degrades downstream performance. The automatic referee is not a nice-to-have; it is what separates the useful calls from the noise that the broad sampling stage deliberately generates."
+            },
+            {
+              "type": "p",
+              "html": "<b>Scaling.</b> The ability to benefit from tools <i>emerges with scale</i>. The authors compare GPT-J (6.7B) against the much smaller GPT-2 family (124M, 355M, 775M, 1.6B). Smaller models can learn the <i>format</i> of calls but get little benefit from the <i>results</i>; only at sufficient scale does the model both call tools appropriately and exploit what they return. Tool use is an emergent capability, not a free lunch for tiny models."
+            },
+            {
+              "type": "p",
+              "html": "The authors are unusually frank about limitations. They list several:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>No chaining.</b> Toolformer cannot use the output of one tool as the input to another — each call is independent, so multi-step tool pipelines are out of reach.",
+                "<b>No interaction.</b> It cannot iterate with a tool, e.g. browse several search results or refine a query; it gets one shot per call.",
+                "<b>Prompt sensitivity.</b> Whether the model decides to call a tool can be sensitive to exact input wording.",
+                "<b>Sample-inefficient.</b> Generating calls and computing the loss-difference for thousands of candidates is expensive; for some APIs millions of documents yield only a few thousand useful calls.",
+                "<b>Ignores cost.</b> The filter weighs only whether a call helps prediction, not how expensive or slow the tool is to invoke."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "None of these dent the central demonstration: that a model can <b>discover for itself</b>, from nothing but its own next-token loss, when an external tool would help — and that this self-taught skill lets a small model punch far above its parameter count."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Toolformer mattered",
+          "subtitle": "From frozen oracle to tool-using agent",
+          "pdfPages": [1, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Toolformer reframed a deep limitation of language models as a solvable training problem. Before it, the dominant fixes for the calculator/clock/database gap were either (a) make the model bigger and hope arithmetic and recall improve — expensive and unreliable — or (b) hand-annotate tool-use demonstrations — costly and unscalable. Toolformer showed a third path: let the model annotate <i>itself</i>, judged by the one signal that is always available for free, the language-modeling loss."
+            },
+            {
+              "type": "p",
+              "html": "<b>The conceptual contribution</b> is that tool use can be cast entirely as self-supervised next-token prediction. Three design choices make that possible: representing calls as inline text so no architecture changes are needed; over-sampling candidate calls so the model proposes broadly; and filtering by loss-reduction so usefulness is measured objectively, not asserted by a human. Together they turn 'learn to use tools' into 'fine-tune on a slightly augmented corpus.'"
+            },
+            {
+              "type": "p",
+              "html": "<b>How it connects to the landscape.</b> Toolformer sits between two lineages. On one side, retrieval-augmented models (REALM, RAG, Atlas) that gave models access to external documents — Toolformer generalizes 'retrieval' to 'any API.' On the other, prompting methods like chain-of-thought and ReAct that ask a model to <i>reason and act</i> in-context — Toolformer instead bakes the decision of when to act into the weights themselves, so no elaborate prompt is required at inference."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it influenced.</b> The Toolformer recipe — describe tools, let the model decide when to call them, fold results back into generation — became a template for the tool-using and agentic LLMs that followed, including the function-calling and plugin interfaces now standard in deployed assistants. The specific mechanism of <i>self-supervised, loss-filtered</i> data generation remains its distinctive contribution: a model improving itself by predicting which of its own actions reduce its own surprise."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one-sentence takeaway.</b> A 6.7B model that taught itself, with no human labels, to reach for a calculator, a search engine, a Q&A system, a translator, and a calendar — and thereby out-reasoned a model 26 times its size — because the loss it already minimizes told it exactly which tool calls were worth keeping."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

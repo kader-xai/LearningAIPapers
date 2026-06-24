@@ -1,0 +1,332 @@
+{
+  "title": "Retentive Network: A Successor to Transformer for LLMs",
+  "authors": "Sun, et al. (Microsoft)",
+  "year": "2023",
+  "venue": "arXiv:2307.08621",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The impossible triangle",
+          "subtitle": "Why you couldn't have fast training AND fast inference AND good quality — until now",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Every architecture that runs large language models has been forced to give up one of three things. The Transformer trains <b>fast</b> (it processes a whole sequence at once on the GPU) and is <b>accurate</b>, but its inference is expensive: to generate token number 1,000 it must re-attend to all 999 previous tokens, so cost grows with sequence length and a giant <i>KV cache</i> piles up in memory. Older RNNs invert the trade-off: generating a token is <b>cheap</b> (just update one hidden state), but you cannot train them in parallel and quality lags. Linear-attention tricks speed up inference but historically <b>lose accuracy</b>."
+            },
+            {
+              "type": "p",
+              "html": "The paper names this the <b>\"impossible triangle\"</b> (Figure 2): the three corners are <i>training parallelism</i>, <i>low-cost (O(1)) inference</i>, and <i>strong performance</i>. Before RetNet, you could reach at most two corners at once. <b>Retentive Network (RetNet)</b> is the claim that you can hit all three."
+            },
+            {
+              "type": "quote",
+              "html": "In this work, we propose Retentive Network (RetNet) as a foundation architecture for large language models, simultaneously achieving training parallelism, low-cost inference, and good performance."
+            },
+            {
+              "type": "p",
+              "html": "The trick is one mechanism — <b>retention</b> — that has <b>three mathematically equivalent forms</b>. You compute the same function whichever way you run it. Use the <b>parallel</b> form during training (full GPU utilization, like a Transformer). Use the <b>recurrent</b> form during inference (update a fixed-size state per token, O(1) cost, no growing KV cache). Use the <b>chunkwise recurrent</b> form for very long sequences (parallel inside each chunk, recurrent across chunks). Same weights, same outputs, three runtimes."
+            },
+            {
+              "type": "p",
+              "html": "An analogy: think of a sum like $1+2+3+\\\\dots+n$. You can add all the terms at once on paper (parallel), or keep a running total and add one number at a time (recurrent), or split into blocks, sum each block in parallel, then carry block-totals forward (chunkwise). All give the same answer; you pick the method that fits the situation. Retention does this for sequence modeling."
+            },
+            {
+              "type": "p",
+              "html": "Headline numbers from the abstract and experiments: compared to Transformers at 7B parameters with 8k-length sequences, RetNet decodes <b>8.4x faster</b>, uses <b>70% less memory</b> during inference, its inference latency is <b>length-invariant</b> (flat as the sequence grows), and training is <b>25–50% faster</b> with less GPU memory — all while matching or beating Transformer language-modeling quality once models pass roughly <b>2B parameters</b>."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. The core idea",
+      "pages": [
+        {
+          "title": "From attention to retention",
+          "subtitle": "Replace softmax with a decay term you can unroll as a recurrence",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole paper hinges on one observation: <b>if you remove softmax from attention, the computation becomes a recurrence you can also run in parallel.</b> Softmax is what forces a Transformer to materialize the full $n \\\\times n$ attention matrix and re-read the past at every step. Retention swaps the softmax for a simple <b>exponential decay</b> by position, and that single change is what unlocks all three forms."
+            },
+            {
+              "type": "h2",
+              "text": "Start with a recurrence"
+            },
+            {
+              "type": "p",
+              "html": "Imagine a state $s_n$ that summarizes everything seen up to position $n$. At each step you decay the old state a little and add the new token's contribution, then read out an answer. Concretely the paper begins from a state-space recurrence mapping input $x_n$ to output $o_n$ through state $s_n$:"
+            },
+            {
+              "type": "math",
+              "tex": "s_n = A s_{n-1} + K_n^{\\\\top} v_n, \\\\qquad o_n = Q_n s_n = \\\\sum_{m=1}^{n} Q_n A^{\\\\,n-m} K_m^{\\\\top} v_m"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $s_n \\\\in \\\\mathbb{R}^{d \\\\times d}$ is the running state (a small matrix, not a growing cache). $A \\\\in \\\\mathbb{R}^{d \\\\times d}$ is a transition matrix that decays the old state. $v_n$ is the value vector for token $n$, and $K_n, Q_n$ are its key and query (row vectors of dimension $d$), exactly as in attention. $o_n$ is the output at position $n$. The second equality just unrolls the recurrence: the contribution of an earlier token $m$ is weighted by $A^{\\\\,n-m}$, i.e. how many steps ago it occurred — that is the decay."
+            },
+            {
+              "type": "h2",
+              "text": "Diagonalize the decay"
+            },
+            {
+              "type": "p",
+              "html": "The authors then make $A$ a <b>diagonalizable</b> matrix, $A = \\\\Lambda(\\\\gamma e^{i\\\\theta})\\\\Lambda^{-1}$. Folding the change-of-basis $\\\\Lambda$ into the learnable $Q$ and $K$ projections, the power $A^{\\\\,n-m}$ becomes $\\\\gamma^{\\\\,n-m} e^{i(n-m)\\\\theta}$. The output becomes:"
+            },
+            {
+              "type": "math",
+              "tex": "o_n = \\\\sum_{m=1}^{n} Q_n (\\\\gamma e^{i\\\\theta})^{\\\\,n-m} K_m^{\\\\top} v_m"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\\\gamma \\\\in (0,1)$ is a real <b>decay rate</b> — a scalar that says how fast the past fades (smaller $\\\\gamma$ = shorter memory). The factor $e^{i\\\\theta}$ rotates by an angle proportional to relative distance $n-m$; this is exactly the <b>xPos / rotary-style relative position encoding</b>, now baked directly into retention rather than added on. So $(\\\\gamma e^{i\\\\theta})^{\\\\,n-m}$ does two jobs at once: a magnitude $\\\\gamma^{\\\\,n-m}$ that decays with distance, and a phase that encodes position."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works:</b> softmax gave attention two properties — a normalized weighting and the ability to look anywhere in the past. Retention keeps \"look anywhere\" but replaces the normalized softmax weighting with a fixed, position-only decay $\\\\gamma^{\\\\,n-m}$. Because that decay is just a power of a constant, the sum telescopes into a recurrence — which softmax could never do, since each softmax weight depends on <i>all</i> the other scores at once. Giving up data-dependent normalization is the price; O(1) inference is what you buy."
+            }
+          ]
+        },
+        {
+          "title": "The parallel form: train like a Transformer",
+          "subtitle": "Same matrix-multiply shape as attention, with a decay mask instead of softmax",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "During training you want to use the whole GPU, processing all $n$ positions simultaneously. The recurrence above is sequential, so the paper rewrites the <i>exact same</i> function as a batched matrix product — the <b>parallel representation</b>. This is what makes RetNet trainable at Transformer speed."
+            },
+            {
+              "type": "p",
+              "html": "First project the input $X \\\\in \\\\mathbb{R}^{|x| \\\\times d_{model}}$ into queries, keys, and values, then form the output:"
+            },
+            {
+              "type": "math",
+              "tex": "Q = (XW_Q) \\\\odot \\\\Theta, \\\\quad K = (XW_K) \\\\odot \\\\overline{\\\\Theta}, \\\\quad V = XW_V"
+            },
+            {
+              "type": "math",
+              "tex": "\\\\text{Retention}(X) = (Q K^{\\\\top} \\\\odot D)\\\\, V"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $W_Q, W_K, W_V \\\\in \\\\mathbb{R}^{d \\\\times d}$ are the learned projection matrices. $\\\\Theta_n = e^{i n \\\\theta}$ is the per-position phase (the rotary part); $\\\\overline{\\\\Theta}$ is its complex conjugate, and $\\\\odot$ is elementwise multiplication. $Q K^{\\\\top} \\\\in \\\\mathbb{R}^{n \\\\times n}$ is the familiar query-key score matrix — identical in shape to attention. The new ingredient is $D \\\\in \\\\mathbb{R}^{n \\\\times n}$, the <b>decay mask</b>, which replaces softmax."
+            },
+            {
+              "type": "math",
+              "tex": "D_{nm} = \\\\begin{cases} \\\\gamma^{\\\\,n-m}, & n \\\\ge m \\\\\\\\ 0, & n < m \\\\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "$D_{nm}$ is the weight that position $n$ (the query) puts on position $m$ (the key). It does two things in one stroke: the lower-triangular structure ($0$ when $n<m$) is the <b>causal mask</b> — you can't attend to the future — and the value $\\\\gamma^{\\\\,n-m}$ is the <b>distance decay</b>. A token 3 steps back gets weight $\\\\gamma^3$; one 100 steps back gets $\\\\gamma^{100}$, which is tiny. There is no row normalization — unlike softmax, the weights are fixed by position alone."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete mini-example.</b> Take $\\\\gamma = 0.9$ and look at the query at position $n=4$. Its decay weights over keys $m = 1,2,3,4$ are $\\\\gamma^3, \\\\gamma^2, \\\\gamma^1, \\\\gamma^0 = 0.729,\\\\ 0.81,\\\\ 0.9,\\\\ 1.0$. The most recent token (distance 0) gets full weight 1; older tokens fade geometrically. Multiply these into the row of $QK^{\\\\top}$, sum, and you have $o_4$ — the same number the recurrence would have produced, but computed in one matrix multiply alongside every other position."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the key move:</b> the parallel form has the <i>exact computational shape of attention</i> ($O(n^2)$ matmuls, fully parallel, GPU-friendly), so training cost and code barely change. But because $D$ is a pure power-of-$\\\\gamma$ mask rather than a softmax, the very same computation can be re-expressed as a recurrence for inference. One function, two faces."
+            }
+          ]
+        },
+        {
+          "title": "The recurrent & chunkwise forms",
+          "subtitle": "O(1) decoding, plus a hybrid for very long sequences",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Training in parallel is half the win. The payoff comes at inference: the <b>recurrent representation</b> turns generation into a fixed-cost state update, with <b>no KV cache and no dependence on sequence length</b>."
+            },
+            {
+              "type": "h2",
+              "text": "Recurrent form: the O(1) decoder"
+            },
+            {
+              "type": "math",
+              "tex": "S_n = \\\\gamma\\\\, S_{n-1} + K_n^{\\\\top} V_n, \\\\qquad \\\\text{Retention}(X_n) = Q_n S_n"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $S_n \\\\in \\\\mathbb{R}^{d \\\\times d}$ is the running state — a <b>fixed-size $d \\\\times d$ matrix</b> that does not grow with the sequence. At each new token you scale the old state by the decay $\\\\gamma$, add the outer product $K_n^{\\\\top} V_n$ of the new token's key and value, then read out $o_n = Q_n S_n$. That is it. Generating token 10,000 costs exactly the same as generating token 10 — constant time, constant memory. Contrast a Transformer, whose KV cache holds all 9,999 previous keys/values and whose attention re-scans them every step."
+            },
+            {
+              "type": "p",
+              "html": "<b>This is the same function as the parallel form</b> — unrolling $S_n = \\\\gamma S_{n-1} + K_n^{\\\\top} V_n$ gives $o_n = \\\\sum_{m \\\\le n} \\\\gamma^{\\\\,n-m} Q_n K_m^{\\\\top} V_m$, which is exactly row $n$ of $(QK^{\\\\top} \\\\odot D)V$. The two representations are provably identical; the paper just runs whichever is cheaper for the task."
+            },
+            {
+              "type": "h2",
+              "text": "Chunkwise form: the best of both"
+            },
+            {
+              "type": "p",
+              "html": "For training or prefilling on very long sequences, the pure parallel form's $O(n^2)$ memory is wasteful and the pure recurrent form is too sequential. The <b>chunkwise recurrent</b> form splits the sequence into blocks of length $B$: <i>inside</i> each block use the parallel form; <i>across</i> blocks carry a state forward recurrently."
+            },
+            {
+              "type": "math",
+              "tex": "R_i = K_{[i]}^{\\\\top}(V_{[i]} \\\\odot \\\\zeta) + \\\\gamma^{B} R_{i-1}, \\\\qquad \\\\text{Retention}(X_{[i]}) = \\\\underbrace{(Q_{[i]}K_{[i]}^{\\\\top}\\\\odot D)V_{[i]}}_{\\\\text{Inner-Chunk (parallel)}} + \\\\underbrace{(Q_{[i]} R_{i-1})\\\\odot \\\\xi}_{\\\\text{Cross-Chunk (recurrent)}}"
+            },
+            {
+              "type": "p",
+              "html": "Here $[i]$ indexes the $i$-th chunk, $R_i \\\\in \\\\mathbb{R}^{d \\\\times d}$ is the cross-chunk state passed between blocks (scaled by $\\\\gamma^{B}$, the decay accumulated over a full block of length $B$), and $\\\\zeta, \\\\xi$ are within-chunk decay factors that line up positions correctly. The first term handles interactions <i>within</i> the chunk in parallel; the second injects everything from <i>before</i> the chunk via the single state $R_{i-1}$. Complexity drops to $O(n B + B^2)$ — linear in $n$ for fixed chunk size — which is why RetNet can scale to long sequences with a flat memory footprint."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Parallel form → training: maximal GPU use, O(n²), same as a Transformer.",
+                "Recurrent form → autoregressive decoding: O(1) per token, fixed state, no KV cache.",
+                "Chunkwise form → long-sequence training / prefill: O(n) memory, parallel inside chunks, recurrent across them."
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Multi-scale retention & the full block",
+          "subtitle": "Different heads remember at different timescales",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A single decay rate $\\\\gamma$ is a blunt instrument: too small and the model forgets long-range context; too large and recent tokens don't stand out. RetNet's fix is <b>multi-scale retention (MSR)</b> — like multi-head attention, but each head is assigned its <i>own</i> decay $\\\\gamma$, so different heads specialize in different memory horizons."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, with $h$ heads the decays are spread geometrically across the range, e.g. $\\\\gamma = 1 - 2^{-5-\\\\text{arange}(0,h)}$. The paper's intuition: some heads get a $\\\\gamma$ near 1 (long memory, they track the gist of the whole document) while others get a smaller $\\\\gamma$ (short memory, they sharpen local detail). The decays are <b>fixed, not learned</b>, which keeps training stable and means the rates need no tuning."
+            },
+            {
+              "type": "math",
+              "tex": "\\\\text{MSR}(X) = \\\\big(\\\\text{GroupNorm}_h(\\\\text{head}_1, \\\\dots, \\\\text{head}_h)\\\\big)\\\\,W_O, \\\\quad \\\\text{head}_i = \\\\text{Retention}(X, \\\\gamma_i)"
+            },
+            {
+              "type": "p",
+              "html": "Each $\\\\text{head}_i$ runs the retention computation with its own decay $\\\\gamma_i$. The heads are concatenated, normalized by a <b>GroupNorm</b> (one group per head), then mixed by the output projection $W_O \\\\in \\\\mathbb{R}^{d \\\\times d}$. The per-head GroupNorm matters because heads with different $\\\\gamma$ produce outputs at very different scales (a long-memory head sums many terms); normalizing each head independently keeps them comparable and stabilizes training. The paper also adds a swish gate to the block before $W_O$."
+            },
+            {
+              "type": "p",
+              "html": "The full <b>RetNet layer</b> then looks exactly like a Transformer layer with one substitution — MSR in place of self-attention:"
+            },
+            {
+              "type": "math",
+              "tex": "Y^l = \\\\text{MSR}(\\\\text{LN}(X^l)) + X^l, \\\\qquad X^{l+1} = \\\\text{FFN}(\\\\text{LN}(Y^l)) + Y^l"
+            },
+            {
+              "type": "p",
+              "html": "$X^l$ is the input to layer $l$, $\\\\text{LN}$ is LayerNorm, $\\\\text{FFN}(X) = \\\\text{gelu}(XW_1)W_2$ is the same position-wise feed-forward network a Transformer uses, and the two $+\\\\,X$ terms are residual connections. <b>Everything outside the attention sublayer is unchanged</b> — same FFN, residuals, and norms — which is deliberate: it lets RetNet reuse Transformer training recipes and makes the comparison apples-to-apples."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trivia:</b> the fixed multi-scale decays echo earlier ideas (ALiBi's per-head linear biases, the gating in linear-attention works like RWKV), but RetNet is the first to package them so that the <i>same</i> mechanism is provably parallel, recurrent, <i>and</i> chunkwise at once."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Results",
+      "pages": [
+        {
+          "title": "Quality, speed, and memory",
+          "subtitle": "The numbers behind the impossible-triangle claim",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "An architecture that is fast but worse isn't a successor — it's a niche. So the central question for the experiments is: does RetNet actually <b>match Transformer quality</b> while delivering the efficiency? The answer the paper reports is yes, with a clear crossover point in model size."
+            },
+            {
+              "type": "h2",
+              "text": "Language-modeling quality"
+            },
+            {
+              "type": "p",
+              "html": "Training models from 1.3B to 6.7B parameters on a 100B-token corpus, RetNet's validation perplexity tracks the Transformer's and <b>crosses over to be consistently better above roughly 2B parameters</b> (Figure 5 / the scaling curves). At 6.7B, in-context learning (zero-/few-shot on downstream tasks) is on par with or above the size-matched Transformer."
+            },
+            {
+              "type": "table",
+              "headers": ["Method (6.7B)", "In-domain PPL", "Lambada", "HellaSwag", "Winograd"],
+              "rows": [
+                ["Transformer", "lower is worse-matched", "comparable", "comparable", "comparable"],
+                ["RetNet", "matches / beats above ~2B", "on par", "on par", "on par"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The paper's takeaway is that RetNet is a <b>strong scaling law</b>: the bigger the model, the more it favors RetNet over the Transformer — exactly the regime that matters for LLMs."
+            },
+            {
+              "type": "h2",
+              "text": "Inference cost (the headline win)"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Decoding throughput: ~8.4x higher than a 7B Transformer at 8k sequence length, and RetNet's throughput stays roughly flat as batch/length grow while the Transformer's collapses.",
+                "Memory: ~3.4x lower GPU memory during inference (about 70% less) — there is no KV cache, just the fixed d×d state.",
+                "Latency: length-invariant. Per-token latency barely moves from short to long sequences, whereas Transformer latency climbs with context length and batch size.",
+                "Training: 25–50% memory saving and ~7x speedup over a standard Transformer baseline when using chunkwise retention with FlashAttention-style kernels."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why these gains are structural, not incidental:</b> they fall straight out of the recurrent form. No KV cache means inference memory is $O(1)$ in length instead of $O(n)$; constant per-token work means latency doesn't grow with context. A Transformer cannot get these without changing its math — which is precisely RetNet's pitch."
+            },
+            {
+              "type": "h2",
+              "text": "Ablations"
+            },
+            {
+              "type": "p",
+              "html": "The paper ablates the design choices and finds each earns its place: removing the <b>multi-scale decay</b> (using a single $\\\\gamma$) hurts perplexity; removing the per-head <b>GroupNorm</b> destabilizes training; the swish <b>gate</b> and the chosen <b>head dimension</b> both help. The decays themselves are not learned, confirming that fixed multi-scale rates are enough."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Significance",
+      "pages": [
+        {
+          "title": "Why RetNet matters",
+          "subtitle": "A genuine alternative to attention, and where it sits in the field",
+          "pdfPages": [1, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "RetNet's contribution is conceptual as much as empirical: it shows that the <b>parallel-training / recurrent-inference duality</b> — long thought to force a choice — can be one mechanism. That reframes the design space. The famous \"Attention is All You Need\" made parallel training the default; RetNet argues that for <i>generation</i>, the recurrent view is what you actually want, and you can have both."
+            },
+            {
+              "type": "table",
+              "headers": ["Property", "Transformer", "Linear/RNN", "RetNet"],
+              "rows": [
+                ["Training parallelism", "yes", "no (RNN)", "yes"],
+                ["Inference cost per token", "O(n)", "O(1)", "O(1)"],
+                ["Long-seq memory", "O(n) KV cache", "O(1)", "O(1)"],
+                ["Performance at scale", "strong", "weaker", "strong"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "This places RetNet in the lineage of <b>efficient-attention and linear-attention</b> work (Linear Transformers, Performer, RWKV, S4/state-space models) but distinguishes it by hitting all three triangle corners at once where prior methods sacrificed quality or parallelism. It is a direct intellectual sibling of state-space models like <b>Mamba</b> that arrived around the same time — both reach for a recurrence you can also parallelize."
+            },
+            {
+              "type": "p",
+              "html": "<b>Practical impact:</b> the O(1) decoder and absent KV cache are exactly the bottlenecks that make long-context LLM serving expensive. RetNet's flat latency and 70%-lower inference memory point at cheaper, longer-context deployment — the same Microsoft Research group (which also produced BitNet and the Differential Transformer) was explicitly hunting for a more deployable foundation architecture."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveats.</b> The fixed exponential decay gives every head a hard recency bias — there is no data-dependent way to \"jump back\" to an arbitrary far token the way softmax attention can, which can matter for tasks needing precise long-range recall. And the quality crossover only appears above ~2B parameters; at small scale a Transformer can still win. RetNet is best read not as a finished replacement but as a serious proof that the impossible triangle was never actually impossible."
+            },
+            {
+              "type": "quote",
+              "html": "RetNet achieves low-cost inference, efficient long-sequence modeling, Transformer-comparable performance, and parallel model training simultaneously. ... These intriguing properties make RetNet a strong successor to Transformer for large language models."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

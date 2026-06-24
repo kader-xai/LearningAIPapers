@@ -1,0 +1,303 @@
+{
+  "title": "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval",
+  "authors": "Sarthi, et al. (Stanford)",
+  "year": "2024",
+  "venue": "arXiv:2401.18059",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Why flat retrieval fails on long documents",
+          "subtitle": "The problem RAPTOR is built to solve",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you are asked, <i>\"What is the central theme of Cinderella, and how does it develop across the whole story?\"</i> A standard retrieval-augmented (RAG) system chops the book into small fixed chunks (say 100 tokens each), embeds every chunk, and at query time pulls back the few chunks whose embeddings are nearest to the question. That works beautifully for a <b>fact lookup</b> (\"What color was the dress?\") because the answer lives in one place. It falls apart for a <b>theme</b> question, because the answer is not in any single chunk — it is <i>distributed</i> across the entire narrative."
+            },
+            {
+              "type": "p",
+              "html": "This is the core tension RAPTOR attacks. Conventional RAG retrieves only short, contiguous fragments, so it can only see the document at one fixed level of granularity. Questions that require <b>integrating knowledge from multiple parts of a text</b> — multi-step reasoning, summarization-style questions, \"why did this happen\" — get only scattered puzzle pieces and no big picture."
+            },
+            {
+              "type": "quote",
+              "html": "Retrieval-augmented language models can better adapt to changes in world state and incorporate long-tail knowledge. However, most existing methods retrieve only short contiguous chunks from a retrieval corpus, limiting holistic understanding of the overall document context."
+            },
+            {
+              "type": "p",
+              "html": "RAPTOR's answer is a tree. Instead of a flat pile of chunks, it <b>recursively embeds, clusters, and summarizes</b> chunks of text, building a tree from the bottom up. The leaves are the original chunks; each layer above is a set of summaries of clusters from the layer below; the root summarizes the whole document. At query time you retrieve from <i>different levels of this tree</i>, so the model can pull a fine-grained detail or a high-level summary depending on what the question needs."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: pairing RAPTOR's tree-structured retrieval with GPT-4 lifts accuracy on the <b>QuALITY</b> benchmark (hard multiple-choice reading comprehension over long passages) to <b>62.4%</b>, a <b>20% absolute</b> improvement over the previous best, and sets new state-of-the-art results on <b>QASPER</b> and <b>NarrativeQA</b> as well."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> RAPTOR comes out of Christopher Manning's group at Stanford (ICLR 2024). It sits in the lineage that runs from <i>Dense Passage Retrieval</i> (DPR) and <i>RAG</i> (Lewis et al., 2020) through long-document QA, but its key move — recursive abstractive summarization into a tree — is closer in spirit to hierarchical document summarization than to classic IR. It is retriever-agnostic and adds an offline preprocessing step, not a new model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Building the Tree",
+      "pages": [
+        {
+          "title": "The recursion: cluster, summarize, repeat",
+          "subtitle": "From leaf chunks to a single root",
+          "pdfPages": [2, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole method is one loop applied over and over. Start with the document split into chunks — these are the <b>leaves</b> of the tree. Then repeat: <b>group similar chunks into clusters, write a summary of each cluster, and treat those summaries as the new \"chunks\" for the next round up</b>. Keep going until you can no longer cluster (you have one node, the root, that summarizes everything)."
+            },
+            {
+              "type": "p",
+              "html": "Think of it like building an outline of a textbook from the bottom up. The leaves are paragraphs. You gather the paragraphs about, say, \"Cinderella's mistreatment\" and write a one-paragraph summary of that theme. You do the same for \"the ball\" and \"the glass slipper.\" Those summaries are now mid-level nodes. Then you summarize <i>those</i> into a chapter-level synopsis, and finally into a one-line gist of the whole tale. Each level is a coarser, more abstract view of the same content."
+            },
+            {
+              "type": "h2",
+              "text": "Step 1 — chunk the text"
+            },
+            {
+              "type": "p",
+              "html": "The document is split into short, contiguous chunks of length <b>100 tokens</b>. Crucially, if a sentence would be cut in half by the 100-token boundary, the whole sentence is pushed to the next chunk. This keeps each chunk <i>semantically coherent</i> — you never embed half a thought. Each chunk is then embedded with <b>SBERT</b> (a Sentence-BERT model, specifically <code>multi-qa-mpnet-base-cos-v1</code>), giving a fixed-length vector that becomes a leaf node."
+            },
+            {
+              "type": "h2",
+              "text": "Step 2 — cluster, then summarize"
+            },
+            {
+              "type": "p",
+              "html": "Similar leaf embeddings are grouped into clusters (the clustering algorithm is the subject of the next page). For each cluster, the text of all its members is concatenated and fed to a language model (the paper uses <b>GPT-3.5-turbo</b> for summarization) with a simple \"summarize this\" prompt. The summary text is re-embedded with SBERT to become a parent node one level up. This re-embedding is what lets the <i>same</i> clustering machinery run again on the next layer."
+            },
+            {
+              "type": "quote",
+              "html": "This process is applied recursively, resulting in a tree structure that goes from the bottom up, with each node representing a summary of a cluster of nodes from the layer below."
+            },
+            {
+              "type": "p",
+              "html": "<b>Cost note.</b> The authors report that building the tree is roughly <b>linear</b> in document length, both in token cost and in build time — an important practicality, since a quadratic preprocessing step would make long documents infeasible. The summarization LLM occasionally hallucinates, but the paper finds these errors rarely propagate to the final answer because retrieval can route around a bad node."
+            }
+          ]
+        },
+        {
+          "title": "Soft clustering with GMMs and UMAP",
+          "subtitle": "How nodes get grouped at each level",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "How do you decide which chunks belong together? RAPTOR makes two deliberate choices that distinguish it from naive k-means. First, it uses <b>soft</b> clustering: a chunk can belong to more than one cluster. Second, it picks the number of clusters automatically rather than fixing <i>k</i> in advance. Both choices matter because a single paragraph in a story often relates to several themes at once — Cinderella's slipper is part of \"the ball\" and \"the prince's search\" — and the right number of themes is different for every document."
+            },
+            {
+              "type": "h2",
+              "text": "First reduce dimension with UMAP"
+            },
+            {
+              "type": "p",
+              "html": "SBERT embeddings are high-dimensional, and distances in high dimensions become unreliable (the \"curse of dimensionality\"). RAPTOR first reduces dimensionality with <b>UMAP</b> (Uniform Manifold Approximation and Projection). A clever detail: it varies UMAP's <code>n_neighbors</code> parameter to capture structure at two scales — a <b>global</b> clustering (large neighborhood, finds broad themes) followed by a <b>local</b> clustering within each global cluster (small neighborhood, finds fine sub-topics). This two-stage pass is how RAPTOR balances breadth and detail."
+            },
+            {
+              "type": "h2",
+              "text": "Then cluster with a Gaussian Mixture Model"
+            },
+            {
+              "type": "p",
+              "html": "Clustering itself uses <b>Gaussian Mixture Models (GMMs)</b>. A GMM treats the data as generated by a mixture of Gaussian \"blobs.\" The probability that a node vector $x$ was generated overall is:"
+            },
+            {
+              "type": "math",
+              "tex": "P(x) = \\sum_{k=1}^{K} \\pi_k \\, \\mathcal{N}(x \\mid \\mu_k, \\Sigma_k)"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: $x \\in \\mathbb{R}^d$ is the (UMAP-reduced) embedding of one node. $K$ is the number of mixture components (candidate clusters). $\\pi_k$ is the <i>mixing weight</i> of cluster $k$, with $\\sum_k \\pi_k = 1$ — how much of the data that blob accounts for. $\\mathcal{N}(x \\mid \\mu_k, \\Sigma_k)$ is a Gaussian with mean vector $\\mu_k \\in \\mathbb{R}^d$ (the cluster center) and covariance matrix $\\Sigma_k$ (its shape and spread). The key payoff: the GMM gives each node a <b>probability of membership in every cluster</b>, not a hard yes/no — that is exactly the soft, multi-cluster assignment RAPTOR wants. A node joins any cluster where its membership probability exceeds a threshold."
+            },
+            {
+              "type": "p",
+              "html": "The number of clusters $K$ is chosen with the <b>Bayesian Information Criterion (BIC)</b>, which scores each candidate model on fit while penalizing complexity:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{BIC} = \\ln(N)\\, k - 2 \\ln(\\hat{L})"
+            },
+            {
+              "type": "p",
+              "html": "Here $N$ is the number of nodes being clustered, $k$ is the number of free parameters in the model (which grows with the number of components), and $\\hat{L}$ is the maximized likelihood of the data under that model. The first term $\\ln(N)\\,k$ <i>penalizes</i> models with more parameters; the second term $-2\\ln(\\hat{L})$ <i>rewards</i> better fit. RAPTOR picks the $K$ that <b>minimizes</b> BIC — automatically landing on the number of clusters that explains the data without overfitting."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this design.</b> Hard k-means with a fixed $k$ would force every paragraph into exactly one theme and would need you to guess the theme count per document. Soft GMM + BIC + two-scale UMAP removes both assumptions, which is why a passage can legitimately feed into several parent summaries and why the tree's branching adapts to each text."
+            }
+          ]
+        },
+        {
+          "title": "Two ways to query the tree",
+          "subtitle": "Tree traversal vs. the collapsed tree",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Once the tree is built, how do you actually fetch context for a question? RAPTOR offers two retrieval strategies, and the choice between them is one of the paper's most useful empirical findings."
+            },
+            {
+              "type": "h2",
+              "text": "Method 1 — Tree traversal"
+            },
+            {
+              "type": "p",
+              "html": "Start at the root layer. Embed the query, score every node in the current layer by cosine similarity to the query, and keep the top-$k$. Then descend: only the <i>children</i> of those selected nodes are considered in the next layer down, where you again keep the top-$k$. Repeat until you reach the leaves. The retrieved set is the union of selected nodes across all layers. This is intuitive — it walks from general to specific — but it commits early: if the top-$k$ at the root is wrong, you never recover the right branch."
+            },
+            {
+              "type": "h2",
+              "text": "Method 2 — Collapsed tree"
+            },
+            {
+              "type": "p",
+              "html": "Flatten the entire tree into one big pool of nodes — leaves and summaries from <i>every</i> layer, all mixed together. Embed the query once, score <b>all</b> nodes at once by cosine similarity, and greedily add the highest-scoring nodes until you hit a token budget. The beauty here is that the retriever itself decides, per query, whether a fine-grained leaf or a high-level summary is the better evidence — no fixed level, no early commitment."
+            },
+            {
+              "type": "quote",
+              "html": "The collapsed tree approach... allows for a more flexible search, as it considers all nodes simultaneously rather than being restricted to a single layer at a time."
+            },
+            {
+              "type": "p",
+              "html": "<b>The verdict.</b> In the paper's comparison on QASPER, the collapsed tree consistently beats tree traversal across token budgets (it peaks around a <b>2000-token</b> budget). The intuition: a detail question naturally pulls leaves, a thematic question naturally pulls high-level summaries, and the collapsed search lets each question find its own right level instead of being forced down a fixed path. The collapsed tree is RAPTOR's default."
+            },
+            {
+              "type": "table",
+              "headers": ["Strategy", "What it scans", "Risk / benefit"],
+              "rows": [
+                ["Tree traversal", "Top-k at each layer, descending", "Structured but commits early"],
+                ["Collapsed tree", "All nodes, all layers, at once", "Flexible; picks the right level per query"]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Apples-to-apples: RAPTOR beats flat retrieval",
+          "subtitle": "Controlled comparison across three retrievers",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The most honest test is to hold everything else constant and swap only the retrieval method. The authors take the <b>same</b> language model reader and the <b>same</b> base embeddings, then compare standard flat retrieval against RAPTOR's tree retrieval — using three different underlying retrievers (SBERT, BM25, and DPR) so the win is not an artifact of one embedding choice."
+            },
+            {
+              "type": "p",
+              "html": "Across all three, adding RAPTOR's tree helps. On the <b>QASPER</b> dataset (question answering over NLP research papers), the gains are consistent:"
+            },
+            {
+              "type": "table",
+              "headers": ["Retriever", "Flat (F1)", "+ RAPTOR (F1)"],
+              "rows": [
+                ["SBERT", "36.70", "36.70 → higher with RAPTOR"],
+                ["BM25", "27.00", "27.36 with RAPTOR"],
+                ["DPR", "40.30", "53.10 with RAPTOR"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The headline of this controlled study: with every retriever, RAPTOR's tree-organized context outperforms retrieving the equivalent number of flat chunks. The biggest jump is with DPR, where the abstractive summary nodes give the reader integrated context that no single raw passage contains. This is the paper's central claim, isolated from confounds — <i>the tree itself</i> is what helps, not a lucky embedding."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why summaries help.</b> A flat retriever can only return text that literally exists in the document. RAPTOR can return a <i>synthesized</i> node — a sentence that no chunk contains but that captures what several chunks jointly imply. For multi-step questions, handing the reader that synthesis is worth more than handing it three disconnected fragments and hoping it stitches them together."
+            }
+          ]
+        },
+        {
+          "title": "State-of-the-art with GPT-4",
+          "subtitle": "QuALITY, QASPER, and NarrativeQA",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "When RAPTOR's retrieval is paired with a strong reader (GPT-4), it sets new state-of-the-art results on three long-document benchmarks. These are the numbers the paper is best known for."
+            },
+            {
+              "type": "h2",
+              "text": "QuALITY — hard multiple-choice reading comprehension"
+            },
+            {
+              "type": "p",
+              "html": "QuALITY asks multiple-choice questions over long passages, many of which require reasoning over the whole text rather than a single sentence. <b>RAPTOR + GPT-4</b> reaches <b>62.4%</b> accuracy on the QuALITY test set — a new state of the art, improving on the previous best (CoLISA) by about <b>2 absolute points</b>. The abstract frames the full gain over a flat baseline as a <b>20% absolute</b> improvement."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "QuALITY Acc."],
+              "rows": [
+                ["GPT-4 + flat retrieval (baseline)", "lower"],
+                ["CoLISA (prior SOTA)", "~60.3%"],
+                ["RAPTOR + GPT-4", "62.4%"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "QASPER and NarrativeQA"
+            },
+            {
+              "type": "p",
+              "html": "On <b>QASPER</b> (QA over full NLP papers), <b>RAPTOR + GPT-4</b> achieves <b>55.7% F1</b>, a new state of the art. On <b>NarrativeQA</b> (open-ended QA over full books and movie scripts, scored with metrics like ROUGE, BLEU, and METEOR), RAPTOR again improves over prior best systems — exactly the setting it was designed for, where answers depend on the whole story arc."
+            },
+            {
+              "type": "quote",
+              "html": "Controlled experiments showing significant performance improvements over traditional retrieval-augmented LMs... On the QuALITY benchmark, RAPTOR provides a 20% absolute accuracy improvement, achieving state-of-the-art results."
+            },
+            {
+              "type": "p",
+              "html": "<b>Pattern across all three.</b> The largest gains show up on questions that demand <i>integration</i> across the document — thematic, multi-hop, and \"why\" questions. On pure single-fact lookups, RAPTOR roughly ties flat retrieval (the detail still lives in one leaf). That asymmetry is the cleanest evidence that the summary layers are doing the work the authors hoped: they help precisely when no single chunk holds the answer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why RAPTOR mattered",
+          "subtitle": "Trade-offs, limits, and influence",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "RAPTOR's lasting contribution is an idea, not a model: <b>retrieval should be able to choose its level of abstraction</b>. By precomputing a hierarchy of summaries and letting the query pick freely among leaves and summaries (the collapsed tree), it gives a RAG system access to both the trees and the forest. It is retriever-agnostic and reader-agnostic — a drop-in preprocessing layer in front of any embedding model and any LLM."
+            },
+            {
+              "type": "h2",
+              "text": "The trade-offs"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Offline cost.</b> You pay an upfront LLM bill to summarize every cluster at every level. The paper shows this is linear in document length, but it is still real cost, and the tree must be rebuilt if the document changes.",
+                "<b>Hallucination risk in summaries.</b> The summarization LLM can introduce errors. In practice these rarely reach the final answer — retrieval can route around a bad node — but the corpus is no longer purely verbatim source text.",
+                "<b>Best when integration is needed.</b> For corpora of short, independent facts, the summary layers add little; the win concentrates on long, thematically connected documents."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "How it connects to the field"
+            },
+            {
+              "type": "p",
+              "html": "RAPTOR descends from the retrieval-augmented generation line — <b>DPR</b> (Karpukhin et al., 2020) and <b>RAG</b> (Lewis et al., 2020) — but borrows its core mechanism from <i>hierarchical abstractive summarization</i>. Where earlier long-context work tried to extend the model's window or do single-pass summarization, RAPTOR keeps chunks small and pushes the integration work into an indexed tree, so the reader's context window stays cheap."
+            },
+            {
+              "type": "p",
+              "html": "Its influence has been practical and fast: \"hierarchical\" or \"multi-level\" indexing is now a standard option in RAG toolkits (LlamaIndex, LangChain) and a recognized baseline in the wave of <b>structured / graph RAG</b> systems that followed (e.g. GraphRAG-style approaches that likewise build summaries over communities of text). The takeaway that practitioners carried forward is simple and durable: <i>don't just retrieve fragments — retrieve at the right altitude.</i>"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

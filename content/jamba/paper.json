@@ -1,0 +1,150 @@
+{
+  "title": "Jamba: A Hybrid Transformer-Mamba Language Model",
+  "authors": "Lieber, et al. (AI21)",
+  "year": "2024",
+  "venue": "arXiv:2403.19887",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Stop forcing one mechanism to do everything",
+          "subtitle": "Interleave Mamba and attention, then sprinkle in MoE",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem.</b> Transformers rule language modeling, but they have two stubborn costs. First, the attention computation is <b>quadratic in sequence length</b> — double the context, quadruple the work — so very long inputs are expensive. Second, and more painfully at inference time, the <b>KV cache grows linearly with context</b>: every token you have already read must be kept in memory so future tokens can attend to it. At 256K tokens that cache can be tens of gigabytes, and it is what stops you from fitting a long document on a single GPU." },
+            { "type": "p", "html": "<b>The tempting alternative.</b> State-space models like <b>Mamba</b> (Gu &amp; Dao, 2023) summarize the whole past into a fixed-size hidden state. Cost is <i>linear</i> in length and there is <i>no</i> growing KV cache — perfect for long context and fast inference. But pure Mamba models lag attention on tasks that need to reach back and grab an exact token (copying, in-context retrieval), and they do not yet match Transformers at the largest scales." },
+            { "type": "p", "html": "<b>Jamba's answer: don't choose — interleave.</b> Jamba is a single network built from blocks that mix <b>Mamba (SSM) layers</b>, a few <b>Transformer attention layers</b>, and <b>mixture-of-experts (MoE)</b> layers. The Mamba layers carry the bulk of the sequence at linear cost; the rare attention layers restore the exact-recall ability; MoE adds capacity without adding compute per token." },
+            { "type": "quote", "html": "Jamba is the first production-grade attention-Mamba hybrid. ... Jamba provides high throughput and small memory footprint compared to vanilla Transformers, and at the same time state-of-the-art performance on standard language model benchmarks and long-context evaluations. Remarkably, the model presents strong results for up to 256K tokens context length." },
+            { "type": "p", "html": "<b>The headline numbers.</b> The released model activates <b>12B parameters per token</b> out of <b>52B total</b> (MoE makes total &gt; active), supports a <b>256K-token context</b> — the longest of any openly released model at the time — and uniquely <b>fits 140K tokens on a single 80GB GPU</b>. On long sequences it delivers up to <b>3x the throughput</b> of Mixtral-8x7B. The weights were released under Apache 2.0." },
+            { "type": "p", "html": "<b>Why it matters.</b> Jamba is the proof-of-concept that you do not have to pick a side in the \"attention vs. state-space\" debate. A handful of attention layers buys back what pure SSMs lack, and pure SSM layers buy back the memory and speed that pure attention lacks. The whole paper is really a study of <i>how much</i> of each ingredient you need." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Why hybrid",
+      "pages": [
+        {
+          "title": "The two costs of attention, and the one weakness of Mamba",
+          "subtitle": "What each mechanism is good and bad at",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "<b>Intuition first.</b> Think of reading a 300-page book. <b>Attention</b> is like keeping every page open on a giant desk: to understand page 300 you can glance back at any earlier page exactly — but the desk grows until it overflows the room. <b>Mamba</b> is like taking running notes: you keep one fixed-size notebook that you update as you read, so the desk never grows — but if you need the <i>exact</i> wording of a sentence on page 12, your summarized notes may have lost it." },
+            { "type": "p", "html": "<b>The quadratic cost, concretely.</b> Self-attention compares every token with every other token. For a sequence of length $L$, that is on the order of $L^2$ comparisons. Going from 4K to 256K tokens is a 64x length increase but roughly a $64^2 = 4096$x increase in the attention compute, and the memory for the attention map balloons the same way." },
+            { "type": "math", "tex": "\\text{Attention compute} \\sim O(L^2 d), \\qquad \\text{KV cache memory} \\sim O(L \\cdot d \\cdot n_{\\text{layers}})" },
+            { "type": "p", "html": "Reading this term by term: $L$ is the sequence length (number of tokens), $d$ is the model hidden dimension, and $n_{\\text{layers}}$ is the number of layers that keep a key/value cache. The first expression says attention <i>compute</i> scales with the square of length. The second says the <i>memory you must hold during generation</i> grows linearly with length, because each attention layer must store one key and one value vector per past token. That linear-but-large KV cache is what actually blocks long context on a single GPU." },
+            { "type": "p", "html": "<b>What Mamba fixes.</b> An SSM layer processes the sequence with a recurrence that carries a <i>fixed-size</i> hidden state. There is no token-to-token comparison and no KV cache that grows with $L$ — cost is linear in length and inference memory is essentially constant in context. That is exactly the two problems above, solved." },
+            { "type": "p", "html": "<b>What Mamba breaks.</b> Because the past is compressed into a fixed state, pure SSMs are weaker at tasks that demand pulling an <i>exact</i> earlier token out — copying a string, following a format, in-context retrieval. They also have not yet been shown to match Transformers at frontier scale. So a pure swap is not free." },
+            { "type": "p", "html": "<b>The design question.</b> If attention is expensive but precise, and Mamba is cheap but lossy, the natural move is: use mostly Mamba, and insert <i>just enough</i> attention to recover precision. The rest of the paper is about finding that ratio." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. The Jamba block",
+      "pages": [
+        {
+          "title": "One attention layer for every seven Mamba layers",
+          "subtitle": "The a : m ratio and how blocks stack",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "<b>The building unit.</b> Jamba is not a uniform stack of identical layers. It is built from a repeated <b>Jamba block</b>: a group of layers in which most are Mamba layers and a minority are attention layers. The paper parameterizes a block by a few integers and then tunes them empirically." },
+            { "type": "p", "html": "<b>The knobs.</b> A Jamba block of $l$ layers is described by:" },
+            { "type": "list", "items": [
+              "$l$ — the number of layers in one block.",
+              "$a : m$ — the ratio of <b>attention</b> layers to <b>Mamba</b> layers within the block.",
+              "$e$ — how often an MLP is replaced by an MoE module (every $e$ layers).",
+              "$n$ — the total number of experts per MoE layer.",
+              "$K$ — the number of those experts that are actually used (the top-$K$ routed) per token."
+            ]},
+            { "type": "p", "html": "<b>The chosen recipe.</b> The released Jamba uses blocks of $l = 8$ layers with a ratio of $a : m = 1 : 7$ — that is, <b>1 attention layer for every 7 Mamba layers</b>. Four such blocks are stacked. So out of 32 layers, only 4 are attention layers; the other 28 are Mamba. That is what keeps the KV cache tiny: only one layer in eight ever caches keys and values." },
+            { "type": "math", "tex": "\\text{block} = \\underbrace{[\\,\\text{Mamba} \\times 7,\\ \\text{Attention} \\times 1\\,]}_{l\\,=\\,8\\ \\text{layers},\\ a:m\\,=\\,1:7}, \\qquad \\text{model} = \\text{block} \\times 4" },
+            { "type": "p", "html": "Reading this: each <b>block</b> contains seven Mamba layers and one attention layer ($a:m = 1:7$, $l=8$). The full model repeats this block four times, giving 32 layers of which 4 are attention. Because only those 4 layers cache keys/values, the per-token memory at long context is roughly an eighth of an all-attention model of the same depth." },
+            { "type": "p", "html": "<b>Why this ratio.</b> In ablations, the authors found that even a <i>small</i> amount of attention was enough to close the gap with full Transformers on tasks needing exact recall, while keeping nearly all of Mamba's efficiency. Pushing toward more attention gave little benefit but cost memory and throughput; pushing toward pure Mamba lost in-context-learning ability. $1:7$ sat at the sweet spot." },
+            { "type": "p", "html": "<b>Trivia.</b> The name <b>Jamba</b> nods to its mixed makeup — a blend of <b>J</b>oint <b>A</b>ttention and <b>Mamba</b>. The hybrid idea built directly on Mamba (Gu &amp; Dao, 2023) and the broader state-space line (S4, Gu et al., 2021), and on mixture-of-experts work like the Switch Transformer (Fedus et al., 2021) and Mixtral (Jiang et al., 2024)." }
+          ]
+        },
+        {
+          "title": "MoE: capacity without paying for it every token",
+          "subtitle": "Why experts let total parameters exceed active parameters",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem MoE solves.</b> You want a model with lots of parameters (more capacity = smarter) but you do not want to <i>run</i> all of them on every token (more compute = slower, more expensive). A standard dense MLP forces these to move together: more parameters means more FLOPs per token. Mixture-of-experts breaks that link." },
+            { "type": "p", "html": "<b>The idea, by analogy.</b> Imagine a help desk with 16 specialists. Every incoming question is routed by a triage clerk to the <b>2 most relevant specialists</b>, not all 16. The desk <i>has</i> 16 specialists' worth of knowledge, but any single question only pays for 2. That is exactly MoE: many experts exist (high total capacity), few fire per token (low active compute)." },
+            { "type": "p", "html": "<b>How Jamba uses it.</b> Some of the MLPs inside the blocks are replaced by MoE layers — controlled by $e$ (apply MoE every $e$ layers). Each MoE layer holds $n = 16$ experts, and a router selects the top $K = 2$ for each token." },
+            { "type": "math", "tex": "y = \\sum_{i \\in \\text{top-}K} g_i(x)\\, \\cdot\\, \\text{Expert}_i(x), \\qquad K = 2,\\ \\ n = 16" },
+            { "type": "p", "html": "Reading term by term: $x$ is the token's incoming hidden vector. The router produces gate weights $g_i(x)$ over the $n=16$ experts and keeps only the top $K=2$; $\\text{Expert}_i(x)$ is the output of the $i$-th expert MLP. The layer output $y$ is the gate-weighted sum over just those 2 experts. So compute per token corresponds to 2 experts even though 16 exist." },
+            { "type": "p", "html": "<b>The active-vs-total split, with numbers.</b> This is why Jamba reports two parameter counts: <b>52B total parameters</b> (all experts, all layers) but only <b>12B active per token</b> (the 2 chosen experts plus the shared layers). You get the quality benefits of a 52B model at roughly the inference cost of a 12B one." },
+            { "type": "table", "headers": ["Quantity", "Value", "Meaning"], "rows": [
+              ["Total parameters", "52B", "Everything stored on disk / in memory"],
+              ["Active per token", "12B", "What actually runs for one token"],
+              ["Experts per MoE layer (n)", "16", "Pool of specialists"],
+              ["Experts used per token (K)", "2", "Top-2 routed"]
+            ]},
+            { "type": "p", "html": "<b>Why combine MoE with the hybrid.</b> MoE adds capacity along the <i>width</i> dimension (more parameters) while the Mamba/attention mix governs the <i>sequence</i> dimension (how the model moves information across time). They are orthogonal levers, so stacking them compounds: long, cheap context from the hybrid backbone, plus high quality from MoE capacity." }
+          ]
+        },
+        {
+          "title": "Fitting 256K context on one 80GB GPU",
+          "subtitle": "The KV cache is where hybrids win",
+          "pdfPages": [2, 5],
+          "blocks": [
+            { "type": "p", "html": "<b>The real bottleneck at long context.</b> During generation, the thing that fills up GPU memory is not the weights — it is the <b>KV cache</b>. Every attention layer must remember a key and a value vector for every token it has already seen, so it can attend back. At 256K tokens with dozens of attention layers, this cache dominates memory and is what forces multi-GPU setups for long inputs." },
+            { "type": "p", "html": "<b>Why Jamba shrinks it dramatically.</b> Only 1 layer in 8 is an attention layer. Mamba layers keep a fixed-size state, not a per-token cache. So the KV cache is roughly an <b>eighth</b> the size of an equivalent all-attention model — and that is before counting that the attention layers themselves are fewer." },
+            { "type": "quote", "html": "The KV cache memory of Jamba at 256K context is 4GB, compared to 32GB for a comparable Transformer — an 8x reduction." },
+            { "type": "math", "tex": "\\text{KV}_{\\text{Jamba}} \\approx \\frac{n_{\\text{attn}}}{n_{\\text{layers}}}\\,\\text{KV}_{\\text{Transformer}} = \\frac{4}{32}\\,\\text{KV}_{\\text{Transformer}} = \\frac{1}{8}\\,\\text{KV}_{\\text{Transformer}}" },
+            { "type": "p", "html": "Reading this: $n_{\\text{attn}}$ is the number of attention layers (4 in Jamba), $n_{\\text{layers}}$ is the total number of layers (32). Since only attention layers hold a KV cache, Jamba's cache is the fraction $4/32 = 1/8$ of a same-depth Transformer's. Concretely the paper reports this as 4GB vs 32GB at 256K — the difference between needing one GPU and needing several." },
+            { "type": "p", "html": "<b>The payoff stated plainly.</b> Because the cache is small, Jamba <b>fits a 140K-token context on a single 80GB GPU</b>. A vanilla Transformer of similar quality runs out of memory long before that, and Mixtral-8x7B fits far less context in the same budget." },
+            { "type": "p", "html": "<b>Why this is the headline.</b> Benchmarks come and go, but \"can I serve a long-context model on the hardware I have?\" is an operational constraint that decides what people can actually deploy. Jamba's whole value proposition is moving that line — long context that used to need a cluster now fits on one accelerator." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Throughput & results",
+      "pages": [
+        {
+          "title": "3x throughput on long contexts",
+          "subtitle": "Where linear cost pulls ahead of quadratic",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "<b>The intuition.</b> At short context, attention's quadratic cost is small in absolute terms, so a pure Transformer is competitive on speed. But as context grows, attention's $L^2$ term explodes while Jamba's mostly-Mamba backbone grows only linearly. The longer the input, the bigger Jamba's lead." },
+            { "type": "p", "html": "<b>The measured result.</b> On long sequences, Jamba processes up to <b>3x more tokens per second than Mixtral-8x7B</b>, a comparable open MoE model. The advantage shows up precisely in the regime — long context, large batch — where you would otherwise be forced onto more GPUs." },
+            { "type": "table", "headers": ["Setting", "Who wins", "Why"], "rows": [
+              ["Short context (a few K)", "Roughly comparable", "Quadratic term still small"],
+              ["Long context (128K+)", "Jamba (up to 3x)", "Mostly-linear vs quadratic compute"],
+              ["Single-GPU long context", "Jamba (fits 140K)", "8x smaller KV cache"]
+            ]},
+            { "type": "p", "html": "<b>Quality is not sacrificed.</b> On standard academic benchmarks — reasoning (HellaSwag, ARC, WinoGrande, PIQA), comprehension (BoolQ, QuAC), and aggregate suites (MMLU, BBH) — Jamba performs comparably to similarly-sized open models like Mixtral-8x7B and Llama-2 70B, despite its efficiency advantages. You are not paying for speed with accuracy." },
+            { "type": "p", "html": "<b>Long-context retrieval works.</b> On a needle-in-a-haystack test — hiding a fact in the middle of a long document and asking the model to recall it — Jamba retrieves accurately across contexts up to <b>256K tokens</b>. This is the empirical proof that the few attention layers really do restore the exact-recall ability that pure Mamba lacks." },
+            { "type": "p", "html": "<b>Few-shot in-context learning.</b> On few-shot classification tasks (Trec-Fine, Banking77, NLU Intent, CLINC150) with many examples in the prompt, Jamba matches or beats Mixtral as the number of in-context examples grows — evidence the hybrid genuinely does in-context learning, not just memorization." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Significance",
+      "pages": [
+        {
+          "title": "What Jamba proved and what it started",
+          "subtitle": "The hybrid recipe goes mainstream",
+          "pdfPages": [1, 5],
+          "blocks": [
+            { "type": "p", "html": "<b>The one-sentence takeaway.</b> You do not have to choose between attention and state-space models. A backbone that is <i>mostly</i> Mamba, with a <i>sprinkle</i> of attention and MoE, gets you Transformer-level quality, Mamba-level efficiency, and a context window an order of magnitude longer than what fits on the same GPU otherwise." },
+            { "type": "p", "html": "<b>Why the engineering matters as much as the science.</b> Earlier SSM work (S4, Mamba) showed the components were promising at small scale. Jamba's contribution was to integrate them — attention, Mamba, and MoE — into a <b>single 52B-parameter production model that actually trains stably and serves efficiently</b>, then release the weights so the community could verify and build on it." },
+            { "type": "list", "items": [
+              "<b>52B total / 12B active</b> parameters — MoE capacity at a fraction of the compute.",
+              "<b>256K-token context</b> — the longest openly released at the time.",
+              "<b>140K tokens on a single 80GB GPU</b> — an 8x smaller KV cache than a comparable Transformer (4GB vs 32GB at 256K).",
+              "<b>Up to 3x throughput</b> vs Mixtral-8x7B on long sequences, with comparable benchmark quality.",
+              "<b>Apache 2.0</b> release — weights, not just a paper."
+            ]},
+            { "type": "p", "html": "<b>The lineage it sits in.</b> Jamba ties together three landmark threads: the Transformer's attention (Vaswani et al., 2017), the state-space line through S4 (Gu et al., 2021) and Mamba (Gu &amp; Dao, 2023), and mixture-of-experts scaling (Switch Transformer, Fedus et al., 2021; Mixtral, Jiang et al., 2024). It is the first to fuse all three at production scale." },
+            { "type": "p", "html": "<b>What it influenced.</b> Jamba helped legitimize <b>hybrid SSM-attention architectures</b> as a serious direction rather than a curiosity. The pattern it popularized — keep most layers linear-cost, insert a few attention layers for exact recall, add MoE for capacity — recurs across the next wave of efficient long-context models. The core lesson generalizes far beyond this one model: when two mechanisms have complementary strengths, interleaving them can beat picking either alone." }
+          ]
+        }
+      ]
+    }
+  ]
+}

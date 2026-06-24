@@ -1,0 +1,342 @@
+{
+  "title": "Gemini 1.5: Multimodal Understanding Across Millions of Tokens",
+  "authors": "Gemini Team, Google DeepMind",
+  "year": "2024",
+  "venue": "arXiv:2403.05530",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A model that reads a whole library at once",
+          "subtitle": "What changes when context goes from thousands to millions of tokens",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Every previous large language model had a short memory. GPT-4 and the original Gemini 1.0 could hold maybe <b>32,000 tokens</b> in their context window at once, roughly a 50-page document. Anything longer had to be chopped up, summarized, or retrieved piece by piece with an external search system. The question this paper answers is simple to state and hard to do: <i>what if the model could just read the whole thing</i>, an entire codebase, a feature-length film, a 1,400-page novel, and answer questions about any detail in it?"
+            },
+            {
+              "type": "p",
+              "html": "Gemini 1.5 Pro is a sparse <b>mixture-of-experts (MoE)</b> multimodal model that handles context windows of up to <b>10 million tokens</b>, more than 300x larger than Gemini 1.0's 32K. To put 10M tokens in human terms: that is roughly <b>7 million words</b>, about <b>10–11 hours of video</b>, <b>107 hours of audio</b>, or a stack of books taller than a person. And it does not just store this, it <i>retrieves</i> from it with near-perfect accuracy."
+            },
+            {
+              "type": "quote",
+              "html": "Gemini 1.5 Pro... achieves near-perfect recall on long-context retrieval tasks across modalities, improves the state-of-the-art in long-document QA, long-video QA and long-context ASR, and matches or surpasses Gemini 1.0 Ultra's state-of-the-art performance across a broad set of benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "The single most striking result: in a <b>needle-in-a-haystack</b> test, the team hid one specific fact somewhere in a giant context and asked the model to find it. Gemini 1.5 Pro retrieves the hidden fact with <b>>99.7% accuracy</b> across all positions out to <b>1 million tokens</b>, and stays above <b>99.2%</b> even when the haystack grows to <b>10 million tokens</b>. The model's memory does not degrade as the document gets longer, which is the property nobody had achieved before at this scale."
+            },
+            {
+              "type": "p",
+              "html": "There is also a charming \"impossible\" demo. Given a <b>grammar book and a bilingual word list for Kalamang</b>, a language with fewer than 200 speakers and almost no presence on the web, the model learns to translate English to Kalamang at roughly the level of a human who studied the same materials. The knowledge is not in its training data; it is learned <i>in-context</i>, on the fly, from documents placed in the prompt."
+            },
+            {
+              "type": "p",
+              "html": "This page-by-page lesson walks through how the model is built (a sparse MoE Transformer), why a long context is so hard to get right, how the retrieval and perplexity experiments prove the memory actually works, what the multimodal long-context demos look like, and the headline benchmark numbers, with every key figure quoted from the paper."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "Sparse experts: more knowledge, same compute",
+          "subtitle": "Why Gemini 1.5 is a mixture-of-experts model, not a dense one",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A standard (\"dense\") Transformer runs <i>every</i> parameter on <i>every</i> token. Want a smarter model? Add more parameters, but then every token costs more compute. This is the central tension of scaling: capacity and cost are chained together. Gemini 1.5 breaks that chain with a <b>sparse mixture-of-experts</b> design."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition.</b> Imagine a hospital. A dense model is one doctor who must personally examine every patient for every complaint, knowing everything but slow. An MoE model is a hospital with many <i>specialists</i> plus a receptionist (the <b>router</b>) who sends each patient to the two or three doctors most relevant to their symptoms. The hospital collectively knows far more, but any single patient only consumes the time of a few doctors. You get the knowledge of a huge staff at the cost of a small visit."
+            },
+            {
+              "type": "quote",
+              "html": "Gemini 1.5 Pro is a sparse mixture-of-expert (MoE) Transformer-based model that builds on Gemini 1.0's research advances and multimodal capabilities."
+            },
+            {
+              "type": "h2",
+              "text": "How routing works, term by term"
+            },
+            {
+              "type": "p",
+              "html": "An MoE layer replaces the single feed-forward network (FFN) of a normal Transformer block with a set of $N$ expert FFNs and a small learned router $g$. For an input token vector $x$, the layer output is a weighted sum over only the experts the router selects."
+            },
+            {
+              "type": "math",
+              "tex": "y = \\sum_{i \\in \\mathcal{T}(x)} g_i(x)\\, E_i(x)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x \\in \\mathbb{R}^{d}$ is the hidden vector for one token (dimension $d$, the model width). $E_i(x) \\in \\mathbb{R}^{d}$ is the output of expert $i$, an ordinary FFN with its own private weights. $g_i(x)$ is the scalar gate weight the router assigns to expert $i$, computed by a small linear layer followed by a softmax over experts. $\\mathcal{T}(x)$ is the <b>top-$k$</b> set, the indices of the few experts with the highest gate scores (typically $k=2$). Crucially the sum runs only over $\\mathcal{T}(x)$, so only $k$ of the $N$ experts ever run for this token, that is what makes the layer <i>sparse</i>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works.</b> Total parameters scale with $N$ (the whole staff), but compute per token scales with $k$ (the few doctors seen). So you can pour knowledge into the model, more experts, more facts, more languages, without making each token more expensive to process. That decoupling is exactly what you need when the bill is already enormous because the context is millions of tokens long."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context & lineage.</b> MoE routing for Transformers traces to Shazeer et al.'s sparsely-gated layer (2017) and was scaled to trillions of parameters in <i>Switch Transformers</i> (Fedus et al., 2021) and <i>GLaM</i> (Du et al., 2022), both cited here. Gemini 1.5 is Google DeepMind's productionization of that lineage into a frontier multimodal model, and it is the first in the Gemini family to make MoE its public backbone."
+            }
+          ]
+        },
+        {
+          "title": "The long-context breakthrough",
+          "subtitle": "From 32K to 10M tokens, and why that is the hard part",
+          "pdfPages": [1, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Architecture (MoE) buys you a smarter model per dollar. But the headline feature of Gemini 1.5 is <b>context length</b>, and that is a separate, brutal problem. The reason long context is hard is the <b>attention mechanism</b>: in a vanilla Transformer, every token attends to every other token, so the cost of processing a sequence of length $L$ grows quadratically."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{cost} \\propto L^2"
+            },
+            {
+              "type": "p",
+              "html": "Here $L$ is the number of tokens in context. The $L^2$ is the killer: doubling the document quadruples the work. At $L = 32{,}000$ that is about $10^9$ attention pairs, already large. At $L = 10{,}000{,}000$ a naive computation would need $10^{14}$ pairs, a hundred-thousand-fold more. You cannot reach 10M tokens by brute force; it takes architecture, infrastructure, and training-recipe advances that the paper attributes to \"a host of improvements made across nearly the entire model stack.\""
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete scale.</b> The paper grounds 10M tokens in things you can picture. From Figure 1 and the text, 10M tokens corresponds to about: <b>10.5 hours of video</b>, <b>107 hours of audio</b>, the entire <b>Les Misérables</b> (1,382 pages) many times over, or the full <b>746,152-token JAX codebase</b> with room to spare."
+            },
+            {
+              "type": "quote",
+              "html": "This is the longest context window of any large-scale foundation model that we are aware of... Gemini 1.5 Pro can recall and reason over fine-grained information from up to at least 10M tokens."
+            },
+            {
+              "type": "h2",
+              "text": "Why bigger context beats retrieval"
+            },
+            {
+              "type": "p",
+              "html": "Before this, the standard trick for \"long\" documents was <b>retrieval-augmented generation (RAG)</b>: chop the document into chunks, embed them, and at query time fetch the few chunks that look relevant. RAG works when the answer lives in one place. It fails when the question needs <i>synthesis across the whole document</i>, finding a contradiction between page 3 and page 900, tracking a character across a whole novel, or learning a grammar from scattered examples. A retriever cannot fetch what it does not know to look for. A model that holds the entire document can attend to all of it at once."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>RAG:</b> cheap, but answers are only as good as the retriever's guess about what is relevant; cross-document reasoning is brittle.",
+                "<b>Long context:</b> the model sees everything and decides for itself what matters, at the cost of processing the whole input.",
+                "Gemini 1.5's bet: make long context cheap and accurate enough that you no longer need the retriever as a crutch for many tasks."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The rest of the paper is the proof that the long context is not a gimmick, that the model genuinely remembers and reasons over every token, not just the recent ones. That proof comes in two forms: needle-in-a-haystack retrieval and perplexity over position."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Proving the memory works",
+      "pages": [
+        {
+          "title": "Needle in a haystack",
+          "subtitle": "Near-perfect recall to 1M tokens, holding to 10M",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Claiming a 10M-token window is easy; proving the model actually <i>uses</i> all of it is the real test. The cleanest probe is the <b>needle-in-a-haystack</b> experiment. You fill the context with a huge amount of filler text (the haystack), insert one specific out-of-place fact (the needle) at some position, and then ask the model to repeat that fact. If the model only \"really\" attends to the start and end of long inputs, accuracy will collapse for needles buried in the middle. If memory is uniform, accuracy stays flat everywhere."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete setup.</b> A typical needle reads like: <i>\"The special magic number is 1234567.\"</i> It is dropped at a controlled depth, say 50% of the way through, into a haystack of unrelated documents totalling anywhere from a few thousand up to <b>10 million</b> tokens. The score is averaged over many needle positions (depth) and many total lengths, so a single number summarizes the whole 2D grid of (where the needle is) x (how long the document is)."
+            },
+            {
+              "type": "quote",
+              "html": "Gemini 1.5 Pro achieves >99.7% recall up to 1M tokens... and recall stays above 99.2% even when extending the context window to 10M tokens."
+            },
+            {
+              "type": "p",
+              "html": "Those two numbers are the heart of the paper. <b>>99.7% to 1M</b> means that across essentially every position in a million-token document, the model finds the needle. <b>>99.2% to 10M</b> means the curve barely bends even at ten million tokens, the memory does not fade with distance. Earlier long-context models showed a characteristic \"U\": good at the start and end, blind in the middle. Gemini 1.5's grid is essentially solid green everywhere."
+            },
+            {
+              "type": "h2",
+              "text": "It is not just text"
+            },
+            {
+              "type": "p",
+              "html": "The same needle test is run in <b>video</b> and <b>audio</b>. For video, a single frame containing the text \"<i>The secret word is needle</i>\" is hidden inside a <b>10.5-hour</b> video (the concatenation of many films) and the model is asked to read it back, it finds the frame. For audio, a short spoken phrase is buried in <b>~107 hours</b> of audio. The point is that the long-context memory is <b>modality-agnostic</b>: a token is a token whether it came from words, pixels, or sound, and the model recalls all three near-perfectly."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters.</b> Retrieval accuracy is the floor for everything else. If the model cannot reliably <i>find</i> a fact in a long document, it certainly cannot <i>reason</i> over many facts spread across it. Near-perfect needle recall is what licenses all the downstream long-document QA, long-video QA, and codebase-reasoning results, it shows the raw memory substrate is sound."
+            }
+          ]
+        },
+        {
+          "title": "Perplexity: memory shows up in prediction",
+          "subtitle": "The model keeps getting better the more it has read",
+          "pdfPages": [10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Needle-in-a-haystack proves the model can retrieve a planted fact. A second, more organic test asks: does seeing <i>more</i> context actually make the model's ordinary predictions better? If long-range memory is real, then a token near the end of a long document should be easier to predict, because the model has more relevant history to lean on. The tool for measuring \"how surprised\" the model is by the next token is <b>negative log-likelihood (NLL)</b>, the log of perplexity."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{NLL} = -\\frac{1}{T}\\sum_{t=1}^{T} \\log p_\\theta(x_t \\mid x_{<t})"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x_t$ is the $t$-th token of the document; $x_{<t}$ is everything before it; $p_\\theta(x_t \\mid x_{<t})$ is the probability the model (with parameters $\\theta$) assigns to the true next token given that history; $T$ is the total number of tokens scored. A <b>lower</b> NLL means the model is less surprised, i.e. better at prediction. The paper plots how NLL changes as a function of token position, deep into the millions."
+            },
+            {
+              "type": "quote",
+              "html": "We see a clear power-law decrease in next-token prediction loss as the context length increases, with model performance continuing to improve up to the full evaluated context length."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the real proof.</b> The loss following a <b>power law</b> down to the end of the window is a strong, hard-to-fake signal. If the model were quietly ignoring distant tokens (e.g. only using a short recent window under the hood), the curve would flatten out, extra context would stop helping. Instead it keeps dropping. That means information from <i>millions of tokens ago</i> is still measurably improving predictions now. The memory is not decorative; it is load-bearing."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy.</b> Reading the first 50 pages of a mystery novel, then guessing the next sentence, you would do better than if you had read only the previous paragraph: you know the characters, the setting, the foreshadowing. The fact that Gemini 1.5's \"guessing\" keeps sharpening through page one-million-equivalent is the quantitative version of \"it understood the whole book,\" not just the page in front of it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Multimodal long context",
+      "pages": [
+        {
+          "title": "What you can do with a 10M-token window",
+          "subtitle": "Whole codebases, feature films, and a near-extinct language",
+          "pdfPages": [8, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Abstract numbers like \"10M tokens\" become real when you see the tasks they unlock. The paper showcases three qualitative demos that were simply impossible with a 32K window, each one a different modality, all relying on the model holding an entire artifact in context at once."
+            },
+            {
+              "type": "h2",
+              "text": "Demo 1: reason over an entire codebase"
+            },
+            {
+              "type": "p",
+              "html": "The full <b>JAX codebase (746,152 tokens)</b> is placed in the prompt (Figure 3). The user asks where a specific algorithm, the core automatic-differentiation backward pass, is implemented. The model points to the exact file and function. No grep, no embeddings, no RAG: it reads the whole repository and locates the relevant code by understanding it. This is the dream of \"ask your codebase a question\" without any retrieval plumbing."
+            },
+            {
+              "type": "h2",
+              "text": "Demo 2: find a scene from a hand-drawn sketch"
+            },
+            {
+              "type": "p",
+              "html": "The entire text of <b>Les Misérables, 1,382 pages, ~732,000 tokens</b>, is loaded into context (Figure 5). The user submits a crude <i>hand-drawn sketch</i> of a scene (a stick-figure drawing) and asks what is happening. Gemini 1.5 Pro identifies the famous scene and locates it, returning <i>\"This is on page 119\"</i> and quoting the relevant passage. It is doing cross-modal grounding, image to a precise location in a near-million-token novel, in one shot."
+            },
+            {
+              "type": "h2",
+              "text": "Demo 3: learn a language from a book in-context"
+            },
+            {
+              "type": "p",
+              "html": "This is the most remarkable result. Given a <b>~250k-token reference grammar and a bilingual word list</b> for <b>Kalamang</b>, a Papuan language with fewer than 200 speakers and almost no web presence (Figure 4), the model translates English into Kalamang \"with similar quality to a person who learned from the same materials.\" The model was <i>not</i> trained on Kalamang; it acquires the language entirely from documents in the prompt, a textbook case of <b>in-context learning</b> at a scale earlier models could not reach."
+            },
+            {
+              "type": "quote",
+              "html": "Given a reference grammar book and a bilingual wordlist (dictionary), Gemini 1.5 Pro is able to translate from English to Kalamang with similar quality to a human who learned from the same materials."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why these three together.</b> Code, a novel-plus-image, and a grammar book span the modalities (text, vision, structured language data) and the skills (retrieval, cross-modal grounding, on-the-fly learning). Each is gated on holding the <i>entire</i> source in context. They are the human-legible payoff of the >99% needle recall and the still-falling perplexity curve from the previous section."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Matching Gemini 1.0 Ultra at a fraction of the compute",
+          "subtitle": "Core capability benchmarks and the long-context wins",
+          "pdfPages": [3, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A long context is worthless if the model got dumber to earn it. So the team checks that Gemini 1.5 Pro is still a top-tier <i>general</i> model on the usual benchmarks, not just a memory trick. The headline comparison is against <b>Gemini 1.0 Ultra</b>, the largest, most capable model of the previous generation."
+            },
+            {
+              "type": "quote",
+              "html": "Despite only requiring a small fraction of the compute to train, Gemini 1.5 Pro matches or surpasses Gemini 1.0 Ultra's state-of-the-art performance across a broad set of benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "That sentence carries the whole efficiency story. The MoE architecture from earlier in this lesson is why \"a small fraction of the compute\" buys \"matches Ultra\": sparse routing means most parameters sit idle on any given token, so the smarter <b>Pro</b> model is far cheaper to train and serve than the dense <b>Ultra</b> it ties or beats."
+            },
+            {
+              "type": "p",
+              "html": "On the aggregate of core capability benchmarks (Figure 2 in the paper), Gemini 1.5 Pro wins on a majority of tasks, with the paper reporting improvements such as <b>+28.9% on Text</b>, <b>+10.8% on Vision</b>, and <b>+5.0% on Audio</b> relative to Gemini 1.0 Pro, while reaching parity with the much larger 1.0 Ultra. The same single model spans text, code, images, audio, and video, there is no separate vision or audio model bolted on."
+            },
+            {
+              "type": "h2",
+              "text": "The long-context state-of-the-art"
+            },
+            {
+              "type": "p",
+              "html": "Where Gemini 1.5 doesn't just match but clearly <i>advances</i> the field is in long-context tasks, exactly the regime its 10M window was built for:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Long-document QA:</b> new state-of-the-art, answering questions that require reading documents far longer than any competing model's window.",
+                "<b>Long-video QA:</b> new state-of-the-art on understanding hour-scale video, where the whole video lives in context as tokens.",
+                "<b>Long-context ASR (automatic speech recognition):</b> improved word-error rates on very long audio transcription.",
+                "<b>Needle-in-a-haystack:</b> >99.7% recall to 1M tokens (text), holding >99.2% to 10M, and near-perfect recall in the video and audio variants too."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading the trade-off.</b> Competing models at the time topped out near 128K–200K tokens. Gemini 1.5 Pro is simultaneously (a) competitive with the strongest dense model of the prior generation on short-context tasks, (b) far cheaper to train thanks to MoE, and (c) able to operate at 50x–100x the context length of its rivals with near-perfect recall. It is rare for a single release to push all three axes at once."
+            }
+          ]
+        },
+        {
+          "title": "Why Gemini 1.5 mattered",
+          "subtitle": "How long context reshaped what people build with LLMs",
+          "pdfPages": [1, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Gemini 1.5 reframed a question the field had treated as settled. The assumed answer to \"how do I work with a long document?\" was always <b>RAG</b>: chunk, embed, retrieve, stitch. Gemini 1.5 offered a different answer for a large class of problems, <i>just put the whole thing in the prompt</i>, and showed with >99% needle recall that the model would actually use all of it. That shifted real engineering decisions away from retrieval pipelines and toward simply loading source material wholesale."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it unlocked in practice.</b> Three patterns went from awkward to routine:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Whole-repository code understanding:</b> ask questions about an entire codebase at once, no embedding index to maintain.",
+                "<b>Document-set reasoning:</b> drop in hundreds of pages of contracts, filings, or research and ask cross-cutting questions that no single retrieved chunk could answer.",
+                "<b>In-context skill acquisition:</b> teach the model a new format, API, or even a low-resource language at inference time, purely from documents in the prompt, as the Kalamang demo proved."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The MoE legacy.</b> By shipping a frontier multimodal model on a sparse mixture-of-experts backbone, Gemini 1.5 helped normalize MoE as the default architecture for top-tier models, the same idea that <i>Switch Transformers</i> and <i>GLaM</i> had pioneered, now carrying a production system. The decoupling of \"knowledge\" (total params) from \"cost per token\" (active params) is what made a smarter-yet-cheaper Pro model possible, and that pattern propagated across the industry."
+            },
+            {
+              "type": "p",
+              "html": "<b>Connections.</b> Gemini 1.5 builds directly on Gemini 1.0 (Gemini Team, 2023) for its native multimodality, on the MoE line (Shazeer 2017; Switch Transformers, Fedus 2021; GLaM, Du 2022) for its architecture, and on the long line of efficient-attention work that made $L^2$ attention tractable at million-token scale. The Kalamang translation evaluation drew on the MTOB (Machine Translation from One Book) benchmark idea, learning a language from a single book, as a clean test of in-context learning."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one-sentence takeaway.</b> Gemini 1.5 showed that a sparse-MoE multimodal model can hold an entire library, codebase, or film in its working memory and recall any detail with >99% accuracy, turning \"long context\" from a research curiosity into a practical foundation that changed how people architect applications on top of language models."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

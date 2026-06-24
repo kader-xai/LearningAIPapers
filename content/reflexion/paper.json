@@ -1,0 +1,347 @@
+{
+  "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+  "authors": "Shinn, et al.",
+  "year": "2023",
+  "venue": "arXiv:2303.11366",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Learning by talking to yourself about your mistakes",
+          "subtitle": "The core idea in one page",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine an agent that just failed a task. The usual way to make it better is <b>reinforcement learning</b>: run thousands of episodes, measure reward, and nudge billions of weights with gradients. That is slow, expensive, and for a giant frozen language model often impossible. Reflexion asks a simpler question: <i>what if the agent could just think about why it failed, write that lesson down in plain English, and read it back before the next attempt?</i>"
+            },
+            {
+              "type": "p",
+              "html": "That is the whole trick. Instead of a scalar reward flowing into a gradient, Reflexion turns feedback into <b>language</b>. After a failed trial the agent generates a <b>verbal self-reflection</b> like \"I should have searched for the director's age before comparing\" and stores it in an <b>episodic memory</b>. On the next attempt that text is pasted into the prompt, so the same frozen model now acts with the benefit of hindsight. No weights move at all."
+            },
+            {
+              "type": "quote",
+              "html": "Reflexion agents verbally reflect on task feedback signals, then maintain their own reflective text in an episodic memory buffer to induce better decision-making in subsequent trials."
+            },
+            {
+              "type": "p",
+              "html": "The authors (Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, Shunyu Yao) test this across three very different kinds of task: <b>decision-making</b> (AlfWorld text games), <b>reasoning</b> (HotpotQA question answering), and <b>programming</b> (writing Python and Rust that must pass tests). The headline number is striking: on the <b>HumanEval</b> coding benchmark Reflexion reaches <b>91% pass@1</b>, beating the previous state of the art GPT-4 at 80%."
+            },
+            {
+              "type": "list",
+              "items": [
+                "AlfWorld decision-making: 130 of 134 tasks solved (~97%), a 22 percentage-point jump over a plain ReAct agent.",
+                "HotpotQA reasoning: 20 percentage-point absolute improvement over the baseline.",
+                "HumanEval coding: 91% pass@1 vs. the 80% GPT-4 baseline.",
+                "All of this with the language model frozen — the only thing that changes between trials is the text in memory."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why does this matter? It reframes \"learning\" for the era of large frozen models. When you cannot (or do not want to) fine-tune a 175B-parameter model, you can still make it <i>improve over time</i> by giving it a memory and a habit of self-critique. Reflexion is one of the foundational papers that made <b>self-improving language agents</b> a real research direction, alongside ReAct (which it builds on) and tool-use agents."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Motivation",
+      "pages": [
+        {
+          "title": "Why gradients are the wrong tool here",
+          "subtitle": "Trial-and-error without backpropagation",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Humans are remarkably <b>sample-efficient</b>. A person who burns a dish once usually does not need ten thousand more attempts to fix it — they reflect (\"the heat was too high, the oil smoked\") and adjust on the very next try. Classic reinforcement learning is the opposite: it learns from huge numbers of episodes and a thin scalar reward, gradually reshaping a policy through gradient descent."
+            },
+            {
+              "type": "p",
+              "html": "For language-model agents, that classic recipe breaks in two ways. First, <b>cost</b>: fine-tuning a model like GPT-4 on every task is prohibitively expensive and often not even available to users. Second, <b>signal poverty</b>: a single scalar reward (\"you failed\") tells the model <i>that</i> it was wrong but not <i>why</i> or <i>where</i>. Credit assignment — figuring out which of the 30 actions in a trajectory was the bad one — is exactly what a number cannot express but a sentence can."
+            },
+            {
+              "type": "h2",
+              "text": "The key insight"
+            },
+            {
+              "type": "p",
+              "html": "Reflexion's bet is that a modern LLM is already good enough at language to <b>do its own credit assignment in words</b>. Given the trajectory and a feedback signal, it can write a diagnosis: \"I looped between two rooms because I never picked up the key.\" That diagnosis is far richer than a scalar, and crucially it can be <b>fed straight back into the next prompt</b> — no gradient required."
+            },
+            {
+              "type": "quote",
+              "html": "We propose Reflexion, a novel framework to reinforce language agents not by updating weights, but instead through linguistic feedback."
+            },
+            {
+              "type": "p",
+              "html": "So the \"reinforcement\" in <i>verbal reinforcement learning</i> is real but metaphorical: the agent's behavior is reinforced across trials, but the mechanism is text accumulating in a memory buffer rather than weights moving under a gradient. The reward shapes <i>what gets remembered</i>, not <i>what the parameters are</i>."
+            },
+            {
+              "type": "p",
+              "html": "This connects directly to <b>ReAct</b> (Yao et al., 2022), the prior work that interleaves reasoning traces with actions. ReAct gives you a good single-attempt agent; Reflexion wraps a loop around it so that agent gets to <i>try again, having learned something</i>. It also rhymes with <b>self-refine</b> ideas, but unlike pure single-pass refinement, Reflexion persists lessons across whole episodes in long-term memory."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Three brains and two memories",
+          "subtitle": "The Actor, Evaluator, and Self-Reflection model",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Reflexion splits the agent into <b>three cooperating LLM-based modules</b> plus <b>two memory stores</b>. Keeping them separate is the design choice that makes the loop work: the part that <i>acts</i>, the part that <i>judges</i>, and the part that <i>learns the lesson</i> are different jobs, and bundling them into one prompt would muddy each."
+            },
+            {
+              "type": "h2",
+              "text": "The three modules"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Actor (M_a): a language model that reads the task plus its short-term and long-term memory and produces text + actions — the actual attempt. The paper uses ReAct or Chain-of-Thought as the Actor.",
+                "Evaluator (M_e): scores how good the Actor's trajectory was, producing a reward. For coding this can be unit tests; for reasoning, an exact-match check or an LLM heuristic.",
+                "Self-Reflection model (M_sr): the heart of the paper. Given the trajectory and the reward, it writes a verbal self-reflection — a sentence or paragraph diagnosing what went wrong and what to do differently."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "The two memories"
+            },
+            {
+              "type": "p",
+              "html": "<b>Short-term memory</b> is the current trajectory — the recent actions and observations within this one attempt, like working memory. <b>Long-term memory</b> is the buffer of self-reflections accumulated across <i>past</i> attempts. The Actor's prompt is conditioned on both, so each new trial starts \"smarter\" than the last."
+            },
+            {
+              "type": "p",
+              "html": "Think of a chess student. The board in front of them is short-term memory; the notebook of \"lessons I keep relearning\" (don't bring the queen out early) is long-term memory. The student (Actor) plays, the coach (Evaluator) says \"you lost,\" and the student writing the lesson into the notebook (Self-Reflection) is what actually makes next week's game better."
+            },
+            {
+              "type": "p",
+              "html": "Why three modules instead of one prompt that does everything? <b>Separation of concerns and signal quality.</b> A dedicated reflection step, told explicitly \"diagnose the failure,\" produces sharper, more actionable text than asking a single overloaded prompt to act, grade itself, and improve all at once. It also lets each module use the cheapest sufficient mechanism — e.g. a unit-test Evaluator costs nothing in tokens and is perfectly reliable."
+            }
+          ]
+        },
+        {
+          "title": "The Reflexion loop, step by step",
+          "subtitle": "How a single trial turns into a stored lesson",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now we put the three modules into motion. One full pass is a <b>trial</b>, and Reflexion repeats trials until the task is solved or a budget runs out. Here is the cycle in plain language before the formal version."
+            },
+            {
+              "type": "list",
+              "items": [
+                "1. Act: the Actor M_a generates a trajectory tau_t — its reasoning and actions for this attempt.",
+                "2. Evaluate: the Evaluator M_e looks at the trajectory and returns a reward r_t (e.g. tests passed / failed, or correct / incorrect).",
+                "3. Reflect: the Self-Reflection model M_sr reads the trajectory and the reward and writes a verbal reflection sr_t.",
+                "4. Store: sr_t is appended to long-term memory (the experience buffer).",
+                "5. Retry: the next trial's Actor is conditioned on that growing memory, so it acts with hindsight."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "The reflection generation"
+            },
+            {
+              "type": "math",
+              "tex": "sr_t = M_{sr}\\,\\big(\\,\\tau_t,\\; r_t\\,\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: <code>sr_t</code> is the <b>verbal self-reflection</b> generated after trial <code>t</code> — a piece of natural-language text, not a number. <code>M_sr</code> is the self-reflection language model. <code>tau_t</code> (tau) is the full <b>trajectory</b> of trial <code>t</code>: the sequence of the Actor's reasoning, actions, and the environment's observations. <code>r_t</code> is the <b>scalar reward</b> from the Evaluator for that trial. So the model maps (what I did, how well it scored) to (a written lesson)."
+            },
+            {
+              "type": "h2",
+              "text": "The Actor conditioned on memory"
+            },
+            {
+              "type": "math",
+              "tex": "a_t \\sim \\pi_\\theta\\,\\big(\\,a_t \\mid s_t,\\; mem\\,\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Here <code>a_t</code> is the <b>action</b> the Actor takes at step <code>t</code>; <code>pi_theta</code> is the Actor's policy — a frozen LLM, so <code>theta</code> never changes. <code>s_t</code> is the current <b>state</b> (the short-term trajectory so far). <code>mem</code> is the <b>long-term memory</b> of accumulated reflections. The <code>~</code> means the action is sampled from the model's distribution. The whole point: <code>theta</code> is fixed, but because <code>mem</code> grows with new reflections, the effective policy improves across trials. The learning lives entirely in <code>mem</code>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why cap the memory?</b> The buffer is bounded (the paper keeps the most recent few reflections, typically up to three) because LLM context windows are finite and old, stale lessons can crowd out fresh ones. This is a deliberate trade-off: more memory means more hindsight but also more tokens and more noise. It is the verbal analogue of choosing a replay-buffer size in classic RL."
+            }
+          ]
+        },
+        {
+          "title": "Three kinds of reward, three kinds of reflection",
+          "subtitle": "Adapting the loop to decisions, reasoning, and code",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The same loop has to serve three very different domains, and the clever part is how little needs to change — only the <b>Evaluator</b> (where the reward comes from) and the exact reflection prompt vary. The Actor and the memory machinery stay the same."
+            },
+            {
+              "type": "table",
+              "headers": ["Domain", "Benchmark", "Evaluator / reward source"],
+              "rows": [
+                ["Decision-making", "AlfWorld", "Did the agent reach the goal? Heuristic + self-eval"],
+                ["Reasoning", "HotpotQA", "Exact-match against the gold answer (and an LLM self-check)"],
+                ["Programming", "HumanEval / MBPP / Rust", "Unit tests pass or fail"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Decision-making (AlfWorld).</b> The agent navigates a simulated household (\"put a clean mug in the coffee machine\"). A common failure is <i>looping</i> — repeating the same useless action. Reflexion's heuristic detects inefficient or hallucinated trajectories, and the reflection might read: \"I kept trying to open the fridge before finding the mug; next time locate the mug first.\""
+            },
+            {
+              "type": "p",
+              "html": "<b>Reasoning (HotpotQA).</b> Multi-hop questions need chained facts. When the exact-match check fails, the reflection diagnoses the reasoning gap: \"I compared the two films' release years but never looked up the second director, so my comparison was unfounded.\" Next trial, the Actor knows to gather that fact first."
+            },
+            {
+              "type": "p",
+              "html": "<b>Programming (code).</b> This is where the reward is cleanest. <b>Unit tests</b> give an objective, free, perfectly reliable signal — no LLM judging needed. If the suite fails, the failing tests <i>and</i> the reflection (\"I used an off-by-one slice; the loop should run to n, not n-1\") both go into the next prompt. The paper even generates extra tests to strengthen the Evaluator."
+            },
+            {
+              "type": "p",
+              "html": "<b>The design rationale:</b> a good reward source is one that is cheap, reliable, and <i>localizable</i> enough for the reflection model to point at the actual mistake. Unit tests are the gold standard, which is exactly why Reflexion's biggest gains show up in coding. Where ground-truth feedback is fuzzier (open-ended reasoning), the agent leans on LLM self-evaluation, which is noisier — a limitation the authors are candid about."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Decisions and reasoning: learning across trials",
+          "subtitle": "AlfWorld and HotpotQA",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Does writing lessons to memory actually help? The cleanest evidence is the <b>success-rate-versus-trial curves</b>: with each additional trial, the Reflexion agent solves more tasks, while a baseline that just retries without reflecting plateaus. The improvement is the reflection, not the retry."
+            },
+            {
+              "type": "h2",
+              "text": "AlfWorld (decision-making)"
+            },
+            {
+              "type": "p",
+              "html": "On the 134 AlfWorld household tasks, Reflexion solves <b>130 of 134 (~97%)</b> within a handful of trials, versus a plain ReAct agent that gets stuck far lower. The paper reports roughly a <b>22 percentage-point</b> absolute gain over ReAct. Critically, most of the remaining failures are not reasoning errors but <i>hallucinated</i> actions the agent commits to before reflection can catch them."
+            },
+            {
+              "type": "p",
+              "html": "The mechanism is visible in the trajectories: a ReAct agent that loops forever between two rooms, after one reflection (\"I never picked up the object I was told to move\"), breaks the loop on the next trial and finishes. The scalar \"you failed\" could never have conveyed that; the sentence does."
+            },
+            {
+              "type": "h2",
+              "text": "HotpotQA (reasoning)"
+            },
+            {
+              "type": "p",
+              "html": "On HotpotQA, Reflexion improves over the baseline by about <b>20 percentage points absolute</b>. The authors separate two effects: better <i>reasoning</i> (rethinking the logic) and better <i>memory</i> (remembering retrieved facts across trials). An ablation that strips long-term memory shows the gain shrinks — confirming the stored reflections, not just extra attempts, do the work."
+            },
+            {
+              "type": "quote",
+              "html": "Reflexion outperforms all baseline approaches by significant margins over several learning steps."
+            },
+            {
+              "type": "p",
+              "html": "<b>What this proves:</b> verbal reinforcement is a genuine learning signal, not a one-shot prompt trick. The monotone-rising trial curves are the paper's version of an RL training curve — except each \"gradient step\" is a sentence the agent wrote to itself."
+            }
+          ]
+        },
+        {
+          "title": "Code: beating GPT-4 with self-written tests",
+          "subtitle": "HumanEval, MBPP, and the limits",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Programming is where Reflexion shines brightest, because the Evaluator is <b>unit tests</b> — objective, free, and precise. The agent writes code, runs the tests, reflects on the failures, and rewrites. The headline result:"
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "Baseline (GPT-4) pass@1", "Reflexion pass@1"],
+              "rows": [
+                ["HumanEval (Python)", "80.1%", "91.0%"],
+                ["MBPP (Python)", "80.1%", "77.1%*"],
+                ["HumanEval (Rust)", "60.0%", "68.0%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "On <b>HumanEval Python, Reflexion hits 91.0% pass@1, beating the GPT-4 baseline of 80.1%</b> — a new state of the art at the time. The gains carry over to a second language (Rust) too, showing the method is not memorizing Python-specific fixes but genuinely re-reasoning about its own bugs."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveat (the *).</b> On MBPP, Reflexion can actually <i>underperform</i> the baseline. The authors trace this to <b>false-positive tests</b>: if the self-generated unit tests are themselves wrong, the agent can \"reflect\" its correct code into a broken one. The Evaluator is only as trustworthy as its tests — a clean illustration that the reward source is the load-bearing component."
+            },
+            {
+              "type": "p",
+              "html": "This is the deepest lesson of the results. Reflexion does not make the model smarter; it makes the model <b>better at using a feedback signal</b>. Where the signal is crisp (passing/failing tests), gains are large. Where the signal is noisy (self-judged tests, open-ended reasoning), gains shrink or reverse. The quality of the Evaluator sets the ceiling."
+            },
+            {
+              "type": "p",
+              "html": "An ablation drives this home: removing the self-reflection step and keeping only retries collapses the advantage, while removing the test generation hurts the coding numbers specifically. Both memory and a reliable reward are necessary, not just one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What Reflexion changed",
+          "subtitle": "Verbal RL as a paradigm for frozen-model agents",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Reflexion's lasting contribution is conceptual: it showed that a <b>frozen</b> large language model can <i>improve at a task over time</i> through nothing but language fed back into its own context. \"Learning\" no longer has to mean \"changing weights.\" For anyone using an API model they cannot fine-tune, this opened a practical path to self-improvement."
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Builds on ReAct (Yao et al., 2022) — reasoning interleaved with actions — and wraps a learning loop around it.",
+                "Sits beside Self-Refine and Chain-of-Thought as part of the 'LLMs improving their own outputs' wave of 2022–2023.",
+                "Influenced the broad family of memory-augmented and self-improving agents (AutoGPT-style loops, tool-using agents, agentic coding assistants) that became central to the field.",
+                "Made unit-test-driven self-repair a standard pattern in LLM coding agents, now common in production coding tools."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Honest limitations"
+            },
+            {
+              "type": "p",
+              "html": "The authors are candid that Reflexion is bounded by (1) the <b>quality of the Evaluator</b> — bad tests or noisy self-judgment can mislead the agent, as the MBPP result showed; (2) the <b>finite memory</b> window, which limits how much hindsight can accumulate; and (3) the reliance on the base model's own ability to diagnose failures — a model that cannot reason about its mistakes cannot reflect usefully. Reflexion amplifies a capable model; it does not create capability from nothing."
+            },
+            {
+              "type": "p",
+              "html": "Still, the headline numbers — <b>91% HumanEval pass@1</b> beating GPT-4's 80%, <b>130/134 AlfWorld</b> tasks, and ~20-point reasoning gains — landed with no weight updates whatsoever. That combination of a clean idea, broad results, and zero fine-tuning is why Reflexion became a reference point for self-improving language agents."
+            },
+            {
+              "type": "quote",
+              "html": "Reflexion agents learn to optimize their own behavior to solve tasks by trial, error, and self-reflection."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one-sentence takeaway:</b> if you can give an agent a memory and the habit of writing down what went wrong, you get much of the benefit of reinforcement learning — at the cost of a few extra sentences in the prompt instead of a training run."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

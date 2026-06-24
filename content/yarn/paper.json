@@ -1,0 +1,315 @@
+{
+  "title": "YaRN: Efficient Context Window Extension of Large Language Models",
+  "authors": "Peng, Quesnelle, Fan, Shippole",
+  "year": "2023",
+  "venue": "arXiv:2309.00071",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Teaching a model to read further than it was trained",
+          "subtitle": "What YaRN is and why cheap context extension matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Large language models like LLaMA are trained with a fixed <b>context window</b> &mdash; LLaMA 2 sees at most 4096 tokens at a time. The model never learns what position 5000 or 50000 \"feels like.\" If you simply feed it a longer document at inference, the position signals it relies on go out of distribution and the output degrades into noise. The practical question this paper answers: <i>how do we let a pretrained model use a much longer window without retraining it from scratch?</i>"
+            },
+            {
+              "type": "p",
+              "html": "The trick lives entirely inside <b>Rotary Position Embedding (RoPE)</b>, the mechanism most modern LLMs use to encode \"where is this token.\" RoPE rotates each query/key vector by an angle proportional to its position. YaRN (\"Yet another RoPE extensioN\") rescales <i>which frequencies get rotated and by how much</i>, so positions far beyond training still land in a range the model understands. It then fine-tunes very briefly to lock it in."
+            },
+            {
+              "type": "quote",
+              "html": "We present YaRN (Yet another RoPE extensioN method), a compute-efficient method to extend the context window of such models, requiring 10x less tokens and 2.5x less training steps than previous methods."
+            },
+            {
+              "type": "p",
+              "html": "The headline numbers: YaRN extends LLaMA 2 7B and 13B to <b>64k and even 128k</b> tokens using only about <b>0.1% of the original pretraining data</b> and roughly <b>400 fine-tuning steps</b>. Compared to Position Interpolation, the prior standard, that is 10x fewer tokens and 2.5x fewer steps &mdash; and the resulting models surpass it on long-context perplexity and benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this paper mattered.</b> YaRN became the default recipe practitioners reached for whenever they needed a long-context model on a budget. It was adopted in open releases (the \"YaRN-Mistral\" and many community long-context fine-tunes) and influenced how later models think about context: extension is a cheap post-training step, not a reason to redo a multi-million-dollar pretrain. This page-by-page lesson rebuilds the idea from RoPE up to the final YaRN recipe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "RoPE: turning position into rotation",
+          "subtitle": "The machinery YaRN modifies",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem RoPE solves.</b> Attention compares a query and a key with a dot product, but a raw dot product knows nothing about <i>order</i> &mdash; \"dog bites man\" and \"man bites dog\" would look identical. RoPE injects position by <b>rotating</b> each query and key vector by an angle that grows with its position index. When two vectors are then compared, only their <i>relative</i> rotation survives, so the model naturally learns from the gap between tokens rather than absolute slots."
+            },
+            {
+              "type": "p",
+              "html": "<b>A concrete picture.</b> Split a head's hidden vector into 2D pairs, like the hands of many clocks. Each clock spins at its own speed. The first pair spins fast (a full turn every few tokens); the last pair spins glacially slow (one turn over thousands of tokens). Position <code>m</code> just means \"advance every clock by <code>m</code> of its ticks.\" Fast clocks capture fine local order; slow clocks capture coarse long-range position."
+            },
+            {
+              "type": "p",
+              "html": "Formally, for a hidden state of dimension <code>|D|</code> the rotation angle of the <code>d</code>-th pair at position <code>m</code> uses the frequency"
+            },
+            {
+              "type": "math",
+              "tex": "\\theta_d = b^{-2d/|D|}, \\qquad b = 10000"
+            },
+            {
+              "type": "p",
+              "html": "Here <code>\\theta_d</code> is the angular speed (radians per token) of pair <code>d</code>, where <code>d</code> runs from 0 to <code>|D|/2 - 1</code>. <code>|D|</code> is the head dimension. <code>b = 10000</code> is the fixed <b>base</b> that spreads the speeds across many orders of magnitude: at <code>d=0</code> the speed is 1 (fast), and as <code>d</code> grows it shrinks toward <code>1/b</code> (slow). The actual rotation applied at position <code>m</code> is the angle <code>m\\,\\theta_d</code>."
+            },
+            {
+              "type": "p",
+              "html": "It is cleaner to think in <b>wavelengths</b> &mdash; how many tokens one clock needs for a full turn:"
+            },
+            {
+              "type": "math",
+              "tex": "\\lambda_d = \\frac{2\\pi}{\\theta_d} = 2\\pi\\, b^{\\,2d/|D|}"
+            },
+            {
+              "type": "p",
+              "html": "<code>\\lambda_d</code> is the wavelength (in tokens) of pair <code>d</code>. The fastest pair has <code>\\lambda \\approx 2\\pi \\approx 6</code> tokens; the slowest pair can have a wavelength of tens of thousands of tokens &mdash; possibly <i>longer than the entire training window</i>. That single observation is the seed of the whole paper: some clocks never complete even one rotation during training, so the model has no idea what a half-turn of those clocks means."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Position Interpolation and its blind spot",
+          "subtitle": "Why squeezing every frequency equally loses local detail",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The first idea everyone tried.</b> If the model was trained on positions 0&ndash;4095 and you want it to read 16384 tokens, just <i>pretend</i> the long sequence is short. Take a position of 16000 and rescale it down to 4000 before applying RoPE. Every position now lands inside the trained range. This is <b>Position Interpolation (PI)</b>, from Chen et al. (2023)."
+            },
+            {
+              "type": "p",
+              "html": "Define the <b>scale factor</b> as the ratio of new to old context length, <code>s = L'/L</code>. For a 4k&rarr;16k extension, <code>s = 4</code>. PI rewrites the position index <code>m</code> seen by RoPE as"
+            },
+            {
+              "type": "math",
+              "tex": "g(m) = \\frac{m}{s}"
+            },
+            {
+              "type": "p",
+              "html": "<code>g(m)</code> is the effective position fed into the rotation, <code>m</code> is the true token index, and <code>s</code> is the scale factor. Dividing the position by <code>s</code> is identical to dividing <i>every</i> frequency <code>\\theta_d</code> by <code>s</code> &mdash; PI slows down all the clocks by the same factor."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it breaks.</b> Slowing every clock uniformly is fine for the slow ones, but it cripples the fast ones. The fastest pairs encode <i>local</i> structure &mdash; which word comes right before which. Compressing their wavelength by 4x crowds neighboring tokens into nearly the same angle, so the model can no longer tell adjacent positions apart. The paper frames this as a loss of <b>high-frequency information</b>: PI throws away exactly the local resolution the network was most confident about."
+            },
+            {
+              "type": "quote",
+              "html": "If we look at RoPE only from an information encoding perspective, it was shown ... that when we interpolate by scaling down the Fourier features uniformly, we lose the high frequency information that is important for the network to understand small and local relationships."
+            },
+            {
+              "type": "p",
+              "html": "<b>The diagnostic insight.</b> Frequencies are not all the same. A slow clock whose wavelength already exceeds the training window has <i>never been seen completing a rotation</i> &mdash; interpolating it is harmless and even helpful. A fast clock whose wavelength is tiny has been seen thousands of times &mdash; interpolating it destroys information. PI ignores this distinction; the rest of the method is about respecting it."
+            }
+          ]
+        },
+        {
+          "title": "NTK-aware: stretch the slow clocks, spare the fast ones",
+          "subtitle": "Spreading the interpolation unevenly across frequencies",
+          "pdfPages": [4, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The fix in one sentence.</b> Instead of slowing every clock by the same factor <code>s</code>, slow the <i>slow</i> clocks a lot and the <i>fast</i> clocks barely at all. High-frequency pairs (local detail) stay almost untouched; low-frequency pairs (long-range position) absorb most of the stretching. This is <b>NTK-aware</b> interpolation, named for Neural Tangent Kernel theory, which warns that networks struggle to learn high-frequency functions &mdash; so you must not blur them."
+            },
+            {
+              "type": "p",
+              "html": "<b>The elegant move.</b> Rather than touch each frequency individually, NTK-aware just changes the single <b>base</b> <code>b</code>. Recall <code>\\theta_d = b^{-2d/|D|}</code>: because <code>d</code> appears in the exponent, increasing <code>b</code> stretches the low-frequency tail dramatically while leaving <code>d=0</code> (where the exponent is zero) exactly fixed. The new base is chosen so the slowest clock is interpolated by the full factor <code>s</code>:"
+            },
+            {
+              "type": "math",
+              "tex": "b' = b \\cdot s^{\\,|D|/(|D|-2)}"
+            },
+            {
+              "type": "p",
+              "html": "<code>b'</code> is the rescaled base, <code>b = 10000</code> the original, <code>s</code> the scale factor, and <code>|D|</code> the head dimension. The exponent <code>|D|/(|D|-2)</code> is a small correction (near 1 for large heads) that makes the lowest frequency land exactly where PI would have put it. Every faster frequency is interpolated <i>less</i> than <code>s</code>, smoothly tapering to almost no change at the fastest clock."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it buys you.</b> NTK-aware can extend context <i>without any fine-tuning at all</i> &mdash; a striking result that made it popular in the open-source community before any paper. It preserves local resolution far better than PI."
+            },
+            {
+              "type": "p",
+              "html": "<b>Its remaining flaw.</b> By spreading interpolation through the exponent, some frequencies get stretched <i>beyond</i> the factor <code>s</code> &mdash; meaning certain positions extrapolate past the trained range rather than staying safely inside it. Without fine-tuning this leaks out-of-distribution angles, and with fine-tuning it wastes capacity correcting frequencies that did not need changing. NTK-aware is the right intuition applied with a blunt instrument; the next page sharpens it."
+            }
+          ]
+        },
+        {
+          "title": "NTK-by-parts: three zones for three kinds of clock",
+          "subtitle": "The core interpolation YaRN is built on",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The realization.</b> The clean fix is to <i>sort</i> the frequencies into three groups and treat each correctly. (1) <b>Fast clocks</b> whose wavelength is much smaller than the context &mdash; the network has seen them rotate fully, many times; leave them <b>untouched</b> so local detail survives. (2) <b>Slow clocks</b> whose wavelength exceeds the context &mdash; never seen a full turn; <b>interpolate</b> them fully (PI-style), it is safe. (3) <b>In-between clocks</b> &mdash; smoothly <b>ramp</b> from one regime to the other. This is <b>NTK-by-parts</b>."
+            },
+            {
+              "type": "p",
+              "html": "To decide which group a clock belongs to, compare its wavelength to the original context length via the ratio"
+            },
+            {
+              "type": "math",
+              "tex": "r(d) = \\frac{L}{\\lambda_d}"
+            },
+            {
+              "type": "p",
+              "html": "<code>r(d)</code> counts how many full rotations clock <code>d</code> completes across the original window. <code>L</code> is the original context length, <code>\\lambda_d</code> the wavelength of pair <code>d</code>. Large <code>r(d)</code> means a fast, well-trained clock (many rotations); small <code>r(d)</code> means a slow clock that barely moves."
+            },
+            {
+              "type": "p",
+              "html": "A ramp function <code>\\gamma</code> turns that ratio into a blend weight between \"interpolate\" and \"leave alone,\" with two cutoffs <code>\\alpha</code> and <code>\\beta</code>:"
+            },
+            {
+              "type": "math",
+              "tex": "\\gamma(r) = \\begin{cases} 0, & r < \\alpha \\\\ 1, & r > \\beta \\\\ \\dfrac{r - \\alpha}{\\beta - \\alpha}, & \\text{otherwise} \\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "<code>\\gamma(r)=0</code> means \"fully interpolate this clock\" (slow ones, <code>r&lt;\\alpha</code>); <code>\\gamma(r)=1</code> means \"do not touch it\" (fast ones, <code>r&gt;\\beta</code>); in between it slides linearly. For LLaMA the authors set <code>\\alpha = 1</code> and <code>\\beta = 32</code> &mdash; tuned by sweeping and watching perplexity. The new frequency mixes the interpolated and original versions with this weight:"
+            },
+            {
+              "type": "math",
+              "tex": "h(\\theta_d) = \\Big(1 - \\gamma\\big(r(d)\\big)\\Big)\\frac{\\theta_d}{s} + \\gamma\\big(r(d)\\big)\\,\\theta_d"
+            },
+            {
+              "type": "p",
+              "html": "<code>h(\\theta_d)</code> is the final frequency used in RoPE. The first term <code>\\theta_d/s</code> is the fully-interpolated (PI) frequency; the second term <code>\\theta_d</code> is the untouched original. <code>\\gamma</code> picks the blend per pair. Positions themselves are left alone, <code>g(m)=m</code> &mdash; all the magic is in reshaping the frequencies. <b>This per-frequency surgery is the heart of YaRN</b>; it keeps fast clocks crisp, fully relaxes slow clocks, and avoids the over-stretching that hurt plain NTK-aware."
+            }
+          ]
+        },
+        {
+          "title": "YaRN: add a temperature and you're done",
+          "subtitle": "NTK-by-parts plus an attention-scaling fix",
+          "pdfPages": [6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The last loose end.</b> When you cram a much longer sequence into RoPE, the attention <b>logits</b> (the pre-softmax scores) drift: longer sequences spread attention thinner and shift the average magnitude of the dot products. The authors found that simply <i>scaling the logits by a constant</i> &mdash; a softmax <b>temperature</b> &mdash; recovers the lost perplexity, and crucially it costs nothing because it folds directly into RoPE."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, the attention scores are multiplied by <code>1/t</code> before softmax. Because RoPE only rotates (never rescales) the query and key, you can bake <code>\\sqrt{1/t}</code> straight into the rotation matrices &mdash; one extra scalar, zero extra compute, no architecture change:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{softmax}\\!\\left(\\frac{q_m^{\\top} k_n}{t\\sqrt{|D|}}\\right)"
+            },
+            {
+              "type": "p",
+              "html": "<code>q_m</code> and <code>k_n</code> are the rotated query at position <code>m</code> and key at position <code>n</code>, <code>|D|</code> is the head dimension (the usual <code>\\sqrt{|D|}</code> scaling), and <code>t</code> is the new temperature. Setting <code>t=1</code> recovers ordinary attention; <code>t&gt;1</code> sharpens the distribution to compensate for the longer window."
+            },
+            {
+              "type": "p",
+              "html": "The authors fit a simple closed form for the temperature as a function of scale &mdash; no per-model search needed. For LLaMA:"
+            },
+            {
+              "type": "math",
+              "tex": "\\sqrt{\\frac{1}{t}} = 0.1\\,\\ln(s) + 1"
+            },
+            {
+              "type": "p",
+              "html": "<code>t</code> is the temperature, <code>s</code> the scale factor. At <code>s=1</code> (no extension) the right side is 1, so <code>t=1</code> &mdash; nothing changes. As <code>s</code> grows, the logits are scaled up slightly. This single empirical line works across scales, which is why YaRN ships as a recipe rather than a hyperparameter hunt."
+            },
+            {
+              "type": "p",
+              "html": "<b>So YaRN, fully assembled, is two moves:</b> NTK-by-parts frequency reshaping (keep fast clocks, interpolate slow clocks, ramp the middle) plus this length-dependent attention temperature. Both are pure functions of RoPE inputs &mdash; no new parameters, no new layers &mdash; which is precisely why the whole thing can be learned back with a few hundred fine-tuning steps."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "128k context on a 0.1% budget",
+          "subtitle": "Long-sequence perplexity and the efficiency win",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The experiment.</b> The authors fine-tune LLaMA 2 7B and 13B with YaRN to context windows of <b>64k</b> (scale <code>s=16</code>) and <b>128k</b> (scale <code>s=32</code>), then measure perplexity on long documents from the Proof-pile and GovReport datasets. Lower perplexity over long sequences means the model is genuinely using the far-away context, not just tolerating it."
+            },
+            {
+              "type": "p",
+              "html": "<b>The efficiency headline.</b> Reaching a 64k window took only <b>400 training steps</b> on roughly <b>0.1% of the original pretraining corpus</b> &mdash; the paper reports this as <b>10x fewer tokens and 2.5x fewer steps</b> than Position Interpolation needed for a comparable extension. For the 128k model they take a 64k YaRN checkpoint and continue for a further short run, reusing the work."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Extension method", "Train steps", "Context window"],
+              "rows": [
+                ["LLaMA 2 7B / 13B", "PI (baseline)", "~1000", "to 16k"],
+                ["LLaMA 2 7B / 13B", "YaRN", "400", "64k"],
+                ["LLaMA 2 7B / 13B", "YaRN (continued)", "+200", "128k"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The quality result.</b> Across the long-context evaluations, YaRN's perplexity stays low all the way out to the extended window and <i>keeps decreasing as context grows</i> &mdash; the signature of a model that actually reads further. It surpasses PI and NTK-aware baselines at the same or larger context lengths, while having seen a tiny fraction of the data."
+            },
+            {
+              "type": "quote",
+              "html": "YaRN successfully achieves context window extension of language models using RoPE embeddings ... reaching state-of-the-art performance with only 400 training steps, representing approximately 0.1% of the model's original pre-training corpus, a 10x reduction from previous work."
+            },
+            {
+              "type": "p",
+              "html": "<b>Transfer and extrapolation.</b> A notable bonus: because YaRN reshapes frequencies in a principled way, the fine-tuned models <b>extrapolate beyond their fine-tuning length</b> &mdash; a model trained to 64k still behaves sensibly somewhat past it, and the standardized benchmarks (with retrieval-style passkey tests) confirm the long-range information is truly accessible, not just unbroken perplexity."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why YaRN became the default recipe",
+          "subtitle": "Lineage, adoption, and what it taught the field",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The lineage in one breath.</b> RoPE (Su et al., 2021) gave models relative position by rotation. Position Interpolation (Chen et al., 2023) squeezed positions to fit a longer window but blurred local detail. NTK-aware spread the squeeze unevenly to protect fast frequencies. NTK-by-parts sorted frequencies into keep / interpolate / ramp. YaRN added the attention temperature and packaged all of it into a fine-tunable recipe. Each step fixed the previous step's blind spot &mdash; a clean example of method evolution driven by understanding <i>which information</i> a model can and cannot afford to lose."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it stuck.</b> The cost structure is what changed the game. Before YaRN, long context felt like a pretraining decision &mdash; expensive, upfront, hard to reverse. YaRN reframed it as a cheap post-training step: a few hundred steps on a sliver of data, no new parameters, no architecture surgery. That made long context something a small lab or hobbyist could do on existing checkpoints."
+            },
+            {
+              "type": "p",
+              "html": "<b>Adoption.</b> YaRN was released with open code and open weights (\"YaRN-Mistral 7B\" at 64k/128k, plus many community fine-tunes). The method shipped inside widely used inference stacks and config formats, where you still see a <code>rope_scaling</code> entry of type <code>\"yarn\"</code> with its <code>alpha</code>/<code>beta</code> and scale parameters."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Drop-in: modifies only RoPE, so it works on any RoPE-based model (LLaMA, Mistral, Qwen, and descendants).",
+                "Cheap: ~0.1% of pretraining tokens and a few hundred steps versus a full long-context pretrain.",
+                "Composable: combines naturally with the attention-temperature fix and with sliding-window or efficient-attention kernels.",
+                "Principled: the per-frequency treatment generalizes &mdash; it tells you not just how to scale, but which clocks to protect."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The lasting lesson.</b> YaRN's deeper contribution is conceptual: position embeddings carry information at <i>multiple scales at once</i>, and any context-extension scheme must respect that frequency structure rather than applying one uniform knob. That framing &mdash; treat high and low frequencies differently &mdash; shows up throughout later long-context work, and it is why \"just use YaRN\" became the reflexive answer to \"how do I make this model read longer?\""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

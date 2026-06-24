@@ -1,0 +1,289 @@
+{
+  "title": "The Era of 1-bit LLMs: BitNet b1.58",
+  "authors": "Ma, Wang, et al. (Microsoft)",
+  "year": "2024",
+  "venue": "arXiv:2402.17764",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Every weight is one of three values",
+          "subtitle": "What it means to run an LLM at 1.58 bits",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern large language models are mostly made of <b>matrix multiplications</b>: at every layer, the activations (the numbers flowing through the network) get multiplied by huge weight matrices stored in 16-bit floating point (FP16). Those weights are what make a 7-billion-parameter model take ~14 GB of memory and burn most of the energy, because a 16-bit multiply is an expensive operation in silicon. The question this paper asks is radical: <i>what if every weight could only be one of three values</i> &mdash; <code>-1</code>, <code>0</code>, or <code>+1</code>?"
+            },
+            {
+              "type": "p",
+              "html": "If a weight can only be <code>-1</code>, <code>0</code>, or <code>+1</code>, then multiplying an activation by it is no longer a multiply at all. It becomes: <i>keep the number, drop it, or flip its sign, then add</i>. The whole matrix multiplication collapses into <b>integer additions</b>. That is the entire promise of BitNet b1.58 &mdash; remove the multipliers from the heart of an LLM and you slash memory, latency, and energy at once."
+            },
+            {
+              "type": "p",
+              "html": "Why \"1.58 bits\"? A single ternary digit (a value with three possible states) carries $\\log_2 3 \\approx 1.58$ bits of information. So the title is literal: each weight stores about 1.58 bits, versus 16 bits in FP16 &mdash; roughly a <b>10&times; reduction</b> in how much information each weight holds. The surprise of the paper is that this barely costs you anything in quality once the model is big enough."
+            },
+            {
+              "type": "quote",
+              "html": "In this work, we introduce a 1-bit LLM variant, namely BitNet b1.58, in which every single parameter (or weight) of the LLM is ternary {-1, 0, 1}. It matches the full-precision (i.e., FP16 or BF16) Transformer LLM with the same model size and training tokens in terms of both perplexity and end-task performance, while being significantly more cost-effective in terms of latency, memory, throughput, and energy consumption."
+            },
+            {
+              "type": "p",
+              "html": "The headline claim is parity, not a trade-off. Starting from a <b>3B-parameter</b> model size, BitNet b1.58 matches a full-precision LLaMA-style model trained on the same tokens, while being <b>2.71&times; faster</b> and using <b>3.55&times; less GPU memory</b> at 3B. The paper frames this as a new <i>scaling law</i> and a new <i>compute paradigm</i> for designing future hardware optimized specifically for 1-bit LLMs."
+            },
+            {
+              "type": "p",
+              "html": "Context: this is the sequel to <b>BitNet</b> (Wang et al., 2023), which used <i>binary</i> {-1, +1} weights. The crucial addition here is the extra value <code>0</code>. That single change &mdash; going from 2 states to 3 &mdash; is what lets the model do explicit <i>feature filtering</i> (zeroing out a weight) and is, the authors argue, the reason b1.58 closes the gap to full precision that the original binary BitNet could not."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Ternary Weights",
+      "pages": [
+        {
+          "title": "The absmean quantization that produces -1, 0, +1",
+          "subtitle": "How a full-precision weight matrix is squashed into three values",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "BitNet b1.58 keeps the familiar Transformer skeleton but replaces every <code>nn.Linear</code> layer with a custom <code>BitLinear</code> layer. <code>BitLinear</code> is the only structural change: it takes a real-valued weight matrix, snaps it to ternary, and does the matmul in low precision. The model is <b>trained from scratch</b> this way &mdash; it is not a full-precision model that gets quantized afterward. So the network learns, from the very first step, to live inside the constraint that its weights are only <code>-1</code>, <code>0</code>, or <code>+1</code>."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition for the recipe.</b> You cannot just round each weight to the nearest of {-1, 0, +1} &mdash; most trained weights are tiny numbers like 0.03 or -0.07, so almost all of them would round to <code>0</code> and the layer would do nothing. The fix is to first <i>rescale</i> the whole matrix so its typical magnitude is around 1, and only then round. The natural scale to use is the average absolute value of the weights &mdash; hence the name <b>absmean</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Worked mini-example.</b> Take four weights <code>[0.6, -0.1, 0.05, -0.9]</code>. Their average absolute value is $\\gamma = (0.6 + 0.1 + 0.05 + 0.9)/4 = 0.4125$. Divide each by $\\gamma$: <code>[1.45, -0.24, 0.12, -2.18]</code>. Now round and clip to {-1, 0, +1}: <code>[+1, 0, 0, -1]</code>. The big positive weight became <code>+1</code>, the big negative became <code>-1</code>, and the two near-zero weights were filtered out to <code>0</code>. That filtering is exactly what binary BitNet could not do."
+            },
+            {
+              "type": "math",
+              "tex": "\\widetilde{W} = \\mathrm{RoundClip}\\!\\left(\\frac{W}{\\gamma + \\epsilon},\\, -1,\\, 1\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $W \\in \\mathbb{R}^{n\\times m}$ is the original full-precision weight matrix; $\\widetilde{W}$ is its ternary version with the same shape, every entry in $\\{-1, 0, +1\\}$. $\\gamma$ (defined below) is the average absolute value of $W$ &mdash; a single scalar for the whole matrix. Dividing $W$ by $\\gamma$ makes the typical entry have magnitude near 1. $\\epsilon$ is a tiny constant added to avoid dividing by zero. <code>RoundClip</code> rounds to the nearest integer and then clamps the result into the range $[-1, 1]$."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathrm{RoundClip}(x, a, b) = \\max\\!\\big(a,\\ \\min(b,\\ \\mathrm{round}(x))\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Here $x$ is the rescaled weight $W/(\\gamma+\\epsilon)$; $a=-1$ and $b=+1$ are the lower and upper clamps. $\\mathrm{round}(x)$ snaps $x$ to the nearest integer (so 1.45 &rarr; 1, -0.24 &rarr; 0, -2.18 &rarr; -2); $\\min(b, \\cdot)$ caps it at +1; $\\max(a, \\cdot)$ floors it at -1. The composition guarantees the output is one of exactly three integers, no matter how large $x$ was."
+            },
+            {
+              "type": "math",
+              "tex": "\\gamma = \\frac{1}{nm} \\sum_{ij} |W_{ij}|"
+            },
+            {
+              "type": "p",
+              "html": "This defines the scale $\\gamma$: $n$ and $m$ are the matrix dimensions, so $nm$ is the total number of weights; $|W_{ij}|$ is the absolute value of each entry; the sum over all $i,j$ divided by $nm$ is simply the <b>mean absolute value</b> of the matrix. One scalar, computed fresh from the current weights, sets the rounding threshold &mdash; weights well below $\\gamma$ in size become <code>0</code>, weights well above become $\\pm 1$."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a single scalar and not per-row scales?</b> A matrix-wide $\\gamma$ keeps the layer dead simple and the dequantization cheap (one multiply by $\\gamma$ after the integer matmul). The original binary BitNet used a similar absmean-style scale but had no <code>0</code> state; the only change here is widening the clamp from {-1, +1} to {-1, 0, +1}, which is why the authors call it a small modification with an outsized effect."
+            }
+          ]
+        },
+        {
+          "title": "Quantizing the activations to 8 bits",
+          "subtitle": "The other half of BitLinear, and the LLaMA-style components",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Ternary weights are only half the story. The numbers flowing <i>into</i> a layer &mdash; the activations &mdash; are still produced in higher precision, and if you multiply ternary weights by FP16 activations you still pay for FP16-grade arithmetic. So <code>BitLinear</code> also quantizes activations, here to <b>8-bit integers</b>. With ternary weights and 8-bit activations, the core operation becomes an INT8 add/accumulate &mdash; cheap and hardware-friendly."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition.</b> Activations are scaled <i>per token</i> rather than per whole tensor. Each token's activation vector is divided by its own maximum absolute value, so the largest entry maps to the edge of the 8-bit range and nothing overflows. Crucially, b1.58 does <b>not</b> rescale activations into a non-negative range $[0, Q_b]$ before nonlinearities the way the original BitNet did &mdash; it scales them symmetrically to $[-Q_b, Q_b]$. Dropping the zero-point offset removes a special case and works just as well in practice."
+            },
+            {
+              "type": "quote",
+              "html": "The quantization function for activations follows the same implementation in BitNet, except that we do not scale the activations before the non-linear functions to the range [0, Qb]. Instead, the activations are all scaled to [-Qb, Qb] per token to get rid of the zero-point quantization."
+            },
+            {
+              "type": "p",
+              "html": "Here $Q_b$ is the integer range bound for $b$-bit quantization &mdash; for 8-bit activations $Q_b = 2^{7} = 128$, so values land in $[-128, 128]$. <i>Per token</i> means the scaling factor is computed separately for every token's activation vector, using that vector's own max absolute value, rather than one factor shared across the batch. This keeps each token's dynamic range fully used."
+            },
+            {
+              "type": "p",
+              "html": "<b>Borrowing the LLaMA recipe.</b> To make b1.58 a drop-in, open-source-friendly replacement, the authors adopt the components that the LLaMA family standardized: <b>RMSNorm</b> for normalization, <b>SwiGLU</b> for the feed-forward activation, <b>rotary position embeddings (RoPE)</b>, and <b>no bias terms</b> in the linear layers. Only the <code>nn.Linear</code> calls are swapped for <code>BitLinear</code>; everything else matches LLaMA so the model integrates into existing tooling (like Hugging Face and inference kernels) with minimal friction."
+            },
+            {
+              "type": "quote",
+              "html": "BitNet b1.58 adopts the LLaMA-alike components. Specifically, it uses RMSNorm, SwiGLU, rotary embedding, and removes all biases. In this way, BitNet b1.58 can be integrated into the popular open-source software (e.g., Huggingface, vLLM, and llama.cpp) with (almost) no efforts."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why train from scratch instead of post-training quantization?</b> Snapping a finished FP16 model to ternary destroys it &mdash; the rounding error per weight is enormous relative to the weight. By training with <code>BitLinear</code> from step one (using straight-through estimation so gradients flow past the non-differentiable round), the network learns weight distributions that <i>survive</i> ternarization. The model adapts to the constraint rather than being violated by it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Why 1.58 Bits Pays Off",
+      "pages": [
+        {
+          "title": "Adds instead of multiplies: the energy argument",
+          "subtitle": "Where the cost savings actually come from",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "It is worth pausing on <i>why</i> ternary weights are cheap, because the savings are physical, not just a smaller file. In silicon, a floating-point multiply is far more expensive than an integer add &mdash; it needs more transistors, more area, and more energy per operation. A matrix multiplication is billions of these multiply-accumulate operations. Remove the multiplies and you remove the dominant energy cost."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete numbers.</b> The paper points to the arithmetic-energy gap directly: on 7nm chips, an FP16 multiply-add costs far more than an INT8 add. Because b1.58's matmul is essentially additions, the authors report that the matrix-multiplication arithmetic alone is about <b>71.4&times; cheaper</b> in energy than the FP16 baseline at 7nm."
+            },
+            {
+              "type": "quote",
+              "html": "The results show that BitNet b1.58 saves 71.4 times arithmetic operations energy consumption for matrix multiplication on 7nm chips. ... As the model size scales, BitNet b1.58 becomes more and more efficient in terms of energy consumption."
+            },
+            {
+              "type": "p",
+              "html": "<b>The trade-off being made.</b> You are spending <i>representational precision</i> (16 bits &rarr; 1.58 bits per weight) to buy <i>arithmetic simplicity</i> (multiply &rarr; add) and <i>memory</i> (10&times; fewer bits to store and move). For LLM inference, memory bandwidth and energy are usually the binding constraints, not weight precision &mdash; which is exactly why this trade pays off rather than wrecking the model."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the original binary BitNet left quality on the table.</b> Binary {-1, +1} weights can flip sign but can never say \"ignore this feature.\" The added <code>0</code> in b1.58 gives the model explicit <i>feature filtering</i> &mdash; it can zero out a connection entirely. The authors argue this is the key reason b1.58 reaches full-precision quality while pure-binary models did not, all while keeping the multiply-free arithmetic."
+            },
+            {
+              "type": "quote",
+              "html": "There are two major advantages... its modeling capability is stronger due to its explicit support for feature filtering, made possible by the inclusion of 0 in the model weights, which can significantly improve the performance of 1-bit LLMs."
+            },
+            {
+              "type": "p",
+              "html": "<b>The hardware vision.</b> Because the operation is no longer a general matmul, the paper explicitly calls for <i>new hardware</i> &mdash; chips designed for 1-bit LLMs, where the multiply-free, ternary structure is baked into the silicon. This reframes the result: BitNet b1.58 is not just a smaller model, it is an argument for a different computing substrate. It anticipated later 1-bit inference kernels and the <code>bitnet.cpp</code> ecosystem."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Matching FP16 quality from 3B onward",
+          "subtitle": "Perplexity, accuracy, and the crossover point",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The acid test: does a ternary model actually <i>think</i> as well as a full-precision one? The authors train BitNet b1.58 and a reproduced FP16 LLaMA LLM under identical conditions (same data, the RedPajama corpus, same tokens) at 700M, 1.3B, 3B, and 3.9B parameters, then compare <b>perplexity</b> (lower is better) on validation text and accuracy on end tasks like ARC, HellaSwag, PIQA, and WinoGrande."
+            },
+            {
+              "type": "p",
+              "html": "<b>The crossover.</b> At small sizes the ternary model is slightly behind; by <b>3B it pulls level and then ahead</b>. This is the central empirical claim &mdash; the gap to full precision does not just shrink, it closes and reverses once the model is big enough, all while b1.58 is dramatically cheaper to run."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Size", "Memory (GB)", "Latency (ms)", "PPL"],
+              "rows": [
+                ["LLaMA LLM", "700M", "2.08 (1.00x)", "1.18 (1.00x)", "12.33"],
+                ["BitNet b1.58", "700M", "0.80 (2.60x)", "0.96 (1.23x)", "12.87"],
+                ["LLaMA LLM", "1.3B", "3.34 (1.00x)", "1.62 (1.00x)", "11.25"],
+                ["BitNet b1.58", "1.3B", "1.14 (2.93x)", "0.97 (1.67x)", "11.29"],
+                ["LLaMA LLM", "3B", "7.89 (1.00x)", "5.07 (1.00x)", "10.04"],
+                ["BitNet b1.58", "3B", "2.22 (3.55x)", "1.87 (2.71x)", "9.91"],
+                ["BitNet b1.58", "3.9B", "2.38 (3.32x)", "2.11 (2.40x)", "9.62"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the 3B row carefully: BitNet b1.58 at 3B reaches perplexity <b>9.91</b> versus LLaMA's <b>10.04</b> (so b1.58 is <i>better</i>), while using <b>3.55&times; less memory</b> (2.22 GB vs 7.89 GB) and being <b>2.71&times; faster</b> (1.87 ms vs 5.07 ms per token). The 3.9B variant is cheaper than the 3B FP16 baseline yet beats it on perplexity outright (9.62)."
+            },
+            {
+              "type": "quote",
+              "html": "BitNet b1.58 starts to match full precision LLaMA LLM at 3B model size in terms of perplexity, while being 2.71 times faster and using 3.55 times less GPU memory. In particular, BitNet b1.58 with a 3.9B model size is 2.4 times faster, consumes 3.32 times less memory, but performs significantly better than LLaMA LLM 3B."
+            },
+            {
+              "type": "p",
+              "html": "On the zero-shot end tasks the same picture holds: the 3.9B b1.58 model's average accuracy across ARC-easy, ARC-challenge, HellaSwag, BoolQ, OpenbookQA, PIQA, and WinoGrande surpasses the 3B FP16 LLaMA baseline &mdash; quality and efficiency improving together rather than trading off."
+            }
+          ]
+        },
+        {
+          "title": "Memory, latency, throughput, and energy at scale",
+          "subtitle": "The savings grow with model size",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Because b1.58 stores 1.58-bit weights instead of 16-bit ones, and because it moves and computes far less data, every efficiency metric improves <i>more</i> as the model grows. The bigger the model, the wider the gap to FP16 &mdash; which is the opposite of how most efficiency tricks behave (they usually fade at scale)."
+            },
+            {
+              "type": "p",
+              "html": "<b>Latency and memory.</b> The decoding latency and memory gaps widen with size: from a 1.23&times; speedup at 700M up to <b>4.1&times; faster and 7.16&times; less memory at 70B</b>. The reason is that a larger model has more weights, so the per-weight savings from dropping FP16 multipliers and shrinking storage compound."
+            },
+            {
+              "type": "table",
+              "headers": ["Comparison (70B)", "BitNet b1.58 vs LLaMA"],
+              "rows": [
+                ["Max batch size", "11x larger"],
+                ["Throughput (tokens/s)", "8.9x higher"],
+                ["Decoding latency", "4.1x faster"],
+                ["Memory", "7.16x less"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Throughput is the dramatic one.</b> Because ternary weights free up so much GPU memory, far more sequences fit in memory at once. At 70B, b1.58 supports an <b>11&times; larger batch size</b>, which translates to <b>8.9&times; higher throughput</b> (tokens per second). For serving, throughput-per-dollar is what matters, and an 8.9&times; jump is transformative."
+            },
+            {
+              "type": "quote",
+              "html": "BitNet b1.58 70B can support up to 11 times the batch size of LLaMA LLM, resulting in 8.9 times higher throughput."
+            },
+            {
+              "type": "p",
+              "html": "<b>Energy.</b> The end-to-end energy savings also scale: the multiply-free matmul arithmetic is ~71.4&times; cheaper on 7nm, and at the model level a 70B b1.58 model uses roughly <b>41.2&times; less arithmetic energy</b> than its FP16 counterpart at 7nm. Bigger model, bigger gap &mdash; again because more of the total compute is matrix multiplication, exactly the part b1.58 makes nearly free."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "A new scaling law and a call for 1-bit hardware",
+          "subtitle": "What BitNet b1.58 changed",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The deepest claim of the paper is not any single number &mdash; it is a reframing of the efficiency&ndash;quality frontier. Conventional wisdom said extreme low-bit weights cost real accuracy. BitNet b1.58 shows that, trained from scratch at scale, ternary weights sit on a strictly <b>better</b> Pareto curve: you get FP16-level quality at a fraction of the memory, latency, and energy."
+            },
+            {
+              "type": "p",
+              "html": "<b>A new scaling law.</b> The authors propose thinking in terms of equivalences: a 13B b1.58 model is more efficient (latency, memory, energy) than a 3B FP16 model; a 30B b1.58 beats a 7B FP16; a 70B b1.58 beats a 13B FP16. In other words, ternary models let you climb the size ladder for the same cost budget &mdash; a different scaling law for the LLM era."
+            },
+            {
+              "type": "quote",
+              "html": "BitNet b1.58 enables a new scaling law with respect to model performance and inference cost. ... it defines a new computation paradigm and calls for actions to design new hardware optimized for 1-bit LLMs."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters for the field.</b> It descends directly from the quantization and binary-network lineage &mdash; BinaryConnect, XNOR-Net, and the authors' own original BitNet &mdash; but is the first to reach <i>full-precision parity</i> on real LLMs at billion-parameter scale. The single design choice that made it work was widening binary {-1, +1} to ternary {-1, 0, +1}, granting the model the ability to filter features by zeroing weights."
+            },
+            {
+              "type": "p",
+              "html": "<b>Beyond inference cost.</b> The paper sketches further consequences: 1-bit LLMs make long-sequence inference cheaper (activations are the main remaining memory cost, and 8-bit activations could shrink toward 4-bit), make capable LLMs feasible on <b>edge and mobile</b> CPUs, and motivate purpose-built <i>1-bit accelerators</i> &mdash; chips whose ALUs are designed around ternary multiply-free arithmetic from the ground up."
+            },
+            {
+              "type": "p",
+              "html": "<b>The legacy.</b> \"The Era of 1-bit LLMs\" became a rallying title. It launched a research thread (BitNet a4.8 with 4-bit activations, native 1-bit training, the open <code>bitnet.cpp</code> inference runtime) and reframed an open question for the whole field: not <i>how small can we compress a trained model</i>, but <i>how cheaply can we train a model that was 1-bit from the start</i> &mdash; and have it lose nothing."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

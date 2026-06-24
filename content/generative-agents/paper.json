@@ -1,0 +1,375 @@
+{
+  "title": "Generative Agents: Interactive Simulacra of Human Behavior",
+  "authors": "Park, et al. (Stanford)",
+  "year": "2023",
+  "venue": "arXiv:2304.03442",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Twenty-five characters who actually remember",
+          "subtitle": "What if NPCs had a life of their own?",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Think about the non-player characters in a video game. They stand in one spot, repeat the same three lines forever, and forget you the instant you walk away. They have no past and no plans. This paper asks a simple but radical question: <b>what if the characters in a simulated world actually behaved like people?</b> What if a character woke up, made coffee, remembered that yesterday a neighbor mentioned a party, decided to invite a friend, and then actually showed up?"
+            },
+            {
+              "type": "p",
+              "html": "The authors call these <b>generative agents</b>: software characters that <i>simulate believable human behavior</i>. They build a tiny town called <b>Smallville</b>, populate it with <b>25 agents</b>, and let them run. Each agent is driven by a large language model (the paper uses <code>ChatGPT / gpt-3.5-turbo</code>), but the LLM alone is not enough — a raw language model has no persistent memory and no sense of time. The contribution is the <i>architecture wrapped around</i> the LLM that gives it those things."
+            },
+            {
+              "type": "quote",
+              "html": "Generative agents wake up, cook breakfast, and head to work; artists paint, while authors write; they form opinions, notice each other, and initiate conversations; they remember and reflect on days past as they plan the next day."
+            },
+            {
+              "type": "p",
+              "html": "The headline result is <b>emergent social behavior</b>. The researchers seeded a single idea — one agent, Isabella Rodriguez, wants to throw a Valentine's Day party — and then did nothing else. Over two simulated days the invitation <i>spread on its own</i> through conversations, agents asked each other on dates, coordinated to show up at the right time, and the party happened. Nobody scripted any of that."
+            },
+            {
+              "type": "p",
+              "html": "Why does this matter? Believable proxies of human behavior are useful far beyond games: rehearsing how a crowd reacts in a new public space, prototyping social software before launch, or building NPCs that feel alive. This paper's three ideas — a <b>memory stream</b>, <b>reflection</b>, and <b>planning</b> — became a template that shows up in nearly every LLM-agent system built since."
+            },
+            {
+              "type": "p",
+              "html": "Roadmap for this lesson: first the world and what “believable” means, then the three architectural pieces one page at a time (memory + retrieval, reflection, planning + reacting), then the Valentine's party and the controlled evaluations with real numbers, and finally the impact."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The World",
+      "pages": [
+        {
+          "title": "Smallville and the believability bar",
+          "subtitle": "A sandbox town, natural language as the interface",
+          "pdfPages": [2, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before any architecture, you need a stage. The agents live in <b>Smallville</b>, a small sandbox town built in a game engine: houses, a cafe (Hobbs Cafe), a bar, a pharmacy/store, a college, a park, and shared spaces. Each agent is described to the system in <i>one paragraph of plain English</i> — their name, occupation, relationships, and what they care about. That paragraph is the only “code” a designer writes per character."
+            },
+            {
+              "type": "quote",
+              "html": "John Lin is a pharmacy shopkeeper at the Willow Market and Pharmacy who loves to help people. He is always looking for ways to make the process of getting medication easier for his customers; John Lin is living with his wife, Mei Lin, who is a college professor, and son, Eddy Lin, who is a student studying music theory; John Lin loves his family very much..."
+            },
+            {
+              "type": "p",
+              "html": "Everything the agent does, and everything it perceives, is expressed in <b>natural language</b>. The agent outputs an action as a sentence (“Isabella Rodriguez is writing in her journal”), and the engine translates that into concrete movements and a little emoji over the character's head. The world translates back too: nearby objects and other agents are described to the agent as text it can perceive. Language is the universal interface — this is what lets a general-purpose LLM drive a character at all."
+            },
+            {
+              "type": "p",
+              "html": "Agents also <b>talk to each other in full natural-language dialogue</b>, and a human user can step in, talk to any agent, or even possess one and intervene. Objects have states too: a stove can be “on,” a bed can be “occupied,” so the world is more than scenery — it is something agents change and react to."
+            },
+            {
+              "type": "h2",
+              "text": "What does “believable” even mean?"
+            },
+            {
+              "type": "p",
+              "html": "The whole project hinges on a fuzzy word: <b>believable</b>. The authors pin it down through requirements drawn from decades of work on believable agents in HCI and games. A believable agent must produce behavior that is <i>individually consistent</i> (the same character today as yesterday), <i>reactive</i> to a changing environment, and able to <i>plan over long horizons</i> — not just react moment to moment, but remember the morning by the time evening comes."
+            },
+            {
+              "type": "p",
+              "html": "The hard part is the <b>time horizon</b>. A whole simulated day produces a flood of experiences — far more than fits in any LLM's context window. So the central engineering problem becomes: how do you let an agent <i>remember a lifetime</i> but only <i>think with the handful of memories that matter right now</i>? That tension is exactly what the memory stream is built to solve, and it is the next page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Memory & Retrieval",
+      "pages": [
+        {
+          "title": "The memory stream: recency, importance, relevance",
+          "subtitle": "Remember everything, recall only what matters",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "An LLM's context window is tiny compared to a lifetime. Run an agent for one day and it accumulates hundreds of observations; run it longer and you have thousands. You cannot paste all of them into a prompt. But you also cannot throw them away — a believable agent has to remember that it met someone an hour ago, or that the cafe was closed yesterday. The <b>memory stream</b> is the solution: a long, append-only list of every experience, plus a smart way to fetch only the few entries relevant to the present moment."
+            },
+            {
+              "type": "p",
+              "html": "Each entry is a <b>memory object</b>: a natural-language description, a creation timestamp, and a most-recent-access timestamp. Example entries: “Isabella Rodriguez is setting out the pastries,” “Isabella Rodriguez and Maria Lopez are conversing about decorating the party.” When the agent needs to act, the system does not dump the whole stream into the prompt — it <b>retrieves</b> a small high-value subset using a score over three components."
+            },
+            {
+              "type": "h2",
+              "text": "The retrieval score"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{score} = \\alpha_{\\text{recency}} \\cdot \\text{recency} + \\alpha_{\\text{importance}} \\cdot \\text{importance} + \\alpha_{\\text{relevance}} \\cdot \\text{relevance}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term. Each candidate memory gets three sub-scores, each normalized to <code>[0,1]</code> via min-max scaling, then combined as a weighted sum. The weights <i>α</i> let you tune what dominates; in all of the paper's experiments they are simply set to <b>α<sub>recency</sub> = α<sub>importance</sub> = α<sub>relevance</sub> = 1</b>, so all three count equally. The top-ranked memories that fit in the context window are passed to the LLM."
+            },
+            {
+              "type": "h2",
+              "text": "1. Recency — recent things weigh more"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{recency} = (0.995)^{\\,\\Delta t}"
+            },
+            {
+              "type": "p",
+              "html": "<i>Δt</i> is the number of <b>game hours</b> since the memory was last accessed. <code>0.995</code> is an <b>exponential decay factor</b> just under 1, so a memory accessed many hours ago scores near 0, while one just touched scores near 1. Using <i>last-accessed</i> time (not just creation time) means a memory you keep recalling stays “warm” — it does not fade as long as it is useful."
+            },
+            {
+              "type": "h2",
+              "text": "2. Importance — ask the LLM how big a deal it was"
+            },
+            {
+              "type": "p",
+              "html": "Not all memories deserve equal weight. “Brushing teeth” is mundane; “breaking up with a partner” is pivotal. Instead of hand-coding rules, the system simply <b>asks the language model to rate poignancy on a 1–10 scale</b> when the memory is created, and stores that number. The paper's prompt: rate “cleaning up the room” and you'd get a low score; rate “asking your crush out on a date” and you'd get a high one."
+            },
+            {
+              "type": "quote",
+              "html": "On the scale of 1 to 10, where 1 is purely mundane (e.g., brushing teeth, making bed) and 10 is extremely poignant (e.g., a break up, college acceptance), rate the likely poignancy of the following piece of memory. Memory: buying groceries at The Willows Market and Pharmacy. Rating: <output> 3"
+            },
+            {
+              "type": "h2",
+              "text": "3. Relevance — does it relate to right now?"
+            },
+            {
+              "type": "p",
+              "html": "Relevance asks: how related is this memory to the <i>current situation</i>? Both the query (the agent's present context) and every memory are turned into <b>embedding vectors</b> with a text-embedding model, and relevance is the <b>cosine similarity</b> between the query vector and the memory's vector. If the agent is thinking about chemistry, memories about lab work and the chemistry professor surface; memories about doing laundry stay buried."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why three components and not one?</b> Each alone fails. Recency alone forgets important old facts. Importance alone surfaces dramatic but irrelevant memories. Relevance alone ignores time entirely — it would happily resurface a one-off chat from a week ago over what just happened. Combined, they approximate the way human recall blends <i>recent</i>, <i>significant</i>, and <i>on-topic</i>. The authors confirm this in an ablation (results pages)."
+            }
+          ]
+        },
+        {
+          "title": "Reflection: turning observations into beliefs",
+          "subtitle": "A memory tree that lets agents form opinions",
+          "pdfPages": [10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Raw observations are not enough. An agent that only ever stores literal events (“Klaus is reading,” “Klaus is at the library again”) can answer factual questions but cannot form <b>higher-level conclusions</b> like “Klaus Mueller is deeply dedicated to his research.” Without that, agents come across as shallow. The authors found that purely observational agents made odd, inconsistent decisions — they never synthesized."
+            },
+            {
+              "type": "p",
+              "html": "<b>Reflection</b> is a second, more abstract kind of memory the agents generate themselves. A reflection is a synthesized belief, stored in the memory stream just like an observation, so it can be retrieved later — and reflections can even reflect on other reflections, building a tree of increasingly abstract thought."
+            },
+            {
+              "type": "h2",
+              "text": "When does an agent reflect?"
+            },
+            {
+              "type": "p",
+              "html": "Reflecting on every observation would be wasteful, and never reflecting leaves the agent shallow. The trigger is <b>accumulated significance</b>: the system sums the importance scores of the most recent events, and when that sum crosses a threshold the authors set to <b>150</b>, a reflection round fires. In practice this happens roughly <b>two or three times a day</b> — the agent pauses to make sense of a busy stretch of life."
+            },
+            {
+              "type": "h2",
+              "text": "How a reflection is generated"
+            },
+            {
+              "type": "p",
+              "html": "It is a two-step prompt chain. <b>Step 1:</b> take the 100 most recent memories and ask the LLM, “Given only the information above, what are 3 most salient high-level questions we can answer about the subjects in the statements?” The model might return questions like “What is Klaus Mueller passionate about?”"
+            },
+            {
+              "type": "p",
+              "html": "<b>Step 2:</b> use each generated question as a <i>retrieval query</i> against the memory stream, gather the relevant memories, and ask the LLM to extract insights and cite the evidence. The output is a reflection plus pointers to the observations that support it."
+            },
+            {
+              "type": "quote",
+              "html": "Statements about Klaus Mueller: 1. Klaus Mueller is writing a research paper ... 4. The library where Klaus Mueller is doing research is closed until 2pm ... What 5 high-level insights can you infer from the above statements? (example format: insight (because of 1, 5, 3)) → Klaus Mueller is dedicated to his research on gentrification (because of 1, 2, 8, 15)."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why store reflections in the same stream?</b> Because the retrieval machinery from the previous page works on them for free. A reflection has importance, recency, and relevance like any memory, so a high-level belief (“Klaus cares about gentrification”) can surface in a future conversation exactly when it is relevant. Reflection is what lets agents have <i>opinions</i> and act consistently with them — the difference between a character that lists facts and one that has a personality."
+            }
+          ]
+        },
+        {
+          "title": "Planning and reacting",
+          "subtitle": "Top-down plans that survive interruptions",
+          "pdfPages": [11, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Memory and reflection give an agent a past. <b>Planning</b> gives it a coherent future. Without it, an agent driven moment-to-moment by an LLM does locally sensible but globally absurd things — the canonical failure is <b>eating lunch at noon, then deciding to eat lunch again at 12:30</b> because each decision is made in isolation. A plan keeps the day consistent: it describes a sequence of actions with locations and times, and it lives in the memory stream so it can be retrieved and respected."
+            },
+            {
+              "type": "h2",
+              "text": "Plans are built top-down, then refined"
+            },
+            {
+              "type": "p",
+              "html": "The agent does not plan minute by minute from scratch — that would be incoherent and expensive. It plans <b>recursively, coarse to fine</b>. First the LLM is given the agent's one-paragraph identity and a summary of yesterday, and asked to sketch the day in about <b>5–8 broad strokes</b>:"
+            },
+            {
+              "type": "quote",
+              "html": "1) wake up and complete the morning routine at 6:00 am, 2) go to Oak Hill College to take classes starting 10:00 am, [...] 5) work on his new music composition from 1:00 pm to 5:00 pm, 6) have dinner at 5:30 pm, 7) finish school assignments and go to bed by 11:00 pm."
+            },
+            {
+              "type": "p",
+              "html": "Then it <b>recurses</b>: each broad stroke is decomposed into hour-long chunks, and those into 5–15 minute actions. “Work on music composition, 1:00–5:00 pm” becomes “1:00 pm: brainstorm ideas; 1:30 pm: take a break,” and so on. Coarse-to-fine keeps the whole day cheap and consistent while still producing fine-grained moment-to-moment behavior."
+            },
+            {
+              "type": "h2",
+              "text": "Reacting: plans are not a straitjacket"
+            },
+            {
+              "type": "p",
+              "html": "A plan made in the morning cannot anticipate that you'll bump into a friend at lunch. At every step the agent <b>perceives</b> its surroundings and the LLM decides whether to continue the current plan or <b>react</b>. The prompt feeds in the observation plus a summary of the agent's relationship to whatever it observed and asks: should the agent react, and if so, how? If it reacts (say, by starting a conversation), the system <b>regenerates the plan from that point forward</b> so the rest of the day stays consistent with the detour."
+            },
+            {
+              "type": "quote",
+              "html": "Should John react to the observation, and if so, what would be an appropriate reaction?"
+            },
+            {
+              "type": "h2",
+              "text": "Dialogue is memory-grounded too"
+            },
+            {
+              "type": "p",
+              "html": "When two agents talk, each utterance is generated by conditioning on their <b>memories of each other</b> and the conversation so far. That is why two agents who met yesterday can pick up a thread today, and why an invitation can ripple outward: the listener stores the news as a memory, and it resurfaces (via relevance) the next time the topic comes up. Perceive → retrieve → plan/react → act → store: that loop, run every tick, is the entire agent."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Emergent behavior: the Valentine's party",
+          "subtitle": "One seed, two days, a town that organizes itself",
+          "pdfPages": [1, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The flagship demonstration is a single end-to-end test. The researchers gave <b>exactly one</b> agent, <b>Isabella Rodriguez</b> (who runs Hobbs Cafe), an intention: throw a Valentine's Day party at the cafe from 5–7 pm on February 14th. That is the <i>only</i> intervention. No other agent was told anything. Then the simulation ran for two days and they watched."
+            },
+            {
+              "type": "p",
+              "html": "What emerged was an unscripted chain of <b>social coordination</b>. Isabella told customers and friends. Those agents remembered it, mentioned it to others, and the invitation <b>spread through word of mouth</b>. Agents asked each other to be their dates. And on the 14th, agents who had heard about it <i>autonomously showed up</i> at the cafe at the right time — because their plans had been updated to include it."
+            },
+            {
+              "type": "table",
+              "headers": ["Emergent outcome", "Result"],
+              "rows": [
+                ["Agents who heard about the party (of 25)", "spread by word of mouth, no scripting"],
+                ["Agents who showed up at Hobbs Cafe", "5 of 12 invitees actually attended"],
+                ["New relationships formed", "agents asked each other on dates"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The paper traces concrete examples. <b>Maria Lopez</b>, who has a crush on Klaus, heard about the party from Isabella, decided to ask <b>Klaus Mueller</b> to go with her, and did. Of the 12 agents who heard about the party and were invited, <b>5 showed up</b> — the authors note this mirrors real life, where most invitations don't convert, and they followed up to learn that the no-shows had conflicting plans or simply forgot, not that the system broke."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the right demo.</b> Information diffusion, relationship formation, and coordination are exactly the behaviors you cannot hand-script for 25 agents — they have to <i>arise</i> from individual agents perceiving, remembering, and planning. The party is proof that the architecture composes into something social, not just 25 isolated routines running in parallel."
+            }
+          ]
+        },
+        {
+          "title": "Evaluations and ablations",
+          "subtitle": "Interviews, TrueSkill rankings, and what breaks when you remove a piece",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Anecdotes are not evidence, so the authors ran two controlled studies. The core method is the <b>agent interview</b>: pose natural-language questions to an agent — about its self-knowledge, its memory of events, its plans, its reactions, and its reflections — and have human evaluators judge how believable the answers are. Human crowdworkers ranked the conditions and the results were aggregated with the <b>TrueSkill</b> rating system."
+            },
+            {
+              "type": "h2",
+              "text": "The ablation: remove one ingredient at a time"
+            },
+            {
+              "type": "p",
+              "html": "To prove each architectural piece earns its keep, they compared the full agent against three ablations and a human-authored baseline (a crowdworker writing the character's behavior). Each ablation deletes one part of the memory access — <b>no reflection</b>, <b>no reflection and no planning</b>, and <b>no memory access at all</b>. The clean finding: <b>the full architecture wins, and performance drops monotonically as you remove pieces.</b>"
+            },
+            {
+              "type": "table",
+              "headers": ["Condition", "Believability (TrueSkill rank)"],
+              "rows": [
+                ["Full architecture (memory + reflection + planning)", "best"],
+                ["No reflection", "worse"],
+                ["No reflection, no planning", "worse still"],
+                ["No memory (LLM only)", "worst"],
+                ["Human-authored baseline (crowdworker)", "below full architecture"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The most striking line: the <b>full generative agents were rated more believable than the human-authored baseline</b>. When a crowdworker hand-wrote what a character would do, the result was <i>less</i> convincing than what the architecture produced — because the architecture grounds every action in a consistent, retrievable history that a human writing in one sitting struggles to maintain."
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks without each piece.</b> Remove memory and the agent contradicts itself and forgets people. Add memory but remove planning and you get the noon-lunch-twice incoherence — locally fine, globally broken. Add planning but remove reflection and the agent has no opinions or synthesized beliefs, so it reacts plausibly but feels hollow. Each layer fixes a specific failure the layer below cannot."
+            },
+            {
+              "type": "h2",
+              "text": "Boundaries and failure modes"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Memory retrieval misses:</b> sometimes the right memory simply isn't fetched, so the agent embellishes or acts as if it never happened.",
+                "<b>Over-formal speech:</b> agents were sometimes too polite or cooperative — e.g. treating a normally rowdy bar like a formal venue — reflecting the underlying model's tuning.",
+                "<b>Instruction-tuning leakage:</b> the cooperative, agreeable style of the base LLM colored the agents' personalities.",
+                "<b>Cost and speed:</b> every action is an LLM call, so long simulations are expensive — a real constraint on scaling beyond 25 agents."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why generative agents mattered",
+          "subtitle": "The template behind modern LLM agents",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The lasting lesson is an architectural one. A large language model is a powerful but <b>stateless and timeless</b> reasoner. This paper showed that the path to long-horizon, believable behavior is not a bigger model — it is <b>wrapping the model in external structure</b>: a memory it can write to and search, a reflection step that turns experience into beliefs, and a planning loop that keeps behavior coherent across time. That decomposition — <i>perceive, retrieve, reflect, plan, act, remember</i> — is now the default blueprint for LLM agents."
+            },
+            {
+              "type": "p",
+              "html": "The <b>retrieval score</b> in particular — combining recency, importance, and relevance — directly anticipated the memory modules in later agent frameworks and the broader rise of <b>retrieval-augmented</b> systems. The idea that an agent should <i>ask the LLM to rate the importance of its own experiences</i> and <i>generate its own reflections</i> showed that the model could supervise its own memory, a pattern reused everywhere from autonomous-agent projects to long-running assistants."
+            },
+            {
+              "type": "h2",
+              "text": "Applications the authors point to"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Social prototyping:</b> test how a community of agents responds to a new policy, product, or public space before involving real people.",
+                "<b>Believable NPCs:</b> game and virtual-world characters with memory, opinions, and lives of their own.",
+                "<b>Human-centered design:</b> rehearse interpersonal situations — a difficult conversation, a crowd scenario — in a sandbox populated by plausible humans.",
+                "<b>A testbed for social science:</b> a controllable population in which to probe how information, norms, and relationships spread."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Risks the paper raises"
+            },
+            {
+              "type": "p",
+              "html": "The authors are explicit about danger. Believable human proxies can <b>deepen parasocial attachment</b>, be used for <b>persuasion or astroturfing</b>, and lull people into over-trusting a system that is still just predicting text. They argue for <b>keeping the human in the loop</b>, watermarking or clearly disclosing generated behavior, and auditing agents for bias — the same model biases that shape a chatbot also shape a town full of these characters."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in history.</b> Generative Agents arrived in early 2023, right after <code>ChatGPT</code> made capable LLMs cheap to call in a loop, and it became one of the most cited demonstrations that LLMs could power <i>autonomous, stateful agents</i> rather than one-shot chatbots. The Smallville town, the memory stream, and the reflection tree are now standard reference points — the paper turned “LLM + memory + planning loop” from a research curiosity into the shape of an entire field."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

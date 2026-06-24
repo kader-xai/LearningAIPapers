@@ -1,0 +1,373 @@
+{
+  "title": "OLMo: Accelerating the Science of Language Models",
+  "authors": "Groeneveld, et al. (AI2)",
+  "year": "2024",
+  "venue": "arXiv:2402.00838",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Open weights are not open science",
+          "subtitle": "Why a truly open LM matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2024 the most capable language models were either fully closed (you can call an API but never see the weights) or, at best, <i>open-weight</i> (LLaMA, Falcon, Mistral release the trained model but hide the training data, the data-cleaning code, the training logs, and the evaluation harness). The authors argue this is a problem for <b>science</b>, not just for hobbyists. If you cannot see what data went in, you cannot answer basic research questions: Why does the model memorize this fact? Why is it biased here? Did a benchmark leak into pretraining? Open weights let you <i>use</i> a model; they do not let you <i>study</i> how it came to be."
+            },
+            {
+              "type": "p",
+              "html": "<b>The analogy.</b> Imagine a chemistry paper that hands you a vial of the final compound but refuses to tell you the reagents, the temperatures, or the reaction steps. You can sniff the vial, but you cannot reproduce it, vary one ingredient, or explain why it formed. That is an open-weight model. OLMo instead ships the whole lab notebook: the data, the recipe, and every intermediate snapshot."
+            },
+            {
+              "type": "p",
+              "html": "<b>What OLMo (Open Language Model) releases.</b> Built by the Allen Institute for AI (AI2), OLMo is a fully open 7B-parameter LM where <i>everything</i> needed to reproduce and dissect the model is public:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "The <b>full training data</b> — the 3-trillion-token Dolma corpus — plus the code that produced it.",
+                "The <b>model weights</b> at 1B and 7B scale, and a 65B model in progress.",
+                "<b>Intermediate checkpoints</b> — over 500 snapshots saved roughly every 1000 steps — so you can watch capabilities emerge during training.",
+                "The complete <b>training, data, and evaluation code</b>, plus training logs and Weights & Biases metrics.",
+                "Adapted (instruction-tuned and RLHF) variants and the inference code."
+              ]
+            },
+            {
+              "type": "quote",
+              "html": "We believe that full access to these resources will enable the open research community... We hope OLMo and the framework will be the first of many steps to empower the open research community and inspire a new wave of innovation."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the contribution.</b> OLMo-7B is competitive with LLaMA 2, Falcon, and MPT — but the paper's real product is not a leaderboard win. It is a <i>reproducible artifact pipeline</i>: a state-of-the-art LM you can rebuild from raw data and audit at every step. The title says it plainly — the goal is to <b>accelerate the science</b> of language models, not just to release another model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "A deliberately conventional Transformer",
+          "subtitle": "Decoder-only, with carefully chosen modern tweaks",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question this page answers.</b> If your goal is <i>science</i>, what architecture should you pick? The temptation is to invent something novel. OLMo does the opposite: it uses a plain <b>decoder-only Transformer</b> — the same family as GPT, LLaMA, and PaLM — so that results transfer to the models everyone already studies. The innovation is in <i>openness</i>, not in exotic layers. But within that conventional shell, OLMo adopts a handful of now-standard improvements that the community converged on between 2020 and 2023."
+            },
+            {
+              "type": "p",
+              "html": "<b>Mini-example of decoder-only generation.</b> Given the prompt tokens <code>[\"The\", \"cat\", \"sat\"]</code>, the model produces a probability distribution over the next token, samples (say) <code>\"on\"</code>, appends it, and repeats. A causal attention mask guarantees position $t$ can only attend to positions $\\le t$, so the model never peeks at the future it is trying to predict."
+            },
+            {
+              "type": "h2",
+              "text": "The five deliberate design choices"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>No biases.</b> All linear layers and LayerNorms drop their additive bias terms. Following PaLM, this improves training stability at scale for essentially free.",
+                "<b>Non-parametric LayerNorm.</b> The normalization has no learned gain ($\\gamma$) or shift ($\\beta$) — it just centers and scales. Fewer parameters, fewer things to destabilize.",
+                "<b>SwiGLU activation</b> in the feed-forward block (used by LLaMA and PaLM) instead of plain ReLU/GeLU. The hidden dimension is set to roughly $\\frac{8}{3}d$ and then rounded up to a multiple of 128 (e.g. 11008 for the 7B) to keep the matrix shapes hardware-friendly.",
+                "<b>Rotary positional embeddings (RoPE)</b> replace absolute learned positions, encoding position by rotating query/key vectors so attention depends on <i>relative</i> distance.",
+                "<b>A modified BPE tokenizer</b> from GPT-NeoX (~50k vocabulary) that masks personally identifiable information, chosen over GPT-2's tokenizer for better handling of code and whitespace."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Self-attention, the engine inside each layer"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Attention}(Q, K, V) = \\text{softmax}\\!\\left(\\frac{Q K^\\top}{\\sqrt{d_k}} + M\\right) V"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $Q, K, V \\in \\mathbb{R}^{n \\times d_k}$ are the <b>query</b>, <b>key</b>, and <b>value</b> matrices — each input token of the length-$n$ sequence is projected into a $d_k$-dimensional vector for each role. $Q K^\\top \\in \\mathbb{R}^{n \\times n}$ scores how much every token should attend to every other; dividing by $\\sqrt{d_k}$ keeps those scores from blowing up as dimension grows (without it, the softmax saturates and gradients vanish). $M$ is the <b>causal mask</b>: $M_{ij} = -\\infty$ for $j > i$ and $0$ otherwise, which zeroes out attention to future positions after the softmax. RoPE is applied to $Q$ and $K$ before this product, injecting relative position into the scores."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why these choices and not others.</b> Each tweak buys training stability or efficiency, which matters enormously when a single 7B run costs hundreds of thousands of GPU-hours and a divergence mid-run wastes weeks. Biases and parametric LayerNorm were dropped because, empirically, they add instability at scale without improving the loss. SwiGLU and RoPE were adopted because LLaMA and PaLM had already shown they help. OLMo's contribution is to document <i>exactly</i> which knobs were set and why — the paper publishes the full architecture table for the 1B, 7B, and 65B configs."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> This is the GPT-2 (Radford et al., 2019) skeleton with the LLaMA/PaLM upgrade pack bolted on. By staying conventional, OLMo ensures that anything a researcher learns from it — about data, scaling, or emergence — carries over to the closed models they cannot inspect."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Dolma & Tokenizer",
+      "pages": [
+        {
+          "title": "Dolma: the 3-trillion-token open corpus",
+          "subtitle": "The half of the model that everyone else hides",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem.</b> A model <i>is</i> its data. Two LMs with identical architectures but different pretraining corpora behave like different organisms. Yet the training data is precisely the part every open-weight release withholds — because it is the most expensive to build, the most legally fraught, and the most revealing. OLMo's authors argue you cannot do reproducible LM science without it, so they built and released <b>Dolma</b>: a 3-trillion-token, ~5-billion-document English corpus, fully open, with its full curation toolkit."
+            },
+            {
+              "type": "h2",
+              "text": "How Dolma is assembled"
+            },
+            {
+              "type": "p",
+              "html": "Dolma is a pipeline of explicit, inspectable stages applied to a mix of web text, code, academic papers, books, encyclopedic text, and social media:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Language filtering</b> — keep English documents (via a fastText classifier).",
+                "<b>Quality filtering</b> — heuristics that drop boilerplate, junk, and low-information pages.",
+                "<b>Content filtering</b> — remove toxic content and personally identifiable information.",
+                "<b>Deduplication</b> — remove near-duplicate documents so the model does not over-memorize repeated text.",
+                "<b>Multi-source mixing</b> — combine the sources in chosen proportions (web dominates, with code from The Stack, papers from peS2o, books from Project Gutenberg, and Wikipedia)."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete numbers.</b> The largest single ingredient is Common Crawl web text — on the order of 2.3 trillion tokens after filtering — with code (The Stack), C4, Reddit, peS2o academic papers, Project Gutenberg books, and Wikipedia making up the rest. OLMo-7B is trained on a 2.46-trillion-token cut of Dolma (a bit under 2 trillion after the data ordering used); the 1B model sees about 3 trillion tokens. Every document's provenance and every filtering decision is reproducible from the released code."
+            },
+            {
+              "type": "h2",
+              "text": "Why deduplication matters"
+            },
+            {
+              "type": "p",
+              "html": "If a paragraph appears 1000 times in the corpus, the model effectively trains on it 1000 times and memorizes it verbatim — wasting capacity and inflating benchmark scores when test data leaks in. Deduplication is what lets you later <i>trust</i> a memorization or contamination study. Because Dolma's dedup is open, a researcher can re-run it, change the threshold, and measure the effect — the kind of experiment that is simply impossible with a closed corpus."
+            },
+            {
+              "type": "h2",
+              "text": "The tokenizer"
+            },
+            {
+              "type": "p",
+              "html": "Text is turned into integer tokens by a <b>byte-pair encoding (BPE)</b> tokenizer — a modified version of the GPT-NeoX-20B tokenizer with a vocabulary of about 50,280 tokens. BPE starts from raw bytes and greedily merges the most frequent adjacent pair into a new symbol, repeating until the vocabulary is full; common words become single tokens while rare words split into pieces. OLMo chose this tokenizer over GPT-2's because it handles whitespace and code better and includes tokens that mask personally identifiable information."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context & influence.</b> Dolma (Soldaini et al., 2024) was released as a standalone artifact and quickly became one of the largest openly documented pretraining corpora, used well beyond OLMo itself. It is the concrete answer to the paper's thesis: open weights without open data is half a release."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training Setup",
+      "pages": [
+        {
+          "title": "Optimizer, distribution, and the AdamW recipe",
+          "subtitle": "Every hyperparameter, published",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question.</b> Suppose you have the architecture and the data. How exactly do you turn 3 trillion tokens into trained weights without the run diverging, and how do you make that process reproducible? OLMo answers by publishing the entire optimization recipe — optimizer, learning-rate schedule, batch size, gradient clipping, and the distributed-training framework — none of which closed labs disclose in full."
+            },
+            {
+              "type": "h2",
+              "text": "The optimizer: AdamW"
+            },
+            {
+              "type": "math",
+              "tex": "\\theta_{t+1} = \\theta_t - \\eta \\left( \\frac{\\hat{m}_t}{\\sqrt{\\hat{v}_t} + \\epsilon} + \\lambda \\, \\theta_t \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\theta_t$ is the full parameter vector at step $t$. $\\eta$ is the <b>learning rate</b>. $\\hat{m}_t$ is the bias-corrected running average of the gradient (first moment) and $\\hat{v}_t$ the bias-corrected average of the squared gradient (second moment) — Adam divides the step by $\\sqrt{\\hat{v}_t}$ so that parameters with large, noisy gradients take smaller steps and vice versa. $\\epsilon$ is a tiny constant ($10^{-5}$ here) preventing division by zero. The $\\lambda\\,\\theta_t$ term is <b>decoupled weight decay</b> — the 'W' in AdamW — which shrinks weights toward zero <i>separately</i> from the gradient signal, unlike classic L2 regularization folded into the gradient. OLMo uses $\\beta_1 = 0.9$, $\\beta_2 = 0.95$, and decays the learning rate linearly to a small fraction of its peak."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why AdamW and not plain Adam.</b> At billion-parameter scale, mixing weight decay into the gradient (classic L2) interacts badly with Adam's per-parameter scaling and effectively un-regularizes the parameters that need it most. Decoupling fixes this and is now the default for every large LM. OLMo also <b>clips gradients</b> to a global norm of 1.0 — if the total gradient magnitude across all parameters exceeds 1, it is rescaled down — which prevents a single bad batch from blowing up the weights mid-run."
+            },
+            {
+              "type": "h2",
+              "text": "Warmup and the learning-rate schedule"
+            },
+            {
+              "type": "p",
+              "html": "The learning rate is <b>warmed up linearly</b> over the first ~5000 steps from 0 to the peak (about $3 \\times 10^{-4}$ for the 7B), then decayed linearly toward zero over the rest of training. Warmup matters because the moment estimates $\\hat{m}, \\hat{v}$ are unreliable in the first few hundred steps; taking full-size steps then would push the randomly-initialized weights into a bad region. Batches contain about 4 million tokens (sequences of 2048 tokens), so the 7B run is on the order of half a million optimizer steps."
+            },
+            {
+              "type": "h2",
+              "text": "Distributing the work: ZeRO / FSDP"
+            },
+            {
+              "type": "p",
+              "html": "A 7B model in mixed precision plus its Adam states does not fit on one GPU. OLMo trains with PyTorch <b>FSDP</b> using the <b>ZeRO</b> optimizer-sharding strategy: the parameters, gradients, and optimizer states are <i>partitioned</i> across GPUs rather than replicated, so each GPU holds only its slice and gathers the rest on demand. This is what makes the run fit in memory at all. The 7B was trained on clusters of up to 256 nodes (AMD MI250X and NVIDIA A100 GPUs), and — notably — OLMo reproduced nearly identical loss curves on <i>two different hardware stacks</i>, a strong reproducibility result in itself."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trivia.</b> ZeRO comes from Microsoft's DeepSpeed (Rajbhandari et al., 2020); FSDP is its PyTorch-native descendant. By publishing the exact configs and the W&B logs, OLMo lets a third party not just know the recipe but <i>watch the loss go down step by step</i> — the training curve itself is an open artifact."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Evaluation Framework",
+      "pages": [
+        {
+          "title": "Catwalk, Paloma, and online evaluation",
+          "subtitle": "Building the measuring stick in the open too",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question.</b> If you want to study <i>how</i> a model learns, you cannot just score the final checkpoint — you need to measure it continuously, on the same yardstick, against the same baselines. OLMo therefore opens its <b>evaluation</b> tooling, not only the model. Two systems do the work: <b>Catwalk</b> for downstream task accuracy and <b>Paloma</b> for perplexity across many text domains."
+            },
+            {
+              "type": "h2",
+              "text": "Online evaluation during training"
+            },
+            {
+              "type": "p",
+              "html": "OLMo runs evaluation <i>live</i> while the model trains, so the loss curve is accompanied by accuracy curves on real tasks. This is how the paper produces its most scientifically valuable figures: capability-versus-tokens plots showing, for example, when commonsense reasoning starts to emerge. Because the intermediate checkpoints are public, anyone can rerun any benchmark at any point in training."
+            },
+            {
+              "type": "h2",
+              "text": "Downstream tasks (Catwalk)"
+            },
+            {
+              "type": "p",
+              "html": "OLMo reports zero-shot accuracy on a suite of nine standard commonsense and QA benchmarks: <b>ARC</b> (easy and challenge), <b>BoolQ</b>, <b>HellaSwag</b>, <b>OpenBookQA</b>, <b>PIQA</b>, <b>SciQ</b>, <b>WinoGrande</b>, and <b>CommonsenseQA</b>. These are scored with the same harness used for the baseline models, so the comparison is apples-to-apples — a subtle but crucial point, since reported scores for the same model often differ across papers simply because the evaluation code differs."
+            },
+            {
+              "type": "h2",
+              "text": "Perplexity across domains (Paloma)"
+            },
+            {
+              "type": "p",
+              "html": "Accuracy on a few tasks is a narrow lens. <b>Paloma</b> (Perplexity Analysis for Language Model Assessment) instead measures <b>perplexity</b> across hundreds of distinct text domains — from C4 and Wikipedia to Reddit, code, and specialized sources — so you can see <i>where</i> a model is fluent and where it struggles."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{PPL}(x_{1:n}) = \\exp\\!\\left(-\\frac{1}{n} \\sum_{t=1}^{n} \\log p_\\theta\\!\\left(x_t \\mid x_{<t}\\right)\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $x_{1:n}$ is a held-out sequence of $n$ tokens. $p_\\theta(x_t \\mid x_{<t})$ is the probability the model (parameters $\\theta$) assigns to the true token $x_t$ given all previous tokens. The inner sum is the average <b>negative log-likelihood</b> per token — the model's cross-entropy loss — and exponentiating turns it into <b>perplexity</b>, interpretable as the effective number of equally-likely choices the model is hesitating between at each step. Lower is better: perplexity 1 means perfect prediction; perplexity 50 means the model is, on average, as confused as if choosing uniformly among 50 tokens."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why two metrics.</b> Perplexity is smooth and fine-grained — great for watching learning dynamics token by token — but does not directly tell you if the model can answer a question. Task accuracy is what users care about but is noisy and coarse. Reporting both, on open harnesses, lets the community trust and extend the numbers. Paloma was released as its own benchmark (Magnusson et al., 2023) and is reusable on any model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "OLMo-7B is competitive with the best open-weight models",
+          "subtitle": "The leaderboard, with real numbers",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The claim to verify.</b> Openness is only persuasive if the open model is actually good. So the paper asks: does a fully-transparent 7B trained on an open corpus keep up with LLaMA, LLaMA 2, MPT, Falcon, Pythia, and RPJ-INCITE — models trained on undisclosed data? The answer is yes — OLMo-7B lands squarely in the same band, leading on several tasks."
+            },
+            {
+              "type": "h2",
+              "text": "Zero-shot downstream accuracy"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Avg (9 tasks)", "Notable strengths"],
+              "rows": [
+                ["OLMo-7B", "~50", "Strongest on SciQ; top-tier on HellaSwag, OpenBookQA, BoolQ"],
+                ["LLaMA-7B", "~50", "Strong on ARC, CommonsenseQA"],
+                ["LLaMA2-7B", "~52", "Strong overall baseline"],
+                ["MPT-7B", "~50", "Comparable across the board"],
+                ["Falcon-7B", "~50", "Comparable"],
+                ["Pythia-6.9B", "~46", "Trails the newer 7B models"],
+                ["RPJ-INCITE-7B", "~50", "Comparable open-data baseline"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Averaged across the nine commonsense/QA benchmarks, OLMo-7B sits at roughly the same ~50% accuracy as LLaMA-7B, MPT-7B, and Falcon-7B, and ahead of the older Pythia-6.9B. On individual tasks the ranking shuffles — OLMo is the best of the group on <b>SciQ</b> and among the leaders on <b>HellaSwag</b>, <b>OpenBookQA</b>, and <b>BoolQ</b>, while LLaMA leads on a couple of the ARC-style reasoning tasks. The headline is parity, achieved with a fully open data pipeline."
+            },
+            {
+              "type": "h2",
+              "text": "What the training curves show"
+            },
+            {
+              "type": "p",
+              "html": "Because evaluation ran online, the paper plots accuracy <i>as a function of training tokens</i> for all nine tasks. The curves rise monotonically and were still climbing at 2T+ tokens — evidence that the model had not saturated and that the open recipe scales like the closed ones. Critically, these are curves no closed-model paper can show you, because they require the intermediate checkpoints."
+            },
+            {
+              "type": "h2",
+              "text": "Perplexity (Paloma) and the adapted models"
+            },
+            {
+              "type": "p",
+              "html": "On Paloma's multi-domain perplexity, OLMo-7B is competitive across web, code, and academic domains, with its profile reflecting Dolma's composition (it is strongest where Dolma is rich). The paper also releases <b>instruction-tuned and RLHF-adapted</b> variants (built with AI2's Tulu/UltraFeedback recipe), which substantially improve performance on safety and instruction-following benchmarks like ToxiGen, AlpacaEval, and TruthfulQA — showing the open base model is a solid foundation for downstream alignment work."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveat.</b> The authors do not claim OLMo-7B beats the best models on every metric — LLaMA 2 edges it on some reasoning tasks. The point is that <i>full openness costs essentially nothing in quality</i>. You get a research-grade model and the entire apparatus to study it, for the same accuracy you would otherwise get with a black box."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why OLMo changed the open-model conversation",
+          "subtitle": "From open-weight to open-science",
+          "pdfPages": [1, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The lasting idea.</b> Before OLMo, 'open model' had quietly come to mean 'open weights.' OLMo redrew the line. It demonstrated that a top-tier 7B LM could be released with its <i>data, code, logs, and 500+ checkpoints</i> intact — and that doing so unlocks experiments the rest of the field literally cannot run."
+            },
+            {
+              "type": "h2",
+              "text": "What the open artifacts enable"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Emergence studies</b> — load any of the 500+ checkpoints and pinpoint when a capability appears, because you have the model <i>at every stage</i>, not just the end.",
+                "<b>Data-attribution and memorization research</b> — trace a model behavior back to specific documents in Dolma, since the exact training set is public.",
+                "<b>Contamination audits</b> — check directly whether a benchmark leaked into pretraining.",
+                "<b>Reproducible ablations</b> — change one ingredient (a filter, the learning rate, a data source) and rerun, with a known-good baseline to compare against.",
+                "<b>Cross-hardware reproducibility</b> — OLMo matched its loss curve on both AMD and NVIDIA clusters, evidence the recipe is portable, not hardware-luck."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>A concrete experiment OLMo makes possible.</b> Want to know if HellaSwag answers were memorized rather than reasoned? Grep Dolma for overlap with the test set, then compare the memorized-versus-novel accuracy gap across checkpoints. With LLaMA or GPT-4 this is impossible — you have neither the data nor the snapshots. With OLMo it is a weekend project."
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "p",
+              "html": "OLMo extends a thread of openness efforts — EleutherAI's <b>GPT-NeoX</b> and <b>Pythia</b> (which pioneered released checkpoints for science), <b>BLOOM</b>, and the open-weight wave of <b>LLaMA</b>, <b>Falcon</b>, and <b>MPT</b> — but goes further than any by pairing a competitive model with a fully open corpus (<b>Dolma</b>) and evaluation stack (<b>Catwalk</b>, <b>Paloma</b>). It set the template that later AI2 work (OLMo 2, OLMoE, Molmo) and other open-science labs would build on."
+            },
+            {
+              "type": "quote",
+              "html": "By building and releasing these models we hope to provide access and transparency to the research community in building strong, real-world language models, paving the path for the next generation of open research."
+            },
+            {
+              "type": "p",
+              "html": "<b>Limitations the authors flag.</b> OLMo is English-only and trained on a single architecture and scale family, so cross-lingual and multi-architecture science still needs more open models. The framework — not just the 7B checkpoint — is the contribution meant to outlive any single release: a reusable pipeline for doing language-model science in the open."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

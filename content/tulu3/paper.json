@@ -1,0 +1,317 @@
+{
+  "title": "Tulu 3: Pushing Frontiers in Open Language Model Post-Training",
+  "authors": "Lambert, et al. (AI2)",
+  "year": "2024",
+  "venue": "arXiv:2411.15124",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The whole post-training recipe, in the open",
+          "subtitle": "What Tulu 3 releases and why it matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern chat models like GPT-4o or Claude are not just pretrained on the internet and shipped. After pretraining there is a second, equally important phase called <b>post-training</b>: teaching a base model to follow instructions, reason, refuse harmful requests, and behave like a helpful assistant. The frontier labs guard this phase fiercely. They tell you a model was 'instruction-tuned with RLHF', but they do not tell you <i>which</i> data, in <i>what</i> proportions, with <i>which</i> hyperparameters, or how they decided. So the open community could see the finished cake but never the recipe."
+            },
+            {
+              "type": "p",
+              "html": "<b>Tulu 3</b> (from the Allen Institute for AI) is a deliberate attack on that secrecy. It is a fully open post-training pipeline that takes a <code>Llama 3.1</code> base model and turns it into a state-of-the-art instruction-following chat model — and releases <i>everything</i>: the final model weights, all the training data, the data-mixing code, the evaluation suite, and the exact recipe. The headline claim is that the resulting models close the gap to closed post-training pipelines while being completely reproducible."
+            },
+            {
+              "type": "quote",
+              "html": "Tulu 3 pushes the boundaries of research in post-training and closes the performance gap between open and closed fine-tuning recipes."
+            },
+            {
+              "type": "p",
+              "html": "The recipe has <b>four stages</b>, each of which this lesson will walk through: (1) <b>data curation</b> — building a careful mix of prompts targeting specific skills; (2) <b>supervised finetuning (SFT)</b> — imitation learning on demonstrations; (3) <b>preference tuning with DPO</b> — learning from comparisons of good vs. bad answers; and (4) a new method, <b>Reinforcement Learning with Verifiable Rewards (RLVR)</b> — RL on tasks where an answer can be checked as objectively correct, like math and instruction-following."
+            },
+            {
+              "type": "p",
+              "html": "The flagship results: <b>Tulu 3 8B</b> and <b>Tulu 3 70B</b> outperform the official <code>Llama 3.1 Instruct</code> models of the same size, as well as <code>Qwen 2.5 Instruct</code>, <code>Hermes 3</code>, and <code>Nemotron</code>, on a 10+ task evaluation suite. Scaled to 405B parameters, the recipe produces a model competitive with <code>GPT-4o</code> and <code>DeepSeek V3</code>. The point is not just the scores — it is that anyone can now rebuild a frontier-grade post-training pipeline from scratch."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Problem: open models lag closed ones because the post-training recipe (data, mixes, RL) is secret.",
+                "Idea: open-source the entire recipe end to end, plus a new RL method (RLVR) for verifiable tasks.",
+                "Result: Tulu 3 8B/70B beat Llama 3.1 Instruct and peers; 405B rivals GPT-4o and DeepSeek V3."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Pipeline",
+      "pages": [
+        {
+          "title": "Four stages from base model to chat model",
+          "subtitle": "Data → SFT → DPO → RLVR",
+          "pdfPages": [5, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Why a pipeline at all? Because the three classic post-training tools each fix a different weakness, and stacking them works better than any one alone. Think of training an apprentice chef: first you <b>show them recipes to copy</b> (SFT), then you let them <b>taste two dishes and learn which is better</b> (preference tuning), and finally you let them <b>cook real dishes and grade the result against a rubric</b> (RLVR). Each stage assumes the previous one already happened."
+            },
+            {
+              "type": "p",
+              "html": "Tulu 3 begins by choosing a set of <b>target skills</b> it wants to be good at — knowledge recall, reasoning, math, coding, instruction following, safety, and multilinguality — and then runs the whole pipeline in service of those skills, evaluating on a held-out suite so it does not just memorize the test."
+            },
+            {
+              "type": "h2",
+              "text": "The four stages"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Stage 1 — Data curation: gather and synthesize prompts targeting each skill, decontaminate against eval sets, and build the prompt pool everything else draws from.",
+                "Stage 2 — Supervised finetuning (SFT): train on (prompt, ideal-response) pairs by next-token prediction, so the model learns the format and behavior of a helpful assistant.",
+                "Stage 3 — Preference tuning (DPO): collect pairs where one response is preferred over another, and push the model toward the chosen answer and away from the rejected one.",
+                "Stage 4 — RLVR: for tasks with a checkable answer (math, exact-format instructions), run reinforcement learning where the reward is simply 1 if the answer is verified correct, else 0."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Each stage is initialized from the output of the previous one: SFT starts from the Llama 3.1 base, DPO starts from the SFT model, and RLVR starts from the DPO model. A core methodological contribution is <b>not</b> any single algorithm but the <i>discipline</i> around them: careful prompt selection, aggressive decontamination, principled data mixing, and an evaluation framework (called <b>OLMES</b>) used to make every design decision. The paper is honest that most of the gain comes from data and process, not magic."
+            },
+            {
+              "type": "p",
+              "html": "Historically, the original <b>Tulu</b> (2023) and <b>Tulu 2</b> showed that open SFT mixes could be competitive; the <b>Zephyr</b> and <b>Llama 2/3 Instruct</b> lines popularized DPO and RLHF. Tulu 3's novelty is doing all of it openly at scale and adding the RLVR stage, which connects to the verifiable-reward ideas that would soon become central to reasoning models."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Data & SFT",
+      "pages": [
+        {
+          "title": "Curating prompts and supervised finetuning",
+          "subtitle": "Why the data mix is the real recipe",
+          "pdfPages": [7, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The single most important — and most under-documented — decision in post-training is <b>which prompts you train on and in what proportions</b>. A model trained on mostly chit-chat will be bad at math; a model trained on mostly math will be a poor conversationalist. Tulu 3 treats the prompt mixture as a first-class engineering problem."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> Suppose you want the model good at grade-school math. You can scrape existing public datasets, but they may be contaminated (the eval questions leaked into training) or low quality. So Tulu 3 also <b>synthesizes</b> new prompts using a persona-driven approach: take a persona like 'a high-school physics teacher' and ask a strong model to generate math word problems that persona would write. This produces diverse, on-target prompts — released as <code>tulu-3-sft-personas-math</code>, <code>...-math-grade</code>, and <code>...-code</code> subsets."
+            },
+            {
+              "type": "h2",
+              "text": "Decontamination is non-negotiable"
+            },
+            {
+              "type": "p",
+              "html": "If a test question appears in training, your evaluation is a lie. Tulu 3 runs <b>n-gram overlap decontamination</b> against every benchmark in its suite and removes matching prompts, and releases the decontamination tooling so others can verify. The paper shows several popular public datasets are in fact contaminated against common benchmarks — a quiet but important warning to the field."
+            },
+            {
+              "type": "h2",
+              "text": "Supervised finetuning"
+            },
+            {
+              "type": "p",
+              "html": "SFT is plain <b>imitation learning</b>: given a prompt, train the model to reproduce a known-good response token by token. The loss is the standard negative log-likelihood over the response tokens only:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{SFT}}(\\theta) = - \\sum_{t=1}^{T} \\log \\pi_\\theta\\big(y_t \\mid x,\\, y_{<t}\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x$ is the input prompt (a token sequence); $y = (y_1,\\dots,y_T)$ is the target response of length $T$ tokens; $y_{<t}$ is all response tokens before position $t$; $\\pi_\\theta$ is the model with parameters $\\theta$, outputting a probability for the next token; and $\\pi_\\theta(y_t \\mid x, y_{<t})$ is the probability it assigns to the <i>correct</i> next token. Summing $-\\log$ of those probabilities and minimizing it pushes the model to make the demonstrated answer likely. The loss is masked to the response — the prompt tokens are not penalized, since we only want to imitate the answer, not predict the question."
+            },
+            {
+              "type": "p",
+              "html": "Tulu 3 finds that <b>SFT data quality and mixing dominate</b>: through 'data ablations' (swap one source in/out and re-evaluate) they tune the mix per target skill. This careful curation is why their SFT model already leads comparable open SFT models before any preference tuning happens."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Preference Tuning",
+      "pages": [
+        {
+          "title": "DPO: learning from good-vs-bad comparisons",
+          "subtitle": "Turning preferences into a direct loss",
+          "pdfPages": [21, 26],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "SFT teaches the model what a good answer <i>looks like</i>, but it never sees a <i>bad</i> answer, so it has no notion of 'better than'. Preference tuning fixes this. You collect pairs of responses to the same prompt — a <b>chosen</b> (preferred) one and a <b>rejected</b> one — and train the model to prefer the chosen. This is how you sand off the rough edges: tone, helpfulness, formatting, refusing politely."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where do the pairs come from?</b> Tulu 3 generates multiple candidate responses per prompt from a pool of models, then uses an LLM judge to rate them, taking the highest-rated as chosen and a lower-rated as rejected. They scale this to large preference mixtures (released as the <code>tulu-3-...-preference-mixture</code> datasets) and show that <i>more</i> and <i>more diverse</i> preference data keeps helping."
+            },
+            {
+              "type": "h2",
+              "text": "Direct Preference Optimization (DPO)"
+            },
+            {
+              "type": "p",
+              "html": "Classic RLHF trains a separate reward model and then does PPO — complex and unstable. <b>DPO</b> (Rafailov et al., 2023) showed you can skip all that: the optimal RLHF policy has a closed form in terms of a reference model, so preference learning collapses into a single supervised-style loss. The objective:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{DPO}} = - \\mathbb{E}_{(x,\\, y_w,\\, y_l)}\\left[ \\log \\sigma\\!\\left( \\beta \\log \\frac{\\pi_\\theta(y_w \\mid x)}{\\pi_{\\text{ref}}(y_w \\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l \\mid x)}{\\pi_{\\text{ref}}(y_l \\mid x)} \\right) \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $x$ is the prompt; $y_w$ is the <b>chosen</b> (winning) response and $y_l$ the <b>rejected</b> (losing) one; $\\pi_\\theta$ is the model being trained; $\\pi_{\\text{ref}}$ is a frozen reference copy (the SFT model) that anchors training so the policy does not drift too far; $\\beta$ is a temperature controlling how hard you push (typical values around 0.05); $\\sigma$ is the logistic sigmoid mapping a real number to $(0,1)$. The bracketed quantity is the model's <b>log-ratio margin</b>: how much more the trained model favors the winner over the reference, minus the same for the loser. Maximizing $\\log\\sigma$ of that margin pushes $\\pi_\\theta$ to raise the winner's probability and lower the loser's, all relative to the reference."
+            },
+            {
+              "type": "p",
+              "html": "Tulu 3 uses a <b>length-normalized</b> variant of DPO so the model is not rewarded for simply writing longer 'chosen' answers (a known DPO failure mode where it learns 'longer = better'). They ablate DPO vs. PPO vs. other variants and find length-normalized DPO gives the best quality-for-compute trade-off at their scale, which is why it is the production choice over a full PPO loop here."
+            },
+            {
+              "type": "p",
+              "html": "The design rationale: DPO is cheaper and more stable than PPO and needs no reward model, so you can iterate on <i>data</i> instead of fighting RL instability. The trade-off is that DPO only learns from the static pairs you give it — it cannot explore new responses. That limitation is exactly what the next stage, RLVR, is built to address for tasks with checkable answers."
+            }
+          ]
+        },
+        {
+          "title": "RLVR: reinforcement learning with verifiable rewards",
+          "subtitle": "RL when correctness can be checked",
+          "pdfPages": [31, 32],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the new idea. Reward models are noisy proxies for quality — they <i>guess</i> whether an answer is good. But for some tasks you do not need to guess: you can <b>check</b>. Did the math answer equal 42? Did the response follow the instruction 'reply in exactly three bullet points'? For these <b>verifiable</b> tasks, the reward is not a learned estimate — it is a ground-truth yes/no. RLVR is reinforcement learning that uses this exact-correctness signal as the reward."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> Prompt: 'What is 17 × 24?'. The model samples an answer. A verifier function checks whether the final number equals 408. If yes, reward = 10 (a fixed positive constant $\\alpha$); if no, reward = 0. No reward model, no human, no LLM judge — just a calculator. The same idea works for GSM8K/MATH (check the boxed answer) and for IFEval (check the formatting constraints programmatically)."
+            },
+            {
+              "type": "h2",
+              "text": "The objective"
+            },
+            {
+              "type": "p",
+              "html": "RLVR optimizes the policy with a PPO-style objective whose per-sample reward comes from the verifier:"
+            },
+            {
+              "type": "math",
+              "tex": "\\max_{\\pi_\\theta}\\; \\mathbb{E}_{y \\sim \\pi_\\theta(x)}\\big[ R_{\\text{RLVR}}(x, y) \\big] = \\big[ v(x, y) - \\beta\\, \\mathrm{KL}\\!\\left( \\pi_\\theta(y\\mid x)\\,\\|\\,\\pi_{\\text{ref}}(y\\mid x) \\right) \\big]"
+            },
+            {
+              "type": "p",
+              "html": "And the verifiable reward itself:"
+            },
+            {
+              "type": "math",
+              "tex": "v(x, y) = \\begin{cases} \\alpha & \\text{if } y \\text{ is verified correct} \\\\ 0 & \\text{otherwise} \\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "Reading the terms: $x$ is the prompt and $y \\sim \\pi_\\theta(x)$ is a response sampled from the current policy $\\pi_\\theta$; $v(x,y)$ is the <b>verifier</b> — it returns a fixed positive reward $\\alpha$ when the answer passes the ground-truth check and $0$ otherwise; $\\pi_{\\text{ref}}$ is again the frozen starting model (the DPO checkpoint); $\\mathrm{KL}(\\pi_\\theta \\,\\|\\, \\pi_{\\text{ref}})$ measures how far the policy has drifted from that reference, and $\\beta$ is the penalty weight on that drift. So the model is rewarded for getting verified-correct answers while being penalized for straying too far from a sensible starting point — preventing it from collapsing into gibberish that happens to game the checker."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works.</b> The reward is exactly aligned with what you care about — there is no proxy gap, so the model cannot 'reward-hack' a flawed reward model. Tulu 3 reports that RLVR cleanly lifts the targeted skills: training on GSM8K, MATH, and IFEval rewards raises performance on those exact axes without wrecking the others. The trade-off is scope: RLVR only applies where a verifier exists, which is why it is the <i>last</i> stage layered on top of broad DPO, not a replacement for it."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> This is one of the early, clean public demonstrations that simple binary correctness rewards beat learned reward models on verifiable tasks. The same principle — RL on checkable rewards — became the engine of the reasoning-model wave (e.g. the R1-style 'RL with rule-based rewards' systems) shortly after."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "How well does the open recipe actually do?",
+          "subtitle": "Beating Llama 3.1 Instruct and peers",
+          "pdfPages": [10, 40],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The acid test: does a fully open recipe match the closed pipelines that produced the official instruct models? Tulu 3 evaluates on a held-out suite of 10+ benchmarks spanning all its target skills — knowledge (MMLU), reasoning (BBH, DROP), math (GSM8K, MATH), coding (HumanEval), instruction following (IFEval), and safety — using a single standardized evaluation framework so comparisons are apples-to-apples."
+            },
+            {
+              "type": "p",
+              "html": "<b>Headline finding.</b> At both 8B and 70B, the Tulu 3 final models <b>outperform the same-size official instruct models</b> — including <code>Llama 3.1 8B/70B Instruct</code>, <code>Qwen 2.5 Instruct</code>, <code>Hermes 3</code>, and <code>Nemotron</code> — on average across the suite. An open recipe beats the closed recipes that shipped on the very same base models."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Recipe", "Avg vs. same-size instruct"],
+              "rows": [
+                ["Tulu 3 8B", "Open (SFT+DPO+RLVR)", "Beats Llama 3.1 8B Instruct, Qwen 2.5 7B Instruct"],
+                ["Tulu 3 70B", "Open (SFT+DPO+RLVR)", "Beats Llama 3.1 70B Instruct, Hermes 3, Nemotron"],
+                ["Tulu 3 405B", "Open (SFT+DPO+RLVR)", "Competitive with GPT-4o and DeepSeek V3"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Each stage pulls its weight"
+            },
+            {
+              "type": "p",
+              "html": "The ablations show the pipeline is additive, not redundant. Carefully curated <b>SFT</b> alone already produces a leading open SFT model. <b>DPO</b> on the scaled preference mixtures lifts it further across nearly every skill. <b>RLVR</b> then adds targeted gains on the verifiable axes — math (GSM8K, MATH) and instruction following (IFEval) — without degrading the rest. The whole-recipe model is clearly stronger than any intermediate checkpoint."
+            },
+            {
+              "type": "list",
+              "items": [
+                "SFT: best-in-class open SFT model from data curation alone.",
+                "+DPO: broad improvement across knowledge, reasoning, chat quality.",
+                "+RLVR: targeted boosts on math and instruction-following (the verifiable skills)."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Scaling holds.</b> Re-running the identical recipe on the much larger <code>Llama 3.1 405B</code> base yields <b>Tulu 3 405B</b>, which is competitive with the strongest closed and open models of its era (GPT-4o, DeepSeek V3) — evidence that the recipe is not a small-model trick but scales with the base model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Tulu 3 mattered",
+          "subtitle": "Reproducibility, RLVR, and what it influenced",
+          "pdfPages": [1, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Tulu 3's importance is less about any one number and more about <b>collapsing the gap between what's published and what's reproducible</b>. Before it, 'we did RLHF on a careful data mix' was a sentence in a model card you could not act on. After it, the entire pipeline — weights, data, mixing code, eval framework, decontamination tools — is downloadable and rebuildable. It turned post-training from folklore into engineering."
+            },
+            {
+              "type": "h2",
+              "text": "Three lasting contributions"
+            },
+            {
+              "type": "list",
+              "items": [
+                "A fully open, end-to-end post-training recipe at 8B/70B/405B that matches or beats closed instruct models on the same base.",
+                "RLVR — a clean, simple recipe for RL on verifiable rewards (binary correctness, no reward model) that targets math and instruction following.",
+                "OLMES + decontamination tooling — a standardized evaluation and contamination-checking framework so the field can compare honestly."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>RLVR was the seed of something bigger.</b> Its core insight — that a ground-truth checker is a better reward than a learned reward model on verifiable tasks — is the same principle that powers the reasoning-model wave that followed (rule-based / verifiable-reward RL in systems like DeepSeek-R1). Tulu 3 was an early, fully public demonstration that the idea works at production scale."
+            },
+            {
+              "type": "p",
+              "html": "<b>Lineage.</b> Tulu 3 extends AI2's open-model program: <code>OLMo</code> for open pretraining, and <code>Tulu</code> / <code>Tulu 2</code> for open instruction tuning. Where earlier Tulus showed open SFT could be competitive, Tulu 3 added scaled preference data and the RLVR stage to reach genuine frontier parity — and made every artifact public, including a live demo at <code>playground.allenai.org</code>."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest takeaway for practitioners:</b> there is no secret algorithm. The gains came from disciplined data curation, rigorous decontamination, principled data mixing guided by a fixed evaluation suite, and stacking SFT → DPO → RLVR in that order. Reproducibility and process, not a single trick, are the contribution."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

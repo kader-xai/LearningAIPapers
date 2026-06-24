@@ -1,0 +1,331 @@
+{
+  "title": "Differential Transformer",
+  "authors": "Ye, et al. (Microsoft)",
+  "year": "2024",
+  "venue": "arXiv:2410.05258",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The problem: attention wastes its budget on noise",
+          "subtitle": "Why a transformer that 'reads everything' often fails to focus",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you ask a model a question whose answer is one sentence buried inside a 50-page document. Intuitively the model should put almost all of its attention on that one sentence and ignore the rest. In practice, standard Transformers do the opposite of what you'd hope: they leak a small amount of attention onto <i>thousands</i> of irrelevant tokens. Each leak is tiny, but there are so many irrelevant tokens that, added up, the noise can rival or drown out the signal. The paper calls this <b>attention noise</b>."
+            },
+            {
+              "type": "p",
+              "html": "This single observation is the whole paper. The authors (Tianzhu Ye, Li Dong, Yuqing Xia, Yutao Sun, Yi Zhu, Gao Huang, Furu Wei at Microsoft Research) show that softmax attention systematically over-allocates probability to context the model does not actually need, and that this directly hurts long-context understanding, key-information retrieval, in-context learning, and even causes hallucination."
+            },
+            {
+              "type": "quote",
+              "html": "Transformer tends to overallocate attention to irrelevant context. In this work, we introduce Diff Transformer, which amplifies attention to the relevant context while canceling noise."
+            },
+            {
+              "type": "p",
+              "html": "The fix is almost embarrassingly simple, and that is its charm. Instead of one softmax attention map, compute <b>two</b>, and <b>subtract</b> one from the other. The shared, common-mode noise present in both maps cancels; the genuine signal, which differs between them, survives. The authors name the result the <b>Differential Transformer</b> (Diff Transformer), and the mechanism <b>differential attention</b>, by direct analogy to noise-canceling headphones and to differential amplifiers in electrical engineering."
+            },
+            {
+              "type": "h2",
+              "text": "The analogy that makes it click"
+            },
+            {
+              "type": "p",
+              "html": "Noise-canceling headphones use two microphones. Both pick up the same ambient hum; only one is near your ear. Subtract the two signals and the hum (common to both) vanishes while the wanted sound (different between them) remains. Differential attention does exactly this with attention maps: the common 'background hum' of attention spread across irrelevant tokens cancels, leaving sharp focus on what matters. A <i>differential amplifier</i> in analog circuits does the same thing with two voltages, rejecting common-mode noise."
+            },
+            {
+              "type": "h2",
+              "text": "What it buys you (the headline claims)"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Scale efficiency:</b> a Diff Transformer matches a standard Transformer's language-modeling performance while using only about <b>65% of the parameters</b>, or equivalently about <b>65% of the training tokens</b>.",
+                "<b>Long-context:</b> reliably uses information from much further back; cumulative loss keeps dropping as context grows to 64K tokens.",
+                "<b>Key-information retrieval:</b> large gains on multi-needle 'needle-in-a-haystack' tasks, especially when the needles sit early in a long context.",
+                "<b>Robustness:</b> much smaller activation outliers, which makes the model far easier to quantize to low bit-width; and measurably less hallucination in summarization and question answering."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Core Method",
+      "pages": [
+        {
+          "title": "Differential attention: subtract two softmaxes",
+          "subtitle": "The one equation that defines the whole paper",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the question this page answers: <i>how do you cancel attention noise without throwing away signal?</i> The trick is to notice that noise is <b>common-mode</b>. If you build two attention maps from two different query/key projections, the irrelevant spread shows up in <i>both</i> maps in roughly the same way, while the truly relevant token is emphasized differently. Subtracting the maps deletes the shared part and keeps the difference, hence 'differential.'"
+            },
+            {
+              "type": "h2",
+              "text": "Setup: split the projections in two"
+            },
+            {
+              "type": "p",
+              "html": "Given an input sequence <code>X</code> of shape <code>N x d_model</code> (N tokens, each a d_model-dimensional vector), standard attention forms one query <code>Q</code>, one key <code>K</code>, one value <code>V</code>. Differential attention instead splits the query and key projections into two halves each, so you get two queries and two keys."
+            },
+            {
+              "type": "math",
+              "tex": "[Q_1; Q_2] = XW^Q, \\quad [K_1; K_2] = XW^K, \\quad V = XW^V"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: <code>W^Q, W^K, W^V</code> are learned projection matrices of shape <code>d_model x 2d</code>. Multiplying <code>X</code> (shape <code>N x d_model</code>) by <code>W^Q</code> gives an <code>N x 2d</code> result, which is then sliced down the middle into <code>Q_1</code> and <code>Q_2</code>, each of shape <code>N x d</code>. Same for the keys: <code>K_1, K_2</code>, each <code>N x d</code>. The value <code>V</code> has shape <code>N x 2d</code> and is <i>not</i> split. So the parameter count is identical to ordinary attention with head dimension <code>2d</code>; nothing extra is added except one scalar (defined below)."
+            },
+            {
+              "type": "h2",
+              "text": "The differential attention operator"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{DiffAttn}(X) = \\left( \\text{softmax}\\!\\left(\\frac{Q_1 K_1^{\\top}}{\\sqrt{d}}\\right) - \\lambda \\, \\text{softmax}\\!\\left(\\frac{Q_2 K_2^{\\top}}{\\sqrt{d}}\\right) \\right) V"
+            },
+            {
+              "type": "p",
+              "html": "Term by term. <code>Q_1 K_1^T / sqrt(d)</code> is the usual scaled dot-product score matrix of shape <code>N x N</code>; a <code>softmax</code> over each row turns it into a first attention map (each row sums to 1). The second term builds a <i>second, independent</i> attention map from <code>Q_2, K_2</code> the same way. The scalar <code>lambda</code> weights how much of the second map you subtract. The bracket is therefore a <b>difference of two probability maps</b>, an <code>N x N</code> matrix whose rows need not sum to 1 and can even go negative. Multiplying by <code>V</code> (shape <code>N x 2d</code>) gives the output, shape <code>N x 2d</code>."
+            },
+            {
+              "type": "p",
+              "html": "Why subtraction kills noise: suppose both softmax maps put about 0.0002 of probability on each of 1000 irrelevant tokens (0.2 total leaked into junk). After subtracting (with lambda near 1) those near-equal junk weights cancel to near zero, while the relevant token, emphasized more strongly in the first map than the second, keeps a large positive weight. The model ends up with a far sparser, sharper attention pattern, exactly what you wanted for retrieval."
+            }
+          ]
+        },
+        {
+          "title": "Making lambda safe to learn: the re-parameterization",
+          "subtitle": "Why a raw learnable scalar would blow up, and the fix",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The subtraction weight <code>lambda</code> controls everything: too small and you barely cancel noise; too large and you over-subtract and destabilize training. The naive choice, 'let lambda be a free learnable number,' is dangerous because the two softmax maps share the same exponential scale, and a poorly initialized lambda can make gradients explode early in training. So the authors re-parameterize lambda out of exponentials of learnable vectors, which keeps it smooth and synchronizes its dynamics with the rest of the network."
+            },
+            {
+              "type": "math",
+              "tex": "\\lambda = \\exp(\\lambda_{q_1} \\cdot \\lambda_{k_1}) - \\exp(\\lambda_{q_2} \\cdot \\lambda_{k_2}) + \\lambda_{\\text{init}}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: <code>lambda_q1, lambda_k1, lambda_q2, lambda_k2</code> are learnable vectors in <code>R^d</code>. Each dot product (for example <code>lambda_q1 . lambda_k1</code>) is a single learnable scalar; wrapping it in <code>exp</code> keeps it positive and differentiable. The difference of the two exponentials is the trainable part of lambda, and <code>lambda_init</code> is a fixed constant offset that sets a sensible starting value before any learning happens. The net <code>lambda</code> is a scalar shared across the layer."
+            },
+            {
+              "type": "p",
+              "html": "The initialization constant is set per layer depth <code>l</code> (1-indexed):"
+            },
+            {
+              "type": "math",
+              "tex": "\\lambda_{\\text{init}} = 0.8 - 0.6 \\times \\exp(-0.3 \\cdot (l - 1))"
+            },
+            {
+              "type": "p",
+              "html": "Here <code>l</code> is the layer index. So the first layer starts around <code>0.8 - 0.6 = 0.2</code> and deeper layers climb toward <code>0.8</code>. The authors note the model is robust to the exact schedule, this is a 'calibration knob,' not a load-bearing magic number, but a depth-dependent warmup of the subtraction strength trains more stably than a flat constant. Empirically this simple schedule 'works well.'"
+            },
+            {
+              "type": "h2",
+              "text": "Why not just train one sharper softmax?"
+            },
+            {
+              "type": "p",
+              "html": "A natural alternative is to sharpen a single softmax (lower its temperature) so it concentrates more. But a single softmax cannot produce <i>negative</i> attention, and it cannot selectively cancel a specific noise pattern, sharpening it also sharpens whatever spurious peak the noise created. The subtraction of two maps is strictly more expressive: the second map learns the noise pattern to remove, something a temperature knob can never express."
+            }
+          ]
+        },
+        {
+          "title": "Multi-head differential attention and normalization",
+          "subtitle": "Wiring it into a real Transformer block with GroupNorm",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A single differential head is the idea; a real model needs many heads and stable scale. This page shows how differential attention slots into the multi-head machinery of the original Transformer (Vaswani et al., 2017) with one important addition: each head is independently normalized before the heads are concatenated."
+            },
+            {
+              "type": "p",
+              "html": "Let <code>h</code> be the number of heads. Each head <code>i</code> gets its own projection matrices <code>W_i^Q, W_i^K, W_i^V</code>. Crucially, the scalar <code>lambda</code> is <b>shared across all heads in a layer</b>, so every head subtracts noise with the same strength."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{head}_i = \\text{DiffAttn}(X; W_i^Q, W_i^K, W_i^V, \\lambda)"
+            },
+            {
+              "type": "math",
+              "tex": "\\overline{\\text{head}_i} = (1 - \\lambda_{\\text{init}}) \\cdot \\text{LN}(\\text{head}_i)"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{MultiHead}(X) = \\text{Concat}(\\overline{\\text{head}_1}, \\ldots, \\overline{\\text{head}_h}) \\, W^O"
+            },
+            {
+              "type": "p",
+              "html": "Term by term. <code>head_i</code> is the differential-attention output of head <code>i</code>, shape <code>N x 2d</code>. <code>LN</code> is a per-head normalization, the paper uses <b>RMSNorm</b> applied independently to each head (this specific use is called <i>GroupNorm</i> here because each head is its own group). The factor <code>(1 - lambda_init)</code> rescales each normalized head to keep the overall gradient magnitude in line with a standard Transformer, which is what lets you reuse the same hyperparameters and learning rate. <code>Concat</code> stacks the <code>h</code> normalized heads back to width <code>2d \\cdot h = d_model</code>, and <code>W^O</code> (shape <code>d_model x d_model</code>) is the output projection."
+            },
+            {
+              "type": "h2",
+              "text": "Why the per-head normalization is not optional"
+            },
+            {
+              "type": "p",
+              "html": "Because differential attention <i>subtracts</i> two maps, a head's pre-norm output can have wildly varying scale and statistics from token to token, the cancellation is not perfectly balanced. Normalizing each head independently (GroupNorm / per-head RMSNorm) rescales every head to a stable distribution before mixing, preventing one noisy head from dominating the concatenation. The authors report this normalization is important for training stability; without it the subtraction's variable scale leaks into the residual stream."
+            },
+            {
+              "type": "p",
+              "html": "The rest of the block is deliberately vanilla so the comparison is fair: it follows the LLaMA recipe, pre-RMSNorm, SwiGLU feed-forward, and rotary position embeddings, removed of bias terms. The <i>only</i> architectural change versus a standard decoder is swapping ordinary attention for differential attention. That isolation is what makes the experiments a clean ablation of the idea."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Scaling Results",
+      "pages": [
+        {
+          "title": "Scaling laws: matching a Transformer with ~65% of the budget",
+          "subtitle": "The efficiency result that justifies the whole design",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "An architecture idea is only worth adopting if it pays off at scale. The authors run two scaling studies, varying model size and varying training tokens, and ask: how much smaller / cheaper can a Diff Transformer be and still match a standard Transformer?"
+            },
+            {
+              "type": "h2",
+              "text": "Scaling model size"
+            },
+            {
+              "type": "p",
+              "html": "Training models from 830M up to 13.1B parameters, the loss-versus-size curves show Diff Transformer's advantage is roughly constant in log-scale. The concrete reading: a <b>6.8B-parameter Diff Transformer reaches the same validation loss as an 11B-parameter standard Transformer</b>, using only about <b>62.2% of the parameters</b>. Equivalently, a 7.8B Diff model matches a 13.1B Transformer at about <b>59.5%</b> of the size."
+            },
+            {
+              "type": "h2",
+              "text": "Scaling training tokens"
+            },
+            {
+              "type": "p",
+              "html": "Holding the 3B model fixed and varying how many tokens it sees: a Diff Transformer trained on <b>160B tokens</b> matches a standard Transformer trained on <b>251B tokens</b>, i.e. it reaches the same performance with only about <b>63.7% of the training tokens</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["Study", "Diff Transformer", "Matches standard Transformer", "Fraction of budget"],
+              "rows": [
+                ["Model size", "6.8B params", "11B params", "~62.2%"],
+                ["Model size", "7.8B params", "13.1B params", "~59.5%"],
+                ["Training tokens", "160B tokens", "251B tokens", "~63.7%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The takeaway the paper draws: across both axes, you need only roughly <b>65%</b> of the resources to match the baseline. For a 1B-parameter compute-matched comparison the authors also report Diff Transformer winning on downstream eval-harness accuracy (ARC, BoolQ, HellaSwag, OBQA, PIQA, WinoGrande), so the lower loss translates into better task accuracy, not just a cheaper number."
+            },
+            {
+              "type": "p",
+              "html": "Why this is more than a free lunch story: the gain comes from spending the model's capacity better. A standard Transformer burns representational budget representing and then ignoring attention noise; canceling it up front frees that budget for useful computation. The improvement therefore compounds with scale rather than washing out."
+            }
+          ]
+        },
+        {
+          "title": "Long-context, retrieval, and robustness",
+          "subtitle": "Where canceling attention noise pays off most",
+          "pdfPages": [4, 6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "If the mechanism really sharpens focus, the biggest wins should appear exactly where focus matters: very long contexts, finding specific facts in a haystack, and avoiding the activation pathologies that come from spreading attention thin. The paper tests all three."
+            },
+            {
+              "type": "h2",
+              "text": "Long-context: it actually uses the long context"
+            },
+            {
+              "type": "p",
+              "html": "Both models are extended to a <b>64K-token</b> context and trained further. Measuring cumulative negative-log-likelihood as a function of position, Diff Transformer's loss keeps dropping deeper into the sequence, meaning it genuinely exploits far-back information rather than letting it dissolve into noise. The book-data NLL evaluation shows a consistent margin over the standard Transformer at long range."
+            },
+            {
+              "type": "h2",
+              "text": "Multi-needle retrieval (needle-in-a-haystack)"
+            },
+            {
+              "type": "p",
+              "html": "On the multi-needle retrieval task, where <code>N</code> distinct facts are inserted into a long context and <code>R</code> of them must be recovered, the gap is dramatic. In the hardest 4K-length setting with <code>N=6</code> needles and <code>R=2</code> required answers, accuracy jumps from <b>0.55</b> (Transformer) to <b>0.85</b> (Diff Transformer), a 30-point absolute improvement. The advantage is largest when the answer needle sits <i>early</i> in the context, precisely the position a noisy Transformer tends to forget."
+            },
+            {
+              "type": "table",
+              "headers": ["Multi-needle (4K)", "N=1,R=1", "N=2,R=2", "N=4,R=2", "N=6,R=2"],
+              "rows": [
+                ["Transformer", "1.00", "0.85", "0.62", "0.55"],
+                ["Diff Transformer", "1.00", "0.92", "0.84", "0.85"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Activation outliers and quantization"
+            },
+            {
+              "type": "p",
+              "html": "A subtle but practically huge benefit: differential attention produces far smaller <b>activation outliers</b>. Standard Transformers develop a handful of extreme activation values that wreck low-bit quantization. With smaller outliers, Diff Transformer quantizes gracefully, the authors report it can be pushed to lower bit-widths (down to 4-bit attention) while retaining accuracy comparable to a 6-bit standard Transformer, a meaningful deployment win."
+            },
+            {
+              "type": "p",
+              "html": "Together with reduced <b>hallucination</b> on summarization and question-answering benchmarks and more robust <b>in-context learning</b> (smaller variance to example ordering, a known fragility of Transformers), these results paint a consistent picture: every problem that traces back to attention being spread too thin gets better when you cancel the noise."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why this matters and what it changes",
+          "subtitle": "A drop-in attention swap with outsized downstream effects",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The lasting lesson of Differential Transformer is that a long-standing, widely-tolerated flaw of softmax attention, its tendency to leak probability onto irrelevant tokens, was treatable with a tiny structural change. Not a new optimizer, not a new positional scheme, not more data: just compute two attention maps and subtract."
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "p",
+              "html": "It inherits the multi-head attention skeleton of <b>Vaswani et al. (2017)</b> and the modern decoder recipe of <b>LLaMA</b> (pre-RMSNorm, SwiGLU, RoPE), changing exactly one component. Conceptually it borrows from outside ML entirely, <i>differential amplifiers</i> and <i>noise-canceling</i> from signal processing and electrical engineering, importing common-mode rejection into attention. This cross-domain analogy is the intellectual heart of the paper."
+            },
+            {
+              "type": "h2",
+              "text": "Why it is easy to adopt"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Parameter-neutral:</b> splitting Q/K into two halves keeps the parameter count of a standard attention layer; the only additions are a few small learnable vectors for lambda.",
+                "<b>Hyperparameter-compatible:</b> the <code>(1 - lambda_init)</code> head rescaling is designed so existing learning rates and schedules transfer directly, you can reuse a Transformer training recipe.",
+                "<b>Drop-in:</b> it is one swapped module in an otherwise standard decoder, so it composes with FlashAttention-style kernels and the usual scaling toolkit."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "The trade-off, stated honestly"
+            },
+            {
+              "type": "p",
+              "html": "The cost is a second softmax computation per attention call. That is real but modest, and the paper argues it is more than repaid because you can reach the same quality with roughly 65% of the parameters or tokens, and because the downstream robustness (retrieval, quantization, hallucination) is hard to buy any other way. The authors position Diff Transformer as a foundation architecture for large language models, particularly attractive wherever long context and faithful retrieval are the bottleneck."
+            },
+            {
+              "type": "p",
+              "html": "The broader takeaway for practitioners: when a model 'reads everything but understands little,' suspect that its attention is being spent on noise. Differential Transformer is a concrete, reproducible demonstration that explicitly subtracting that noise, rather than hoping the model learns to ignore it, is both cheaper and stronger."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

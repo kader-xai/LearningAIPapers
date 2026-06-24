@@ -1,0 +1,249 @@
+{
+  "title": "GPT-4 Technical Report",
+  "authors": "OpenAI",
+  "year": "2023",
+  "venue": "arXiv:2303.08774",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A multimodal model that reaches human-level on hard exams",
+          "subtitle": "What GPT-4 is, and what this report deliberately does not tell you",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The question this paper answers is blunt: <b>how far can the recipe of \"scale up a Transformer and train it to predict the next token\" actually go?</b> By 2023 the GPT-2 / GPT-3 line had already shown that bigger models trained on more text get steadily better. GPT-4 pushes that line to its sharpest test yet: instead of measuring progress on toy NLP benchmarks, OpenAI sat the model down for the same <b>professional and academic exams that humans take</b> — the bar exam, the SAT, the LSAT, AP tests, biology olympiads — and reported its percentile against real test-takers."
+            },
+            {
+              "type": "p",
+              "html": "Two things make this report unusual. First, GPT-4 is <b>multimodal</b>: it accepts <i>images as well as text</i> as input and produces text. Second — and this is the part that frustrated the research community — the report is openly a <b>technical report, not a research paper</b>. It withholds nearly all of the engineering: parameter count, architecture, training data, training compute, and training method are all undisclosed."
+            },
+            {
+              "type": "quote",
+              "html": "Given both the competitive landscape and the safety implications of large-scale models like GPT-4, this report contains no further details about the architecture (including model size), hardware, training compute, dataset construction, training method, or similar."
+            },
+            {
+              "type": "p",
+              "html": "So what <i>can</i> you learn from a paper that hides the model? Two genuinely important things. (1) A headline of capability: GPT-4 <b>\"exhibits human-level performance on various professional and academic benchmarks, including passing a simulated bar exam with a score around the top 10% of test takers.\"</b> (2) A methodological result that may outlast the model itself: OpenAI built infrastructure to <b>predict GPT-4's performance before training it</b>, by fitting a curve to much smaller, much cheaper runs."
+            },
+            {
+              "type": "quote",
+              "html": "A core component of this project was developing infrastructure and optimization methods that behave predictably across a wide range of scales. This allowed us to accurately predict some aspects of GPT-4's performance based on models trained with no more than 1/1,000th the compute of GPT-4."
+            },
+            {
+              "type": "p",
+              "html": "That last sentence is the technically load-bearing claim of the whole report, so most of this lesson is built around it. The rest is the receipts: the exam scores and benchmark numbers that justify the word \"human-level.\" Think of the structure as <b>one method (predictable scaling) plus one giant evaluation (exams and benchmarks)</b>, wrapped in a deliberate silence about the model's insides."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Predictable Scaling",
+      "pages": [
+        {
+          "title": "Why you want to predict a model before you build it",
+          "subtitle": "The economics of a single training run you cannot afford to repeat",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you are about to spend tens of millions of dollars and several months of compute on <b>one</b> training run. You get to launch it essentially once. If your loss curve quietly diverges three weeks in, or the final model lands well below what you hoped, you cannot just \"try again\" the way you would with a small experiment. This is the central operational problem of frontier-scale training: <b>the run is too expensive to debug by repetition.</b>"
+            },
+            {
+              "type": "p",
+              "html": "The intuition behind the fix is the same one a structural engineer uses. You do not discover whether a bridge holds by building the full bridge and watching. You characterize the material on small samples, fit a law that describes how it behaves, and <i>extrapolate</i> to the full span with confidence. OpenAI's claim is that deep-learning training, done carefully, has the same kind of extrapolable law."
+            },
+            {
+              "type": "quote",
+              "html": "A large focus of the GPT-4 project was building a deep learning stack that scales predictably. The primary reason is that for very large training runs like GPT-4, it is not feasible to do extensive model-specific tuning. To address this, we developed infrastructure and optimization methods that have very predictable behavior across multiple scales."
+            },
+            {
+              "type": "p",
+              "html": "The phrase to underline is <b>\"not feasible to do extensive model-specific tuning.\"</b> At small scale you sweep learning rates, batch sizes, and initializations until something works. At GPT-4 scale that sweep is unaffordable, so the recipe has to be <i>derived</i> from small runs, not <i>found</i> at large scale. The whole bet is that the right quantities scale smoothly enough to read off a curve."
+            },
+            {
+              "type": "p",
+              "html": "Historically this idea comes straight out of Kaplan et al.'s 2020 <i>Scaling Laws for Neural Language Models</i> and Hoffmann et al.'s 2022 <i>Chinchilla</i> work, which showed that test loss falls as a clean <b>power law</b> in compute. GPT-4's contribution here is not the law's existence but the demonstration that it holds tightly enough, across a 1,000× compute gap, to be used as a planning tool for an actual frontier run."
+            }
+          ]
+        },
+        {
+          "title": "The power law that predicted GPT-4's loss",
+          "subtitle": "Fitting small runs and extrapolating across a 1000x compute gap",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the concrete result, and it is striking. OpenAI trained a ladder of smaller models using the <i>same</i> method and infrastructure as GPT-4, but at far less compute. They plotted each model's <b>final loss</b> against its <b>training compute</b>, fit a power law to the small models <i>excluding GPT-4</i>, and then checked where GPT-4 actually landed. It landed essentially on the line."
+            },
+            {
+              "type": "p",
+              "html": "Read Figure 1 carefully. The y-axis is <b>bits per word</b> (loss) on a held-out dataset from OpenAI's internal codebase; the x-axis is training compute, normalized so that <b>GPT-4 = 1</b>. The dotted fit is anchored on models down to about <code>10⁻⁴</code> on that axis — roughly 1/10,000th of GPT-4's compute — yet it threads the green GPT-4 point at x = 1."
+            },
+            {
+              "type": "math",
+              "tex": "L(C) = aC^{b} + c"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: <b>$L$</b> is the final loss (here, bits per word on the held-out code corpus), a single scalar. <b>$C$</b> is the training compute, a scalar that is varied across the ladder of models and normalized to $C=1$ at GPT-4. <b>$a$, $b$, $c$</b> are scalars fit from the small models only: <b>$b$</b> (negative) is the power-law exponent that sets how fast loss falls as compute grows, <b>$a$</b> is the scale factor, and <b>$c$</b> is an <i>irreducible loss floor</i> — the entropy the model can never predict away no matter how much compute you add. Crucially, <i>GPT-4's own point is not used to fit $a$, $b$, $c$</i>; it is the test of the extrapolation."
+            },
+            {
+              "type": "quote",
+              "html": "A power law fit to the smaller models (excluding GPT-4) is shown as the dotted line; this fit accurately predicts GPT-4's final loss. The x-axis is training compute normalized so that GPT-4 is 1."
+            },
+            {
+              "type": "p",
+              "html": "Why does an irreducible floor $c$ have to be in the equation? Without it, a pure $aC^{b}$ predicts loss can be driven to zero with enough compute — which is false, because natural text contains genuine unpredictability (the next word is sometimes a coin flip). The floor encodes that ceiling on predictability and is why the fit stays accurate at the high-compute end instead of bending too far down."
+            }
+          ]
+        },
+        {
+          "title": "Predicting a capability, not just a loss number",
+          "subtitle": "From a smooth loss curve to 'will it solve this coding problem?'",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Predicting loss is nice, but loss is an abstract quantity. What a practitioner actually cares about is a <b>capability</b>: will the model solve the problem? These are not obviously the same thing, because capabilities are usually pass/fail — the model either gets the unit tests green or it doesn't — and pass/fail metrics tend to jump around and look discontinuous. The harder claim in this section is that even a capability metric can be extrapolated."
+            },
+            {
+              "type": "p",
+              "html": "The concrete demonstration uses <b>HumanEval</b>, OpenAI's Python coding benchmark, on a subset of 23 problems. Instead of a raw pass rate, they track the <b>mean log pass rate</b>, and Figure 2 shows it falling along a power law in compute just like the loss did. The fit from the smaller models predicts GPT-4's pass rate on that subset — a real, useful capability — in advance."
+            },
+            {
+              "type": "math",
+              "tex": "-\\mathbb{E}_{\\text{problem}}\\big[\\log(\\text{pass\\_rate})\\big] = \\alpha C^{\\beta}"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: the left side is the <b>negative mean over problems of the log pass rate</b>. For a single problem, <b>pass_rate</b> is the fraction of sampled solutions that pass the unit tests, a number in $(0,1]$; taking $\\log$ stretches out the near-zero region so the metric varies smoothly, and the leading minus sign makes it a positive quantity that <i>decreases</i> as the model improves. <b>$\\mathbb{E}_{\\text{problem}}$</b> averages over the 23 problems. On the right, <b>$C$</b> is training compute again and <b>$\\alpha$, $\\beta$</b> are fit constants ($\\beta$ negative). Using log pass rate rather than raw pass rate is the trick that turns a jagger pass/fail signal into something a power law can ride."
+            },
+            {
+              "type": "quote",
+              "html": "We successfully predicted the pass rate on a subset of the HumanEval dataset by extrapolating from models trained with at most 1,000× less compute."
+            },
+            {
+              "type": "p",
+              "html": "The report is honest that this is not a solved problem. Some capabilities remain genuinely hard to forecast — they cite the <b>Hindsight Neglect</b> task (Figure 3) from the Inverse Scaling Prize, where accuracy <i>got worse</i> as models scaled across the earlier line, then GPT-4 reversed the trend. A metric that is non-monotonic in scale cannot be fit with a single power law, which is exactly why \"predict everything before training\" is still an open research direction rather than a guarantee."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Exam Performance",
+      "pages": [
+        {
+          "title": "Sitting GPT-4 for human professional exams",
+          "subtitle": "The bar exam, the SAT, the LSAT, and the meaning of a percentile",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Standard NLP benchmarks (\"answer these 5,000 multiple-choice trivia questions\") are easy to game and hard for a non-specialist to interpret. So the report reaches for a yardstick everyone already understands: <b>the exams humans take to enter professions.</b> If GPT-4 scores in the top 10% on the bar exam, you immediately grasp what that means in a way no benchmark percentage conveys."
+            },
+            {
+              "type": "p",
+              "html": "The single most-quoted result is the <b>Uniform Bar Exam</b>. GPT-4 scored <b>298 out of 400</b>, which the report places <b>around the 90th percentile</b> of human test-takers — the \"top 10%\" of the abstract. The contrast with the previous generation is the real story: GPT-3.5 scored about <b>213/400</b>, near the <b>10th percentile</b>. Same exam, same scoring, one generation apart: bottom decile to top decile."
+            },
+            {
+              "type": "table",
+              "headers": ["Exam", "GPT-4", "GPT-3.5"],
+              "rows": [
+                ["Uniform Bar Exam (MBE+MEE+MPT)", "298 / 400 (~90th pct)", "213 / 400 (~10th pct)"],
+                ["LSAT", "163 (~88th pct)", "149 (~40th pct)"],
+                ["SAT Evidence-Based Reading & Writing", "710 / 800 (~93rd pct)", "670 / 800 (~87th pct)"],
+                ["SAT Math", "700 / 800 (~89th pct)", "590 / 800 (~70th pct)"],
+                ["USA Biology Olympiad (semifinal)", "~99th–100th pct", "~32nd pct"],
+                ["AP Calculus BC", "4 / 5", "1 / 5"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "One number deserves a footnote so you read the rest honestly. The <b>USA Biology Olympiad</b> jump (roughly 32nd percentile to near the ceiling) is dramatic, but olympiad percentiles are computed against an already-elite pool of students, so \"99th percentile\" there is not the same population as \"90th percentile\" on the bar. The report's own pattern is the trustworthy signal: <b>broad, consistent, large gains</b> across exams of very different types, not one cherry-picked headline."
+            },
+            {
+              "type": "p",
+              "html": "A subtle but important caveat from the methodology: these exams were run <b>without exam-specific training</b>, and the contamination check matters. The report describes measuring overlap between exam questions and the training set, and reports that scores hold up even when seen examples are removed — which is the difference between \"the model reasons\" and \"the model memorized the answer key.\""
+            }
+          ]
+        },
+        {
+          "title": "Academic benchmarks and the multilingual result",
+          "subtitle": "MMLU at 86.4%, and passing MMLU in 24 languages",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Exams designed for humans are persuasive but unfamiliar to ML researchers, so the report also reports the <b>standard academic benchmarks</b> the field uses to rank models. This is where you check that the exam wins are not a quirk of test format. The pattern repeats: GPT-4 sets a new state of the art on the suite."
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "What it tests", "GPT-4"],
+              "rows": [
+                ["MMLU", "57-subject multiple-choice knowledge", "86.4%"],
+                ["HellaSwag", "Commonsense sentence completion", "95.3%"],
+                ["ARC (Challenge)", "Grade-school science reasoning", "96.3%"],
+                ["WinoGrande", "Commonsense coreference", "87.5%"],
+                ["HumanEval", "Python code generation (pass@1)", "67.0%"],
+                ["GSM-8K", "Grade-school math word problems", "92.0%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>MMLU</b> (Massive Multitask Language Understanding) is the headline academic number: 57 subjects from law to medicine to abstract algebra, scored at <b>86.4%</b>, a clear jump over the prior state of the art. <b>GSM-8K</b> at 92% is notable because grade-school math word problems specifically stress multi-step reasoning, the thing language models were long accused of faking."
+            },
+            {
+              "type": "p",
+              "html": "The most quietly important result is multilingual. The team <b>machine-translated MMLU into 26 languages</b> and ran GPT-4 on each. The finding (Figure 5): GPT-4 in many languages <b>beats the prior English state of the art that English-only models achieved.</b>"
+            },
+            {
+              "type": "quote",
+              "html": "GPT-4 outperforms the English-language performance of GPT-3.5 and existing language models (Chinchilla, PaLM) for the majority of languages we tested, including low-resource languages such as Latvian, Welsh, and Swahili."
+            },
+            {
+              "type": "p",
+              "html": "Reading that carefully: GPT-4 answering MMLU <b>in Latvian or Swahili</b> outscores the best previous models answering the <i>same test in English</i>. That is a strong statement about how much capability transfers across languages once a model is large enough, and it is the kind of result the predictable-scaling and broad-evaluation framing of the whole report was built to surface."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Safety, RLHF, and the closed-report turn",
+          "subtitle": "What GPT-4 changed about how frontier models are built and described",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A raw next-token predictor is not the product. The base model that aces these exams is also happy to follow harmful instructions, confidently make things up, and ignore what you actually asked. The report's second methodological pillar is <b>post-training alignment</b>: turning a capable predictor into a model that is more truthful and refuses more appropriately."
+            },
+            {
+              "type": "p",
+              "html": "The mechanism is <b>RLHF</b> — Reinforcement Learning from Human Feedback — inherited directly from the <i>InstructGPT</i> (Ouyang et al., 2022) line: humans rank model outputs, a reward model learns to imitate those rankings, and the policy is optimized against that reward. A key empirical note the report is careful to make: <b>RLHF improves alignment and helpfulness but does not by itself raise raw exam capability</b> — the knowledge is laid down in pre-training, and alignment shapes how it is expressed."
+            },
+            {
+              "type": "p",
+              "html": "GPT-4 also moves the needle on a stubborn failure mode. Compared to GPT-3.5 it is substantially <b>less likely to fabricate (hallucinate)</b> and more likely to refuse disallowed content, the result of a dedicated safety pipeline involving domain-expert red-teaming and an extra reward signal that pushes the model toward safe behavior during RLHF."
+            },
+            {
+              "type": "p",
+              "html": "The historical significance, though, is partly about what the report <i>refuses</i> to say. GPT-2 (2019) and GPT-3 (2020) came with architecture, parameter counts, and training details. GPT-4 publishes none of it, citing the <b>competitive landscape and safety</b>. This report is the moment the frontier-lab norm visibly shifted from \"open research paper\" toward \"capabilities-and-evaluations-only technical report,\" and it drew real criticism for it."
+            },
+            {
+              "type": "p",
+              "html": "What endures, then, is a two-part legacy. <b>Methodologically:</b> predictable scaling — the demonstration that a frontier run's loss, and even some capabilities, can be forecast from runs 1,000× smaller — turned training huge models from a gamble into something closer to engineering. <b>Empirically:</b> the exam scores reset public expectations of what \"a language model\" could do, from a research curiosity to something measured against lawyers and doctors. The architecture stayed secret; the bar exam score did not."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

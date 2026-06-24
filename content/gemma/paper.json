@@ -1,0 +1,336 @@
+{
+  "title": "Gemma: Open Models Based on Gemini Research",
+  "authors": "Gemma Team, Google DeepMind",
+  "year": "2024",
+  "venue": "arXiv:2403.08295",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Big-model research, small-model release",
+          "subtitle": "What Gemma is and why it exists",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2024 the strongest language models were the closed, hundred-billion-parameter family at the frontier (GPT-4, Gemini Ultra). They are expensive to run and impossible to inspect. Meanwhile the open-weights community had Llama 2 and Mistral, but these did not have the benefit of the data, infrastructure, and safety research that went into a frontier lab's flagship. <b>Gemma's pitch is to take the recipe behind Google's Gemini models and pour it into two small models that anyone can download and run on a laptop or a single GPU.</b>"
+            },
+            {
+              "type": "p",
+              "html": "Concretely, Gemma is a pair of decoder-only transformers, a <b>2B</b> model and a <b>7B</b> model, trained on up to 6 trillion tokens. The 2B is sized to run on a CPU or phone; the 7B is sized for a single consumer or cloud GPU. Each comes in two flavors: a raw <i>pretrained</i> checkpoint and an <i>instruction-tuned</i> (IT) checkpoint ready to follow chat-style prompts."
+            },
+            {
+              "type": "quote",
+              "html": "This work introduces Gemma, a family of lightweight, state-of-the-art open models built from the research and technology used to create Gemini models. Gemma models demonstrate strong performance across academic benchmarks for language understanding, reasoning, and safety."
+            },
+            {
+              "type": "p",
+              "html": "The headline claim is efficiency-per-parameter: across 18 text benchmarks, Gemma outperforms similarly sized open models on 11 of them. The 7B model beats Llama 2 13B on reasoning and code despite having fewer than two-thirds the parameters. The lesson the paper presses is that <b>data quality and a careful training recipe can buy you more than raw parameter count.</b>"
+            },
+            {
+              "type": "p",
+              "html": "Why release the weights at all? The authors argue openness lets the wider community probe for failure modes, build on top of the models, and develop safety techniques that closed access would hide. They pair the release with responsible-deployment guidance and red-teaming results, treating the model card and safety evaluation as part of the artifact, not an afterthought."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "A decoder-only transformer, tuned",
+          "subtitle": "The backbone and what makes it Gemma",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Gemma does not reinvent the transformer. It is a standard <b>decoder-only</b> transformer, the same autoregressive next-token architecture introduced by Vaswani et al. (2017) and used by GPT. The contribution is not a new block; it is a tasteful assembly of four upgrades that the field had converged on by 2024, plus careful sizing. Think of it like a well-specced car built entirely from proven, off-the-shelf parts."
+            },
+            {
+              "type": "p",
+              "html": "The two sizes are quite different shapes. The 2B is deliberately <i>narrow but not shallow</i> (18 layers, model width 2048), while the 7B is wider and deeper (28 layers, width 3072). Both share the same enormous 256,128-token vocabulary and the same 256-dimensional attention head size."
+            },
+            {
+              "type": "table",
+              "headers": ["Hyperparameter", "Gemma 2B", "Gemma 7B"],
+              "rows": [
+                ["d_model (width)", "2048", "3072"],
+                ["Layers (depth)", "18", "28"],
+                ["Feedforward hidden dim", "32768", "49152"],
+                ["Attention heads", "8", "16"],
+                ["KV heads", "1 (MQA)", "16 (MHA)"],
+                ["Head size", "256", "256"],
+                ["Vocab size", "256128", "256128"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the table as a design fork. The 7B uses <b>multi-head attention</b> (16 query heads, 16 key/value heads). The 2B uses <b>multi-query attention</b> (MQA): 8 query heads but only <b>1</b> shared key/value head. MQA shrinks the per-token key-value cache by 8x, which is exactly the memory bottleneck when you want a 2B model to run on a phone with a long context. The authors found MQA cost little quality at the 2B scale while buying large inference savings."
+            },
+            {
+              "type": "h2",
+              "text": "The four named upgrades"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>RoPE (Rotary Position Embeddings)</b>, instead of learned absolute positions. Position is encoded by rotating the query/key vectors by an angle proportional to position, so relative offsets fall out of a dot product and the model extrapolates to longer sequences. RoPE is also shared across embeddings to reduce model size.",
+                "<b>GeGLU activations</b> in the feedforward block, replacing the standard ReLU MLP. A gating branch multiplies the projected signal, giving the network a learned, input-dependent gate.",
+                "<b>RMSNorm</b> to normalize the input of every transformer sub-layer (and the output), a cheaper, scale-only variant of LayerNorm that stabilizes training.",
+                "<b>An 8192-token context</b> with the large 256k SentencePiece vocabulary, so the tokenizer wastes few tokens on multilingual and code text."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Note the parameter accounting consequence of that giant vocabulary: of the 2B model's parameters, about <b>524M live in the embedding table</b> alone (786M for the 7B). That is why the paper reports both an embedding and a non-embedding parameter count, and why the '2B' has roughly 2.5B parameters in total."
+            }
+          ]
+        },
+        {
+          "title": "GeGLU and RMSNorm, term by term",
+          "subtitle": "The two equations that make the block",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Two of the four upgrades are worth reading symbol by symbol, because they are the parts of the block that differ from a vanilla GPT layer: the <b>feedforward activation (GeGLU)</b> and the <b>normalization (RMSNorm)</b>."
+            },
+            {
+              "type": "h2",
+              "text": "GeGLU: a gated feedforward"
+            },
+            {
+              "type": "p",
+              "html": "A standard transformer MLP does <i>up-project, apply a pointwise nonlinearity, down-project</i>. GeGLU splits the up-projection into <b>two</b> parallel projections and lets one gate the other:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{GeGLU}(x) = \\big(\\text{GELU}(x W_g)\\ \\odot\\ (x W_u)\\big)\\, W_d"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x \\in \\mathbb{R}^{d}$ is the token's hidden vector (so $d = 2048$ for the 2B). $W_g$ and $W_u$ are two separate up-projection matrices, each in $\\mathbb{R}^{d \\times h}$ where $h$ is the feedforward hidden dim (32768 for the 2B). $\\text{GELU}$ is the smooth Gaussian-error-linear-unit activation; $\\odot$ is elementwise multiplication, so $\\text{GELU}(xW_g)$ acts as a learned <b>gate</b> that scales the content branch $xW_u$ entry by entry. $W_d \\in \\mathbb{R}^{h \\times d}$ projects back down to width $d$. The gate lets the network suppress or pass each hidden unit depending on the input, which empirically improves quality over a plain GELU MLP."
+            },
+            {
+              "type": "p",
+              "html": "Because GeGLU needs two up-projections instead of one, the hidden dim is chosen so the total feedforward parameter count stays comparable; this is why $h$ is so large relative to $d$."
+            },
+            {
+              "type": "h2",
+              "text": "RMSNorm: normalize by magnitude only"
+            },
+            {
+              "type": "p",
+              "html": "LayerNorm subtracts the mean and divides by the standard deviation. RMSNorm drops the mean-subtraction and the variance, keeping only the root-mean-square scale:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{RMSNorm}(x)_i = \\frac{x_i}{\\sqrt{\\frac{1}{d}\\sum_{j=1}^{d} x_j^2 + \\epsilon}}\\; g_i"
+            },
+            {
+              "type": "p",
+              "html": "Here $x \\in \\mathbb{R}^{d}$ is the vector being normalized and $x_i$ its $i$-th coordinate. The denominator is the root mean square over all $d$ coordinates: $\\sqrt{\\tfrac{1}{d}\\sum_j x_j^2}$, with $\\epsilon$ a tiny constant (e.g. $10^{-6}$) for numerical safety. $g_i$ is a learned per-coordinate gain, the only trainable parameter. Because there is no mean term, RMSNorm is cheaper and, in practice, just as stable, which is why Gemma normalizes both the <b>input and the output</b> of every sub-layer with it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training",
+      "pages": [
+        {
+          "title": "6 trillion tokens, filtered hard",
+          "subtitle": "Pretraining data, compute, and the TPU setup",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "If the architecture is off-the-shelf, the <b>data and scale</b> are where a frontier lab's advantage shows. The intuition the paper leans on: a smaller model trained on far more, cleaner tokens can match a larger model trained on less. Gemma trains the 7B on <b>6 trillion</b> tokens and the 2B on <b>2 trillion</b> tokens of primarily-English web documents, mathematics, and code."
+            },
+            {
+              "type": "p",
+              "html": "This is a deliberately <i>over-trained</i> regime in the Chinchilla sense: 6T tokens is far more than the compute-optimal amount for a 7B model. The trade is intentional. You spend extra training compute once so that the model you ship is small and cheap to run forever after, which matters precisely because these are meant to run on modest hardware."
+            },
+            {
+              "type": "h2",
+              "text": "Filtering for quality and safety"
+            },
+            {
+              "type": "p",
+              "html": "Raw web text is filtered in stages. The pipeline uses heuristics and model-based classifiers to remove low-quality content, and applies filters to reduce the risk of unsafe or undesirable outputs. Critically, the authors <b>remove evaluation-set data from the training mix</b> to avoid contamination that would inflate benchmark scores. Personal and sensitive information is filtered out for privacy."
+            },
+            {
+              "type": "quote",
+              "html": "We filter the pre-training dataset to reduce the risk of unwanted or unsafe utterances, and filter out certain personal information and other sensitive data. This includes both heuristics and model-based classifiers to remove harmful or low-quality content."
+            },
+            {
+              "type": "h2",
+              "text": "The tokenizer"
+            },
+            {
+              "type": "p",
+              "html": "Gemma uses a <b>SentencePiece</b> tokenizer with a 256,128-entry vocabulary, a subset of the Gemini tokenizer. It splits digits, preserves whitespace, and uses byte-level fallback for unknown characters. A large vocabulary is the right call when you care about multilingual text and code, because rare tokens (a Korean syllable, a code symbol) get their own entry rather than being shredded into many byte tokens, which keeps sequences short and information-dense."
+            },
+            {
+              "type": "h2",
+              "text": "Compute"
+            },
+            {
+              "type": "p",
+              "html": "Training ran on Google's <b>TPUv5e</b> accelerators. The 7B was trained across 16 pods (4096 chips) and the 2B across 2 pods (512 chips), using data and model sharding plus the ZeRO-3-style optimizer-state sharding to fit and scale. Carbon emissions from pretraining are reported as part of the responsible-release framing."
+            }
+          ]
+        },
+        {
+          "title": "From raw model to helpful assistant",
+          "subtitle": "Supervised fine-tuning and RLHF",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A pretrained model is a next-token predictor, not an assistant. Ask it a question and it may continue with more questions, because that is a plausible web continuation. The <b>instruction-tuning</b> stage teaches the model the conversational contract: when given an instruction, produce a helpful answer and then stop. Gemma does this in two steps, mirroring the InstructGPT recipe."
+            },
+            {
+              "type": "h2",
+              "text": "Step 1: Supervised fine-tuning (SFT)"
+            },
+            {
+              "type": "p",
+              "html": "The model is fine-tuned on a mix of <b>text-only, English-only prompt-response pairs</b>, some human-generated and some synthetic. The pairs are wrapped in a control-token format that marks turn boundaries, for example a <code>&lt;start_of_turn&gt;user ... &lt;end_of_turn&gt;</code> / <code>&lt;start_of_turn&gt;model ...</code> structure, so the model learns exactly where a user turn ends and its own answer should begin."
+            },
+            {
+              "type": "p",
+              "html": "Which response pairs to keep was itself decided by an LLM: the team used model-based judging to filter the SFT examples, selecting for quality on factuality, helpfulness, and safety. They note that the choice of formatting and data mixture had a large effect on the final quality, more than is often appreciated."
+            },
+            {
+              "type": "h2",
+              "text": "Step 2: RLHF"
+            },
+            {
+              "type": "p",
+              "html": "After SFT, Gemma is further tuned with <b>Reinforcement Learning from Human Feedback</b>. A separate <i>reward model</i> is trained on pairs of responses that human labelers ranked by preference; the policy (the Gemma model) is then optimized to produce responses the reward model scores highly. Intuitively: SFT shows the model good answers, and RLHF teaches it to <i>prefer</i> the better of two plausible answers, sharpening helpfulness and safety beyond what imitation alone achieves."
+            },
+            {
+              "type": "p",
+              "html": "The reward model itself is high-capacity and trained on human-labeled English preference data. The combination, SFT to set the format and floor, RLHF to push the ceiling, is what turns the raw checkpoint into the <code>-it</code> (instruction-tuned) models people actually chat with."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Punching above its weight class",
+          "subtitle": "Benchmark numbers vs Llama 2 and Mistral",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The central empirical claim: Gemma is the best open model <i>for its size</i>, and the 7B competes with models nearly twice as large. The paper evaluates the pretrained models on 18 standard benchmarks spanning question answering, commonsense reasoning, math, and code, and reports Gemma winning on <b>11 of 18</b> against comparably sized open models."
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "Llama 2 7B", "Llama 2 13B", "Mistral 7B", "Gemma 7B"],
+              "rows": [
+                ["MMLU (5-shot)", "45.3", "54.8", "62.5", "64.3"],
+                ["HellaSwag (0-shot)", "77.2", "80.7", "81.0", "81.2"],
+                ["ARC-c", "45.9", "49.4", "54.9", "53.2"],
+                ["GSM8K (math)", "14.6", "28.7", "35.4", "46.4"],
+                ["HumanEval (code, pass@1)", "12.8", "18.3", "30.5", "32.3"],
+                ["MBPP (code)", "20.8", "30.6", "40.2", "44.4"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the two bottom rows, math and code, because that is where the gap is widest. On <b>GSM8K</b> grade-school math, Gemma 7B scores 46.4 versus Llama 2 13B's 28.7, beating a model nearly twice its size. On <b>HumanEval</b> code generation it reaches 32.3 pass@1, again ahead of both Llama 2 sizes and edging out Mistral 7B. On the broad knowledge test <b>MMLU</b> it posts 64.3, the strongest among open 7B-class models at release."
+            },
+            {
+              "type": "p",
+              "html": "The 2B model is held to a different bar: it is meant to be the strong choice in the on-device, sub-3B class, where it leads. The point is not that 2B beats 7B, it is that each model is state-of-the-art <i>within its compute budget</i>, which is the metric that matters if you actually have to deploy on fixed hardware."
+            },
+            {
+              "type": "p",
+              "html": "Why does a 7B model beat a 13B one? The paper's answer is the training recipe: 6T tokens of heavily filtered data, the GeGLU/RoPE/RMSNorm architecture, and a Gemini-derived tokenizer that wastes few tokens. It is direct evidence for the over-training thesis, spend training compute to get a small model that is cheap to serve and still strong."
+            }
+          ]
+        },
+        {
+          "title": "Judged by humans, and stress-tested for safety",
+          "subtitle": "Human preference, memorization, and red-teaming",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Benchmarks measure narrow skills; they do not tell you whether people prefer talking to the model. So the instruction-tuned Gemma was put in <b>blind side-by-side human evaluations</b> against Mistral v0.2 7B Instruct, with labelers judging which response was better on a set of held-out prompts."
+            },
+            {
+              "type": "p",
+              "html": "On a creative/instruction-following prompt set, Gemma 7B IT is preferred over Mistral 7B Instruct a majority of the time (a positive win rate with tight 95% confidence intervals), and it also wins on a separate safety-oriented prompt set. The win rates are reported with confidence intervals precisely so readers can see the margins are real and not noise."
+            },
+            {
+              "type": "h2",
+              "text": "Memorization: does it just copy its training data?"
+            },
+            {
+              "type": "p",
+              "html": "A real worry for a model trained on 6T web tokens is verbatim regurgitation of copyrighted or private text. The authors measure memorization by prompting the model with a prefix of a training document and checking whether it reproduces the continuation. They find Gemma's memorization rate is <b>comparable to or below</b> prior models of similar size (PaLM and the PaLM 2 family), and that detected <i>personal-data</i> memorization is very low. This is the kind of measurement that is only possible when you have the weights and the training pipeline, an argument for open release."
+            },
+            {
+              "type": "h2",
+              "text": "Safety and responsible deployment"
+            },
+            {
+              "type": "p",
+              "html": "Gemma reports results on standardized safety benchmarks (toxicity, bias, and similar), internal red-teaming against the instruction-tuned models, and assurance evaluations. The release ships with a <b>model card</b> and a responsible-deployment toolkit so downstream developers can apply their own safety filtering."
+            },
+            {
+              "type": "quote",
+              "html": "We believe the openness of these models will benefit the safety and research community, lowering the barrier to entry for studying and improving large language models, while we maintain a strong commitment to responsible release."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Gemma mattered",
+          "subtitle": "Its place in the open-model landscape",
+          "pdfPages": [1, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Gemma's importance is less about any single equation, GeGLU, RoPE, and RMSNorm were all borrowed, and more about <b>who released what, and how</b>. It was Google DeepMind, a frontier lab, openly publishing weights distilled from the same research line as Gemini, with a transparent training and safety story. That changed the texture of the open-weights ecosystem, which until then had been led mainly by Meta's Llama and Mistral."
+            },
+            {
+              "type": "h2",
+              "text": "The thesis it proved"
+            },
+            {
+              "type": "p",
+              "html": "The lasting technical takeaway is the <b>over-training trade</b>: pour far more tokens than compute-optimal into a small model, and you ship something cheap to run that punches above its parameter count. Gemma 7B beating Llama 2 13B on math and code made this concrete. The same logic now drives most small open models, the cost has shifted from inference back to a one-time training spend, which is the right place for it when a model will be served billions of times."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Two practical sizes: a 2B for CPU/on-device (using MQA to shrink the KV cache) and a 7B for a single GPU.",
+                "A frontier tokenizer (256k vocab) and 6T filtered tokens, the data quality lever over the parameter lever.",
+                "A full instruction-tuning stack (SFT plus RLHF) and ready-to-chat <code>-it</code> checkpoints.",
+                "Safety and memorization measured and published, not just claimed, made possible by open weights."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Gemma seeded a fast-moving family: <b>CodeGemma</b>, <b>RecurrentGemma</b>, <b>PaliGemma</b> (vision-language), and the much stronger <b>Gemma 2</b> followed within months. For practitioners it became a default lightweight base, fine-tunable on modest hardware and licensed for commercial use, which is exactly the niche the paper set out to fill: frontier research, in a model you can actually hold in your hand."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

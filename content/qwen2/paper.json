@@ -1,0 +1,324 @@
+{
+  "title": "Qwen2 Technical Report",
+  "authors": "Yang, Yang, et al. (Alibaba)",
+  "year": "2024",
+  "venue": "arXiv:2407.10671",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A family, not a single model",
+          "subtitle": "What Qwen2 is and why it matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Most papers introduce <i>one</i> model. Qwen2 introduces a whole <b>fleet</b>: five sizes that share one recipe but scale from something you can run on a phone to something that competes with the best open-weight giants. The question this report answers is: <i>can a single, carefully engineered training pipeline produce strong models across two orders of magnitude in size, in many languages, while staying openly downloadable?</i> The answer they argue for is yes."
+            },
+            {
+              "type": "p",
+              "html": "Concretely the family is: four <b>dense</b> models at <b>0.5B</b>, <b>1.5B</b>, <b>7B</b> and <b>72B</b> parameters, plus one <b>Mixture-of-Experts (MoE)</b> model, <b>Qwen2-57B-A14B</b>, which has 57B total parameters but only activates 14B per token. Each comes in a <b>base</b> (pretrained) version and an <b>instruction-tuned</b> chat version."
+            },
+            {
+              "type": "p",
+              "html": "Think of it like a car company shipping a scooter, a sedan, an SUV and a race car off one shared platform. The race car (Qwen2-72B) is what grabs headlines, but the scooter (0.5B) matters too: it lets the same intelligence run on a laptop or a phone. Designing one platform that serves all of them is the real engineering story here."
+            },
+            {
+              "type": "quote",
+              "html": "Qwen2 surpasses most prior open-weight models, including its predecessor Qwen1.5, and exhibits competitive performance relative to proprietary models across diverse benchmarks on language understanding, generation, multilingual capability, coding, mathematics, and reasoning."
+            },
+            {
+              "type": "p",
+              "html": "The headline number: the flagship <b>Qwen2-72B</b> scores <b>84.2</b> on MMLU (general knowledge), <b>64.6</b> on HumanEval (coding), <b>89.5</b> on GSM8K (grade-school math) and <b>82.4</b> on BBH (hard reasoning) <i>in its base form</i>, beating the much-discussed Llama-3-70B and Mixtral-8x22B on the same tests. We unpack each of these later."
+            },
+            {
+              "type": "p",
+              "html": "Two more things distinguish Qwen2. First, <b>multilingual breadth</b>: it was trained on data from roughly <b>30 languages</b> beyond English and Chinese, including Arabic, Japanese, Korean, Thai, Vietnamese and many European tongues. Second, <b>long context</b>: the instruction-tuned models handle up to <b>128K tokens</b> of input. And crucially, the weights are released openly on Hugging Face and ModelScope, so anyone can build on them."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Tokenizer & Dense Architecture",
+      "pages": [
+        {
+          "title": "How text becomes numbers, and the dense backbone",
+          "subtitle": "Tokenizer plus the four standard Transformer ingredients",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before a model can do anything, raw text must be chopped into <b>tokens</b> (sub-word chunks) and each token mapped to an integer id. The choice of tokenizer quietly decides how efficiently the model handles different languages: a bad tokenizer might need 4 tokens to write a common Chinese or Arabic word that English writes in 1, wasting context and compute."
+            },
+            {
+              "type": "p",
+              "html": "Qwen2 reuses the tokenizer from Qwen, a <b>byte-level byte-pair-encoding (BBPE)</b> tokenizer with a vocabulary of <b>151,643</b> regular tokens. <i>Byte-level</i> means it falls back to raw bytes, so it can encode <i>any</i> string in <i>any</i> language without ever hitting an unknown token. The paper notes this tokenizer achieves high <b>compression rate</b> across many languages, meaning fewer tokens per sentence, which directly translates to cheaper, faster inference."
+            },
+            {
+              "type": "quote",
+              "html": "This tokenizer exhibits a high encoding efficiency, as evidenced by a better compression rate relative to alternatives, which facilitates the scalability of Qwen2 across multiple languages."
+            },
+            {
+              "type": "p",
+              "html": "The dense models are decoder-only Transformers built from four well-chosen components, each fixing a specific weakness of the vanilla 2017 design:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Grouped Query Attention (GQA)</b> — instead of every attention head owning its own key/value vectors (expensive memory at inference) or all heads sharing one (too lossy), heads are split into a few groups that share keys and values. This shrinks the KV cache, the dominant memory cost when generating long sequences.",
+                "<b>Rotary Position Embeddings (RoPE)</b> — positions are encoded by rotating the query and key vectors by an angle proportional to position, so relative distance is baked into the dot product. This extrapolates to longer sequences far better than learned absolute positions.",
+                "<b>SwiGLU activation</b> — a gated feed-forward unit (a sigmoid-linear gate times a linear branch) that consistently outperforms plain ReLU/GELU MLPs at the same parameter count.",
+                "<b>RMSNorm with pre-normalization</b> — normalize the input of each sub-layer (not the output) using root-mean-square normalization, which makes deep stacks train stably without the mean-subtraction LayerNorm uses."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "None of these four are new to Qwen2, they are the post-2020 consensus stack also seen in Llama and PaLM. The point is not novelty but <i>discipline</i>: pick the components that are known to win, and pour the effort into data and scale instead. A notable tweak is <b>QKV bias</b> in attention to improve length extrapolation, and <b>Dual Chunk Attention with YARN</b> at inference to stretch context to 128K, which we cover on the long-context page."
+            }
+          ]
+        },
+        {
+          "title": "The MoE variant: a committee of experts",
+          "subtitle": "How Qwen2-57B-A14B activates only a slice of its weights",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A dense model runs <i>every</i> parameter on <i>every</i> token. That is wasteful: most tokens are easy and do not need the whole network. <b>Mixture-of-Experts (MoE)</b> replaces the single feed-forward block in each layer with a pool of parallel feed-forward <b>experts</b>, and a tiny <b>router</b> picks just a few experts per token. You get the knowledge capacity of a huge model at the compute cost of a small one."
+            },
+            {
+              "type": "p",
+              "html": "Qwen2-57B-A14B is the family's MoE entry: <b>57B total parameters</b> but only <b>14B activated</b> per token (the \"A14B\" in the name). So at inference it costs roughly like a 14B dense model while storing the knowledge of a 57B one, the central MoE bargain."
+            },
+            {
+              "type": "p",
+              "html": "Mechanically, for an input token representation the router produces a score for each expert, keeps the top-<i>k</i>, and the layer's output is the weighted sum of only those experts' outputs:"
+            },
+            {
+              "type": "math",
+              "tex": "y = \\sum_{i \\in \\text{Top-}k} g_i \\, E_i(x)"
+            },
+            {
+              "type": "p",
+              "html": "Here $x$ is the token's hidden vector (shape $\\mathbb{R}^{d}$, the model width); $E_i(x)$ is the output of expert $i$, itself a full SwiGLU feed-forward network; $g_i$ is the router's gating weight for expert $i$ (a softmax over the router logits, nonzero only for the selected top-$k$ experts); and $y$ is the layer output (shape $\\mathbb{R}^{d}$). Because the sum runs over only the top-$k$ experts (the rest contribute zero), the per-token compute is fixed no matter how many experts exist in the pool."
+            },
+            {
+              "type": "p",
+              "html": "Qwen2 adds two refinements over a plain MoE. <b>Fine-grained experts</b>: rather than a few fat experts, it uses many slim ones, giving the router more combinations to compose, which the paper finds improves quality. And <b>shared experts</b>: some experts are <i>always</i> active for every token, capturing common knowledge, while the routed experts specialize, so the router never has to re-learn the basics inside every specialist."
+            },
+            {
+              "type": "quote",
+              "html": "We apply fine-grained experts ... and shared and routing-specific experts ... This design enhances the diversity and flexibility of expert utilization."
+            },
+            {
+              "type": "p",
+              "html": "The trade-off MoE buys you: cheaper compute per token, but <i>all</i> 57B parameters must still live in memory (you cannot predict which experts a token needs). And routing can be unstable, so an auxiliary <b>load-balancing loss</b> is needed to stop the router collapsing onto a few favorite experts. MoE here descends from Switch Transformers and the GShard line; Qwen2 follows the same lineage Mixtral popularized for open weights."
+            }
+          ]
+        },
+        {
+          "title": "Sizing the family",
+          "subtitle": "The configuration table, read line by line",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Scaling a model is not just \"make every number bigger.\" Layer count, hidden width, head count and vocabulary all interact. Qwen2's configuration table shows how the five members trade these off. Here are the key dense configs:"
+            },
+            {
+              "type": "table",
+              "headers": ["Config", "0.5B", "1.5B", "7B", "72B"],
+              "rows": [
+                ["Hidden size", "896", "1536", "3584", "8192"],
+                ["# Layers", "24", "28", "28", "80"],
+                ["# Query heads", "14", "12", "28", "64"],
+                ["# KV heads", "2", "2", "4", "8"],
+                ["Tie embedding", "True", "True", "False", "False"],
+                ["Vocabulary", "151,646", "151,646", "151,646", "151,646"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the table as a story. Going from 7B to 72B, the <b>hidden size</b> roughly doubles (3584 to 8192) and the <b>layer count</b> nearly triples (28 to 80), so depth grows faster than width at the top end. The <b>KV heads</b> (8) are far fewer than the <b>query heads</b> (64) at 72B, that 8-to-64 ratio is GQA in action, sharing each key/value across eight query heads to keep the inference cache small."
+            },
+            {
+              "type": "p",
+              "html": "Notice <b>Tie embedding = True</b> for the two small models but <b>False</b> for 7B and 72B. <i>Tying</i> means the input embedding matrix and the output projection share weights. For a 0.5B model the vocabulary (151K x 896) is a huge fraction of total parameters, so tying them saves a lot; for a 72B model that matrix is a rounding error, so they untie it and let input and output learn separately."
+            },
+            {
+              "type": "quote",
+              "html": "We tie the weights of input and output embeddings for the smaller models, namely Qwen2-0.5B and Qwen2-1.5B, to reduce the memory footprint, as the embedding parameters constitute a significant proportion."
+            },
+            {
+              "type": "p",
+              "html": "The MoE model Qwen2-57B-A14B follows the same skeleton but swaps the feed-forward block for 64 experts (8 activated). The deliberate design choice throughout is that <b>all five members share one tokenizer and one training pipeline</b>, so a user can pick a size purely by their compute budget without relearning a new model's quirks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training",
+      "pages": [
+        {
+          "title": "Pre-training: data, then a long-context stretch",
+          "subtitle": "7 trillion tokens and a context window that grows mid-training",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A Transformer is only as good as the text it eats. The pre-training story for Qwen2 is mostly a <b>data quality and quantity</b> story, plus a clever two-phase trick for teaching it to read long documents."
+            },
+            {
+              "type": "p",
+              "html": "Compared to Qwen1.5, the team enlarged and cleaned the corpus: better filters to drop low-quality web junk, more <b>code and math</b> (the two skills that most reliably lift reasoning), and broadened multilingual coverage to ~30 languages. The dense flagship and most models were pretrained on roughly <b>7 trillion tokens</b>; an experimental run pushed Qwen2-0.5B to <b>12 trillion</b> tokens to probe the limits of small-model scaling."
+            },
+            {
+              "type": "quote",
+              "html": "All models except Qwen2-0.5B were pre-trained with this large-scale dataset of over 7 trillion tokens. ... we explored ... a dataset of 12 trillion tokens for Qwen2-0.5B. The performance ... did not show significant improvement ... suggesting that increasing the volume of data does not necessarily benefit model pre-training."
+            },
+            {
+              "type": "p",
+              "html": "That last finding is worth pausing on: throwing 70% more data (7T to 12T) at the tiny model barely moved the needle. It is a concrete data point that for small models, <i>data quality and architecture matter more than raw token count</i>, an honest negative result the report chose to publish."
+            },
+            {
+              "type": "h2",
+              "text": "Growing the context window"
+            },
+            {
+              "type": "p",
+              "html": "Training on long sequences from the start is expensive (attention cost grows with sequence length). So Qwen2 trains <i>cheaply on short sequences first, then extends</i>. Most of pre-training uses a <b>4,096-token</b> context; near the end, a dedicated <b>long-context phase</b> raises the training length to <b>32,768 tokens</b> while feeding in more long documents."
+            },
+            {
+              "type": "p",
+              "html": "To stretch the window even further <i>without</i> more training, two inference-time tricks are layered on. <b>YARN</b> rescales the RoPE rotation frequencies so positions beyond the training length still get sensible encodings, and <b>Dual Chunk Attention (DCA)</b> splits a very long sequence into chunks and handles within-chunk and cross-chunk attention separately. Together they let the instruction-tuned models reach <b>128K tokens</b> of usable context."
+            },
+            {
+              "type": "quote",
+              "html": "We ... increase the context length from 4,096 tokens to 32,768 tokens ... we introduce ... YARN ... and Dual Chunk Attention ... enabling Qwen2 to ... process sequences of up to 131,072 tokens while maintaining high performance."
+            },
+            {
+              "type": "p",
+              "html": "This short-then-long curriculum is now standard practice (Llama and others do versions of it), because it captures most of the long-context benefit for a fraction of the training cost, you only pay the quadratic attention bill on a small, late slice of training."
+            }
+          ]
+        },
+        {
+          "title": "Post-training: aligning without drowning in human labels",
+          "subtitle": "Scalable data, SFT, then DPO-style RLHF",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A base model predicts the next token; it does not know it is supposed to <i>follow instructions</i> or refuse harmful requests. <b>Post-training</b> (alignment) fixes that. The expensive part is data: classic alignment needs mountains of human-written demonstrations and preference labels. Qwen2's theme is making that data pipeline <b>scalable</b> with minimal human annotation."
+            },
+            {
+              "type": "p",
+              "html": "Their alignment data is built two ways. <b>Collaborative data annotation</b>: humans and models work together, the model drafts, humans curate and label, and an automatic ontology helps cover a wide range of skills. <b>Automated data synthesis</b>: the model generates training examples at scale, with techniques like <b>rejection sampling</b> for math (keep only generations whose final answer is verifiably correct) and <b>execution feedback</b> for code (keep only code that actually passes tests)."
+            },
+            {
+              "type": "quote",
+              "html": "We construct demonstration data ... we ... minimize the need for human annotation ... including rejection sampling for mathematics, execution feedback for coding ... and back-translation for ... writing."
+            },
+            {
+              "type": "p",
+              "html": "Then two training stages. First <b>Supervised Fine-Tuning (SFT)</b>: train on over <b>500,000 examples</b> of (instruction, good-response) pairs for two epochs, teaching the format and behavior of a helpful assistant."
+            },
+            {
+              "type": "p",
+              "html": "Second, <b>RLHF</b> done as <b>Direct Preference Optimization (DPO)</b>. Rather than training a separate reward model and running PPO (the original RLHF recipe, finicky and unstable), DPO optimizes directly on preference pairs with a simple classification-style loss:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{DPO}} = -\\,\\mathbb{E}_{(x, y_w, y_l)}\\left[\\log \\sigma\\!\\left(\\beta \\log \\frac{\\pi_\\theta(y_w \\mid x)}{\\pi_{\\text{ref}}(y_w \\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l \\mid x)}{\\pi_{\\text{ref}}(y_l \\mid x)}\\right)\\right]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x$ is the prompt; $y_w$ is the human-preferred (\"winning\") response and $y_l$ the rejected (\"losing\") one; $\\pi_\\theta$ is the model being trained and $\\pi_{\\text{ref}}$ is a frozen reference copy (the SFT model); the ratio $\\pi_\\theta / \\pi_{\\text{ref}}$ measures how much more likely the new model makes a response than the reference; $\\beta$ is a temperature controlling how hard the update pushes; $\\sigma$ is the logistic sigmoid; the expectation $\\mathbb{E}$ averages over the preference dataset. The loss simply pushes the model to raise the relative likelihood of $y_w$ over $y_l$. No reward model, no rollout loop."
+            },
+            {
+              "type": "p",
+              "html": "Qwen2 runs both an <b>offline</b> DPO stage (on a pre-collected preference set) and an <b>online</b> one (sampling fresh responses and scoring them during training). The payoff of this whole automated pipeline: alignment quality that competes with proprietary chat models while spending far fewer human-annotation hours, which is exactly what lets an open project iterate fast."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Impact",
+      "pages": [
+        {
+          "title": "What the numbers say",
+          "subtitle": "72B versus the open-weight field, and the small models",
+          "pdfPages": [9, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The promise of the report is \"strong across sizes and skills.\" Here is the evidence. The flagship <b>Qwen2-72B base</b> model goes head to head with the strongest open-weight models of mid-2024, Llama-3-70B and the larger Mixtral-8x22B, on standard benchmarks:"
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark (skill)", "Qwen2-72B", "Llama-3-70B", "Mixtral-8x22B", "Qwen1.5-72B"],
+              "rows": [
+                ["MMLU (knowledge)", "84.2", "79.5", "77.8", "77.5"],
+                ["HumanEval (code)", "64.6", "48.2", "46.3", "46.3"],
+                ["GSM8K (math)", "89.5", "83.0", "83.7", "79.5"],
+                ["BBH (reasoning)", "82.4", "81.0", "78.9", "65.5"],
+                ["C-Eval (Chinese)", "91.0", "67.5", "54.6", "84.1"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Qwen2-72B leads on every column, often by a wide margin on the skills that are hardest to fake: <b>+16.4</b> points over Llama-3-70B on HumanEval coding, <b>+6.5</b> on GSM8K math, and a dramatic Chinese-language gap (C-Eval 91.0 vs 67.5) reflecting its bilingual training. The jump over its own predecessor Qwen1.5-72B, +18 points on HumanEval and +6.7 on MMLU, shows the new data and training pipeline, not just scale, did the work."
+            },
+            {
+              "type": "quote",
+              "html": "Qwen2-72B demonstrates superior performance ... it significantly outperforms ... in natural language understanding, knowledge, coding, mathematics, and multilingual abilities."
+            },
+            {
+              "type": "p",
+              "html": "The small end is just as important. <b>Qwen2-7B base</b> reaches <b>70.3</b> on MMLU and <b>51.2</b> on HumanEval, beating Llama-3-8B (66.6 / 33.5) and outscoring it sharply on code. Even <b>Qwen2-0.5B</b>, small enough for edge devices, posts a respectable <b>45.4</b> MMLU, useful intelligence at phone scale."
+            },
+            {
+              "type": "p",
+              "html": "On the instruction-tuned side, the chat models hold up against proprietary systems on chat, coding and math benchmarks, and the <b>128K-token</b> long-context models pass needle-in-a-haystack retrieval tests, confirming the YARN + Dual Chunk Attention extension actually works in practice rather than just on paper."
+            }
+          ]
+        },
+        {
+          "title": "Why Qwen2 mattered",
+          "subtitle": "Open weights, multilingual reach, and what it set up",
+          "pdfPages": [1, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the leaderboard. Qwen2's significance is less about any single record and more about <b>what it made widely available</b>. In mid-2024 the best openly downloadable models were largely English-and-code centric. Qwen2 shipped a genuinely <b>multilingual</b> family (~30 languages), <b>long-context</b> (128K), spanning <b>0.5B to 72B</b>, all under open weights on Hugging Face and ModelScope."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>One platform, many budgets.</b> The shared tokenizer and pipeline mean a startup can prototype on 72B in the cloud and deploy 1.5B on-device without changing model family, the same reason developers value a consistent product line.",
+                "<b>Multilingual as a first-class goal.</b> Strong Chinese, Arabic, Japanese, Korean, Thai and European results opened high-quality open models to communities the English-centric models served poorly.",
+                "<b>Honest engineering over hype.</b> The report publishes negative results (12T tokens barely helped the 0.5B model) and leans on known-good components rather than claiming exotic novelty."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Technically, Qwen2 consolidated the post-2023 open-LLM consensus, GQA, RoPE, SwiGLU, RMSNorm for the dense stack, and fine-grained + shared experts for MoE, and showed that careful <b>data curation and a scalable alignment pipeline</b> (synthetic data, rejection sampling, execution feedback, DPO) could close much of the gap to proprietary chat models without armies of human annotators."
+            },
+            {
+              "type": "p",
+              "html": "It connects directly upstream to the building blocks it stands on: RoPE (Su et al.), GQA (Ainslie et al.), SwiGLU (Shazeer), the Switch/GShard MoE lineage, and DPO (Rafailov et al.). Downstream, it set the foundation for the Qwen2.5 and later Qwen releases and for the many fine-tunes, agents and research projects built on Qwen open weights, exactly the kind of compounding ecosystem effect that justifies releasing strong models openly."
+            },
+            {
+              "type": "quote",
+              "html": "We have opened the weights ... to foster community innovation and accessibility. ... we believe that this will help democratize access to advanced AI technologies."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

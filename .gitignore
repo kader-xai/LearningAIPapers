@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# Source PDFs are regenerable via fetch_*.sh; only rendered pdf-pages/*.png are served
+content/*/paper.pdf

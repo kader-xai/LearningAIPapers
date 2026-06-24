@@ -1,0 +1,241 @@
+{
+  "title": "Chain-of-Verification Reduces Hallucination in LLMs",
+  "authors": "Dhuliawala, et al. (Meta)",
+  "year": "2023",
+  "venue": "arXiv:2309.11495",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The problem: confident, plausible, wrong",
+          "subtitle": "Why a model that double-checks itself hallucinates less",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Ask a large language model a factual question and it will almost always give you a fluent, confident answer. The trouble is that fluency and truth are decoupled: the model can produce <i>plausible yet incorrect</i> information, which the paper (and the field) calls <b>hallucination</b>. This is not a rare glitch; it is an unsolved, systematic failure mode. The deceptive part is the <i>tone</i>: the same smooth, authoritative prose wraps a true fact and a fabricated one, so a reader has no surface signal that something is wrong."
+            },
+            {
+              "type": "p",
+              "html": "The core observation of this paper is almost philosophical: a model is often <i>better at checking a specific claim than at generating a correct answer in the first place</i>. If you ask \"List politicians born in New York City\" the model may blurt out a list with several wrong names. But if you then ask it, point by point, \"Was Hillary Clinton born in New York City?\" it can correctly answer \"No, Chicago\" — because the narrow verification question is easier and triggers different, more focused recall. <b>Chain-of-Verification (CoVe)</b> turns this asymmetry into a procedure."
+            },
+            {
+              "type": "quote",
+              "html": "We develop the Chain-of-Verification (CoVe) method whereby the model first (i) drafts an initial response; then (ii) plans verification questions to fact-check its draft; (iii) answers those questions independently so the answers are not biased by other responses; and (iv) generates its final verified response."
+            },
+            {
+              "type": "p",
+              "html": "So CoVe is four steps run by the <i>same</i> model on its own output: <b>draft → plan questions → answer them independently → revise</b>. No external tools, no retrieval database, no fine-tuning. It is a pure inference-time prompting recipe. The single most important design choice — the one that makes it work — is the word <b>independently</b> in step (iii): the verification questions are answered without the model seeing its original (possibly hallucinated) draft, so it cannot just rubber-stamp its own mistakes."
+            },
+            {
+              "type": "p",
+              "html": "The payoff, measured across list questions, closed-book QA, and longform biography generation: CoVe consistently cuts the number of fabricated facts. On the Wikidata list task, precision more than doubles (0.17 baseline → 0.36); on closed-book MultiSpanQA, F1 climbs from 0.39 to 0.48; and on longform biographies the FACTSCORE improves substantially over the few-shot baseline — all without making the model any bigger."
+            },
+            {
+              "type": "p",
+              "html": "Context: CoVe arrived in late 2023 alongside a wave of \"self-correction\" and \"self-refine\" ideas built on top of <b>Chain-of-Thought</b> prompting (Wei et al., 2022). Its distinctive contribution is recognizing that naive self-correction often <i>fails</i> — a model asked to recheck its own visible answer tends to repeat the same hallucination — and that the fix is to <b>decouple</b> verification from the original generation. From Meta AI and ETH Zurich, authored by Shehzaad Dhuliawala, Mojtaba Komeili, Jing Xu, Roberta Raileanu, Xian Li, Asli Celikyilmaz, and Jason Weston."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "The four-step CoVe pipeline",
+          "subtitle": "Draft, plan, verify, revise",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the whole method as a recipe you could run by hand. Suppose the question is $x$ = \"Name some politicians who were born in New York, New York.\" CoVe runs four prompts in sequence, all to the same frozen LLM:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>1. Baseline response.</b> Prompt the model with $x$ and let it answer normally. Call this draft $y$. Example output: a list of 10 names — some correct (Donald Trump), some wrong (Hillary Clinton, who was actually born in Chicago).",
+                "<b>2. Plan verifications.</b> Conditioned on $x$ and $y$, ask the model to generate a list of verification questions $Q = \\{q_1, \\dots, q_n\\}$ that would fact-check each claim in the draft. Example: \"Where was Hillary Clinton born?\", \"Where was Donald Trump born?\", one per name.",
+                "<b>3. Execute verifications.</b> Answer each $q_i$ to get answers $A = \\{a_1, \\dots, a_n\\}$ — crucially, with the original draft $y$ hidden, so the answers are not biased by it. Example: \"Hillary Clinton → Chicago, Illinois.\"",
+                "<b>4. Final verified response.</b> Given $x$, $y$, $Q$, and $A$, produce a revised answer $y'$ that drops or corrects any claim contradicted by the verifications. Example: the corrected list no longer contains Hillary Clinton."
+              ]
+            },
+            {
+              "type": "math",
+              "tex": "y \\rightarrow Q \\rightarrow A \\rightarrow y' \\qquad q_i \\sim p_\\theta(q \\mid x, y), \\quad a_i \\sim p_\\theta(a \\mid q_i), \\quad y' \\sim p_\\theta(y' \\mid x, y, Q, A)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $p_\\theta$ is the same fixed language model with parameters $\\theta$ throughout (no weights change). $x$ is the user's original query. $y$ is the baseline draft. Each verification question $q_i$ is sampled conditioned on both $x$ and the draft $y$ — the model needs to see the draft to know <i>what</i> to check. Each verification answer $a_i$ is sampled conditioned only on the question $q_i$ (the omission of $y$ here is deliberate and is the heart of the method). Finally $y'$, the verified output, is conditioned on everything — the question, the original draft, the questions, and their independently-derived answers — so it can reconcile contradictions."
+            },
+            {
+              "type": "p",
+              "html": "Why generate the questions <i>after</i> the draft rather than up front? Because the draft tells you exactly which atomic facts are at stake. The model can't know it needs to check \"was Hillary Clinton born in NYC\" until it has produced that claim. The draft acts as a checklist of things that could be wrong."
+            },
+            {
+              "type": "p",
+              "html": "Why use questions at all, instead of asking \"is this list correct?\" The whole bet is on decomposition: a single broad claim is hard to verify, but it breaks into many narrow yes/no-ish sub-claims, each of which the model can resolve more reliably. This mirrors how a careful human fact-checker works — not by re-reading the paragraph and nodding, but by isolating each assertion and looking it up on its own."
+            }
+          ]
+        },
+        {
+          "title": "Why independence is everything",
+          "subtitle": "The factored variants and what breaks without them",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The single biggest failure mode of naive self-correction is that the model, when shown its own answer, agrees with itself. It sees the hallucinated claim sitting in its context window and the path of least resistance is to repeat it. CoVe's whole architecture is organized to prevent this leakage, and the paper studies <b>four variants</b> that differ exactly in how much the original draft can contaminate the verification step."
+            },
+            {
+              "type": "table",
+              "headers": ["Variant", "How verifications are run", "Contamination risk"],
+              "rows": [
+                ["Joint", "Planning and execution of verifications done in a single LLM prompt, together with the draft", "Highest — answers can copy the draft"],
+                ["2-Step", "Plan questions in one prompt, then answer them in a second prompt", "Lower — but all questions share one context"],
+                ["Factored", "Every verification question answered in its own separate prompt", "Low — no draft, no other questions visible"],
+                ["Factor+Revise", "Factored, plus an explicit cross-check step that detects draft/answer inconsistencies", "Lowest — adds a deliberate disagreement check"]
+              ]
+            },
+            {
+              "type": "quote",
+              "html": "In the joint method, the planning and execution (steps 2 and 3) are accomplished by using a single LLM prompt ... This way may increase the likelihood of repetition, another known issue of modern LLMs ... the model may repeat the hallucinations from the original baseline response, which defeats the purpose."
+            },
+            {
+              "type": "p",
+              "html": "Read that carefully: in the <b>joint</b> setting the draft $y$ is right there in the same context as the verification answers, so the model tends to reproduce its earlier mistakes — exactly the trap that sinks naive self-correction. The <b>2-step</b> variant pulls planning and answering into separate prompts, removing the draft from the answering context but still answering all questions together (so one verification answer can bias another)."
+            },
+            {
+              "type": "p",
+              "html": "The <b>factored</b> variant goes all the way: each $a_i$ is produced in its own isolated prompt that contains only its question $q_i$. Formally $a_i \\sim p_\\theta(a \\mid q_i)$ with no $y$ and no other $q_j$ or $a_j$ in context. This is more expensive — $n$ extra forward passes for $n$ questions — but it removes both sources of contamination: the model cannot copy its draft (it can't see it) and cannot let one answer drag another along. This is why factored is the strongest of the lightweight variants in the experiments."
+            },
+            {
+              "type": "p",
+              "html": "<b>Factor+revise</b> adds one more prompt that explicitly asks the model to cross-check the draft claims against the independent verification answers and flag where they <i>disagree</i>. The rationale: even after producing correct verification answers, the model in step 4 might not notice that an answer contradicts the draft. Surfacing the inconsistency explicitly — \"the draft says NYC, the verification says Chicago\" — makes the final revision reason over the conflict rather than glossing over it."
+            },
+            {
+              "type": "p",
+              "html": "The trade-off ladder is clear: more isolation means more prompts (more compute, higher latency) but less self-contamination and higher factual precision. The design lesson that outlived this paper — and shows up across later self-correction and agent work — is that <i>where you let information flow matters as much as what you ask</i>. Hiding the draft from the verifier is a one-line change in the prompt plumbing that does most of the work."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "List questions: precision more than doubles",
+          "subtitle": "Wikidata and Wiki-Category list tasks",
+          "pdfPages": [6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The cleanest test of hallucination is a list task, because you can count fabricated entries. The authors use two: <b>Wikidata</b> (\"who are some politicians born in New York City?\" — answers known from a knowledge base, called the \"easier\" task) and a harder <b>Wiki-Category list</b> task. For each method they report <b>precision</b> (fraction of listed entities that are correct), the average number of correct entities (Pos.), and the average number of hallucinated entities (Neg.). Lower Neg. is better; it counts the lies."
+            },
+            {
+              "type": "table",
+              "headers": ["Model / Method", "Wikidata Prec.", "Wikidata Neg.", "Wiki-Cat Prec.", "Wiki-Cat Neg."],
+              "rows": [
+                ["Llama 2 70B Chat, Zero-shot", "0.12", "3.93", "0.05", "6.85"],
+                ["Llama 2 70B Chat, CoT", "0.08", "8.92", "0.03", "11.1"],
+                ["Llama 65B, Few-shot (baseline)", "0.17", "2.95", "0.12", "4.05"],
+                ["Llama 65B, CoVe (joint)", "0.29", "0.98", "0.15", "1.69"],
+                ["Llama 65B, CoVe (two-step)", "0.36", "0.68", "0.21", "0.52"],
+                ["Llama 65B, CoVe (factored)", "0.32", "0.79", "0.22", "1.52"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The headline number: on Wikidata, the few-shot baseline scores <b>0.17</b> precision, and CoVe (two-step) reaches <b>0.36</b> — more than double. Even more striking is the Neg. column: the baseline fabricates ~2.95 wrong entities per answer; CoVe drives that down to ~0.68. CoVe is not making longer lists; it is cutting out the made-up entries. On the harder Wiki-Category task the same story holds (0.12 → 0.22 precision, 4.05 → 0.52 hallucinated entities for the best variant)."
+            },
+            {
+              "type": "p",
+              "html": "Look at the <b>CoT row</b>: 0.08 precision and 8.92 hallucinated entities — <i>worse</i> than plain zero-shot. This is the paper's quiet but important warning: chain-of-thought, which encourages the model to talk itself into a longer answer, can actually <i>increase</i> hallucination on list tasks by generating more confident-sounding fabrications. Verification is doing something genuinely different from just \"thinking more.\""
+            },
+            {
+              "type": "p",
+              "html": "Notice also that across these list tasks the <b>two-step</b> and <b>factored</b> variants both beat <b>joint</b>, confirming the central hypothesis: the more you isolate verification from the original draft, the less the model copies its own mistakes. Joint already helps a lot (0.17 → 0.29) because even a sloppy verification catches some errors, but removing draft contamination buys the rest of the gain."
+            }
+          ]
+        },
+        {
+          "title": "Closed-book QA and longform biographies",
+          "subtitle": "MultiSpanQA F1 and FACTSCORE",
+          "pdfPages": [7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "List tasks are a clean lab, but does CoVe help on messier, more realistic generation? The authors test two harder settings. First, <b>closed-book MultiSpanQA</b>: questions with several short answer spans, answered with no retrieval (the model must rely on its parameters alone). Scored by F1, precision, and recall against the gold spans."
+            },
+            {
+              "type": "table",
+              "headers": ["Model / Method", "F1", "Prec.", "Rec."],
+              "rows": [
+                ["Llama 2 70B Chat, Zero-shot", "0.20", "0.13", "0.40"],
+                ["Llama 2 70B Chat, CoT", "0.17", "0.11", "0.37"],
+                ["Llama 65B, Few-shot (baseline)", "0.39", "0.40", "0.38"],
+                ["Llama 65B, CoVe (joint)", "0.46", "0.50", "0.42"],
+                ["Llama 65B, CoVe (factored)", "0.48", "0.50", "0.46"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "F1 rises from a 0.39 few-shot baseline to <b>0.48</b> with CoVe (factored), and precision jumps from 0.40 to 0.50. Importantly, recall does <i>not</i> collapse (0.38 → 0.46) — CoVe is not just becoming cautious and dropping answers wholesale; it removes wrong spans while keeping (even slightly improving) the right ones. Once again the factored variant edges out joint."
+            },
+            {
+              "type": "p",
+              "html": "The most demanding test is <b>longform biography generation</b>: \"Tell me a bio of [entity].\" Here hallucinations hide inside paragraphs of fluent prose. The authors score with <b>FACTSCORE</b> (Min et al., 2023), which decomposes the generated text into atomic facts and checks each against a reliable source, computing the fraction that are supported. They report the average number of facts as well, so you can see CoVe isn't just shortening the bio to dodge errors."
+            },
+            {
+              "type": "p",
+              "html": "On biographies, CoVe (factored) and especially <b>CoVe (factor+revise)</b> clearly beat the Llama few-shot baseline on FACTSCORE, and the factor+revise bars approach or surpass strong retrieval-augmented systems like InstructGPT, ChatGPT, and Perplexity.ai in the paper's comparison — remarkable for a closed-book model with no external knowledge. The explicit inconsistency-detection step in factor+revise pays off most here, where there are many atomic facts and many chances for the verifier to catch a contradiction the final revision should honor."
+            },
+            {
+              "type": "quote",
+              "html": "FACTSCORE automatically computed using \"Instruct-Llama\" (Retrieve → LM + NP), the best open-access model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What CoVe taught the field",
+          "subtitle": "Self-verification, its limits, and what it influenced",
+          "pdfPages": [8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The lasting idea of CoVe is small and sharp: <b>a model can audit its own claims more reliably than it can avoid making them — but only if the audit is shielded from the original answer.</b> That second clause is the whole contribution. Many \"ask the model to recheck its work\" recipes fail precisely because the model re-reads its mistake and agrees with it. CoVe's factored verification is the structural fix."
+            },
+            {
+              "type": "p",
+              "html": "It is worth being clear about what CoVe does <i>not</i> solve. The paper is honest that CoVe reduces hallucination but does not eliminate it: a model can still hallucinate the verification <i>answer</i> itself (if it doesn't know where Hillary Clinton was born, an isolated prompt won't save it). CoVe removes <i>self-consistency</i> errors — claims the model could have caught — not <i>knowledge gaps</i>. For facts genuinely outside the model's parameters, you still need retrieval. CoVe and retrieval are complementary, not competing."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>No new training.</b> CoVe is pure prompting on a frozen model (Llama 65B, Llama 2 70B Chat in the experiments). Any practitioner can apply it today with zero fine-tuning.",
+                "<b>Decomposition beats deliberation.</b> Breaking a claim into atomic verification questions works; just \"thinking harder\" (CoT) can make list-task hallucination worse.",
+                "<b>Information flow is a design knob.</b> The same model, same weights, same questions — hiding the draft from the verifier is what turns a no-op into a 2x precision gain.",
+                "<b>The cost is forward passes.</b> Factored verification needs one prompt per question; factor+revise adds another. The accuracy/compute trade-off is explicit and tunable."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "In the lineage of LLM reasoning work, CoVe sits downstream of <b>Chain-of-Thought</b> (Wei et al., 2022) and alongside <b>Self-Refine</b> and <b>self-consistency</b>, but it sharpened a thesis the others left implicit: structure the self-correction so the model's prior output can't bias the check. That principle — isolate the verifier — propagated into later <b>LLM-as-judge</b> evaluation pipelines (don't show the judge the generator's reasoning) and into <b>agentic / tool-use</b> systems where a planning step and a checking step are deliberately kept in separate contexts."
+            },
+            {
+              "type": "p",
+              "html": "Practically, CoVe is one of the cheapest reliability upgrades available for factual generation: a four-prompt wrapper around any chat model that measurably cuts fabricated facts on lists, closed-book QA, and longform writing alike. Its endurance comes from being a <i>recipe</i> rather than a model — it transfers to whatever LLM you point it at, which is exactly why the \"draft, then verify each claim in isolation, then revise\" pattern is now a standard tool in the practitioner's hallucination-reduction toolkit."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

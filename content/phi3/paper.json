@@ -1,0 +1,416 @@
+{
+  "title": "Phi-3 Technical Report: A Highly Capable LM Locally on Your Phone",
+  "authors": "Abdin, et al. (Microsoft)",
+  "year": "2024",
+  "venue": "arXiv:2404.14219",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A GPT-3.5-class model that fits in your pocket",
+          "subtitle": "What Phi-3 claims and why it is surprising",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The unstated rule of large language models for years was simple: <b>bigger is better</b>. GPT-3 had 175 billion parameters; the strongest open models of early 2024 (Mixtral, Llama-2-70B) ran from tens to hundreds of billions. Capability was assumed to scale with size, and size meant a data center. Phi-3 attacks that assumption head-on."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: <b>phi-3-mini</b> has only <b>3.8 billion parameters</b> and is trained on <b>3.3 trillion tokens</b>, yet it scores comparably to <b>Mixtral 8x7B</b> and <b>GPT-3.5</b> on standard academic benchmarks. The kicker is the title's promise &mdash; it is small enough to run <i>locally on a phone</i>, generating real text offline with no server in the loop."
+            },
+            {
+              "type": "quote",
+              "html": "We introduce phi-3-mini, a 3.8 billion parameter language model trained on 3.3 trillion tokens, whose overall performance, as measured by both academic benchmarks and internal testing, rivals that of models such as Mixtral 8x7B and GPT-3.5 (e.g., phi-3-mini achieves 69% on MMLU and 8.38 on MT-bench), despite being small enough to be deployed on a phone."
+            },
+            {
+              "type": "p",
+              "html": "The single sentence to remember is this: <b>the innovation is not the architecture, it is the data</b>. Phi-3 uses an ordinary transformer decoder. What changed is the <i>training set</i> &mdash; a heavily filtered web corpus plus large amounts of LLM-generated synthetic data, curated so that every token teaches the model something useful. The authors call this operating in the <b>data optimal regime</b>."
+            },
+            {
+              "type": "p",
+              "html": "Why this matters: a model that runs on-device means <b>zero latency to a server</b>, <b>no per-query cost</b>, and <b>privacy by default</b> (your text never leaves the phone). It reframes what a capable assistant requires &mdash; not a GPU cluster, but a phone you already own."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>phi-3-mini</b> &mdash; 3.8B params, 3.3T tokens, ~69% MMLU, runs on a phone.",
+                "<b>phi-3-small</b> &mdash; 7B params, 4.8T tokens, 75.7% MMLU.",
+                "<b>phi-3-medium</b> &mdash; 14B params, 4.8T tokens, 78.0% MMLU.",
+                "All three share the same data recipe; only scale changes."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "This page sets up the rest of the lesson: <i>how</i> do you make a 3.8B model behave like a 100B+ one? The answer is a chain of choices about data, architecture, and training that we unpack page by page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Data Recipe",
+      "pages": [
+        {
+          "title": "Data optimal, not compute optimal",
+          "subtitle": "The core idea behind the whole phi family",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the question this page answers: <b>if you can only afford 3.8 billion parameters, what should you spend them on?</b> A small model has limited 'memory' &mdash; it cannot store the whole messy internet. So the team's bet is that you should be picky about <i>what</i> you feed it, not just <i>how much</i>."
+            },
+            {
+              "type": "p",
+              "html": "Most large models follow <b>compute-optimal scaling</b> (the Chinchilla recipe): for a fixed compute budget, pick the model size and token count that minimize loss, then pour in as much web data as the budget allows. Phi-3 deliberately breaks from this. The authors argue Chinchilla tells you the optimum <i>for a given fixed dataset</i> &mdash; but if you can change the dataset itself, you can do far better."
+            },
+            {
+              "type": "quote",
+              "html": "We follow the recipe of [the phi line of work], which use high quality training data to improve the performance of small language models and deviate from the standard scaling-laws. In this work, we filter the publicly available web data to be in the 'data optimal regime'."
+            },
+            {
+              "type": "h2",
+              "text": "Analogy: the textbook vs. the firehose"
+            },
+            {
+              "type": "p",
+              "html": "Imagine teaching a bright but forgetful student. You can either (a) hand them the entire library and hope they read the useful parts, or (b) hand them a single well-written textbook with worked examples. Option (b) wins when memory is scarce. Phi-3's training data is the textbook: web pages are aggressively filtered for <i>educational value and reasoning content</i>, and then supplemented with synthetic data generated by larger LLMs &mdash; problems, explanations, and step-by-step solutions designed to teach skills like logic, math, and coding."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, the team runs the corpus through quality classifiers that ask, for each document, roughly: <i>would this help a model reason or learn a skill?</i> Trivia-heavy or low-signal pages (raw sports scores, spammy listings) are downweighted; tutorials, explanations, and structured reasoning are kept and amplified with synthetic counterparts."
+            },
+            {
+              "type": "h2",
+              "text": "What the data buys you, and what it costs"
+            },
+            {
+              "type": "p",
+              "html": "Figure 3 in the paper plots the 'Data Optimal' scaling law: <code>log(MMLU error)</code> versus <code>log(model size)</code> for the phi family against Llama-2 models (7B, 13B, 34B, 70B) trained on the same fixed data. The phi line sits below the Llama line &mdash; a given error is reached at a much smaller size. But the authors are candid about the trade-off: because capacity is spent on reasoning, the smallest models retain less raw factual knowledge."
+            },
+            {
+              "type": "quote",
+              "html": "The model simply does not have the capacity to store too much 'factual knowledge', which can be seen for example with low performance on TriviaQA. However, we believe such weakness can be resolved by augmentation with a search engine."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> this is the thesis of the entire 'phi' lineage. The 2023 papers <i>Textbooks Are All You Need</i> (phi-1, phi-1.5) and the phi-2 release argued the same point at smaller scale. Phi-3 is the demonstration that the textbook strategy holds up at GPT-3.5-rivaling capability &mdash; it is the recipe scaled, not a new architecture."
+            }
+          ]
+        },
+        {
+          "title": "Two-phase training",
+          "subtitle": "First learn language, then learn to reason",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "If all your data is 'textbook' from day one, the model never sees the breadth of real language &mdash; idioms, formats, the long tail of the world. So Phi-3 splits pre-training into <b>two disjoint phases</b>, each with a different job."
+            },
+            {
+              "type": "quote",
+              "html": "More specifically, our training data consists of heavily filtered publicly available web data (according to the 'educational level') from various open internet sources, as well as synthetic LLM-generated data. The pre-training is performed in two disjoint and sequential phases."
+            },
+            {
+              "type": "h2",
+              "text": "Phase 1: broad knowledge"
+            },
+            {
+              "type": "p",
+              "html": "Phase 1 uses mostly <b>web sources</b>, aimed at teaching <b>general knowledge and language understanding</b>. This is the breadth phase &mdash; the model meets many topics, writing styles, and facts. Think of it as the student doing wide background reading before specializing."
+            },
+            {
+              "type": "h2",
+              "text": "Phase 2: reasoning skills"
+            },
+            {
+              "type": "p",
+              "html": "Phase 2 mixes <b>even more heavily filtered web data</b> (a subset of what phase 1 used) with <b>synthetic data</b> targeted at <b>logical reasoning and niche skills</b> &mdash; math, code, structured problem solving. This is the specialization phase: now that the model can read, it is drilled on the skills the benchmarks (and users) actually care about."
+            },
+            {
+              "type": "quote",
+              "html": "Phase-1 comprises mostly of web sources aimed at teaching the model general knowledge and language understanding. Phase-2 merges even more heavily filtered webdata (a subset used in Phase-1) with some synthetic data that teach the model logical reasoning and various niche skills."
+            },
+            {
+              "type": "h2",
+              "text": "Why sequence them this way?"
+            },
+            {
+              "type": "p",
+              "html": "Order matters. You cannot drill reasoning into a model that cannot yet parse a sentence &mdash; the reasoning data would be wasted on a model still learning basic language. Front-loading broad data builds the representations that the later reasoning phase then sharpens. It mirrors how curricula work: vocabulary and reading before calculus."
+            },
+            {
+              "type": "p",
+              "html": "<b>Data mixture as the real knob:</b> the authors emphasize that the hard part is not collecting tokens but <i>choosing the proportions</i> &mdash; how much web vs. synthetic, how much of each skill. They describe optimizing this mixture so the limited 3.8B capacity is allocated to the abilities that matter, calling it the work of finding the right blend for the 'data optimal regime' rather than simply maximizing token count."
+            },
+            {
+              "type": "p",
+              "html": "<b>Connection:</b> this two-phase, curriculum-style schedule echoes ideas from curriculum learning and from staged instruction tuning, but here it is applied to <i>pre-training</i> itself &mdash; the data diet changes mid-flight, not just after pre-training ends."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture & On-Device",
+      "pages": [
+        {
+          "title": "A deliberately boring architecture",
+          "subtitle": "Standard transformer, tuned for the ecosystem",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "After all the data sophistication, the model itself is intentionally <b>plain</b>. Why? Because a boring, standard architecture means the entire existing toolchain &mdash; quantizers, inference kernels, fine-tuning libraries built for Llama &mdash; works on Phi-3 out of the box. Novelty in the architecture would have bought nothing and cost compatibility."
+            },
+            {
+              "type": "quote",
+              "html": "Phi-3-mini is a transformer decoder architecture, with default context length 4K. We also introduce a long context version via LongRope that extends the context length to 128K, called phi-3-mini-128K."
+            },
+            {
+              "type": "p",
+              "html": "It is built to mirror <b>Llama-2</b> so closely that it reuses the same tokenizer and block structure. This is a design choice, not a coincidence &mdash; it lets the open-source community adapt their Llama tooling directly."
+            },
+            {
+              "type": "quote",
+              "html": "To best benefit the open source community, phi-3-mini is built upon a similar block structure as Llama-2 and uses the same tokenizer with vocabulary size of 32064."
+            },
+            {
+              "type": "h2",
+              "text": "The numbers"
+            },
+            {
+              "type": "table",
+              "headers": ["Property", "phi-3-mini"],
+              "rows": [
+                ["Parameters", "3.8 billion"],
+                ["Transformer layers", "32"],
+                ["Hidden dimension", "3072"],
+                ["Attention heads", "32"],
+                ["Vocabulary size", "32064 (Llama-2 tokenizer)"],
+                ["Default context length", "4K tokens"],
+                ["Long-context variant", "128K via LongRope"],
+                ["Training tokens", "3.3 trillion"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading the table: with 32 layers and a hidden width of 3072, each token is represented as a vector $h \\in \\mathbb{R}^{3072}$ flowing through 32 attention-plus-MLP blocks. The 32 attention heads split that 3072-dimensional space into 32 sub-spaces of 96 dimensions each, letting different heads attend to different relationships in the sequence. The vocabulary of 32064 means the input and output embedding tables have shape $\\mathbb{R}^{32064 \\times 3072}$."
+            },
+            {
+              "type": "h2",
+              "text": "LongRope: 4K to 128K"
+            },
+            {
+              "type": "p",
+              "html": "The default context is 4K tokens, but a variant stretches it to <b>128K</b> using <b>LongRope</b>. Rotary position embeddings (RoPE) encode a token's position by rotating its query/key vectors by an angle proportional to position; LongRope rescales those rotation frequencies so positions far beyond the training length stay distinguishable, extending usable context roughly 32x without retraining from scratch. This lets the on-phone model ingest long documents while keeping the same weights."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design rationale recap:</b> by spending zero novelty on the architecture, the team concentrated all their risk on the data &mdash; the one place where they believed the real gains lived. The model is the boring part on purpose."
+            }
+          ]
+        },
+        {
+          "title": "Running on a phone",
+          "subtitle": "Quantization, memory, and 12+ tokens per second",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole point of the paper is in the title: <i>locally on your phone</i>. This page is the proof. A phone has no GPU cluster, a few gigabytes of RAM, and a battery &mdash; so how does a 3.8B-parameter model fit and run fast enough to feel interactive?"
+            },
+            {
+              "type": "h2",
+              "text": "The memory math"
+            },
+            {
+              "type": "p",
+              "html": "At full 16-bit precision, 3.8B parameters need $3.8 \\times 10^9 \\times 2 \\text{ bytes} \\approx 7.6$ GB &mdash; too much for most phones. The fix is <b>quantization</b>: store each weight in 4 bits instead of 16, cutting memory by 4x."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Memory} \\approx 3.8 \\times 10^9 \\text{ params} \\times \\tfrac{4 \\text{ bits}}{8 \\text{ bits/byte}} \\approx 1.8 \\text{ GB}"
+            },
+            {
+              "type": "p",
+              "html": "Reading the equation term by term: <code>3.8e9</code> is the parameter count; <code>4 bits</code> is the per-weight storage after 4-bit quantization; dividing by <code>8 bits/byte</code> converts to bytes. The result, about <b>1.8 GB</b>, is the model's memory footprint &mdash; small enough to load into phone RAM alongside the OS."
+            },
+            {
+              "type": "quote",
+              "html": "Thanks to its small size, phi-3-mini can be quantized to 4-bits so that it only occupies ~1.8GB of memory. We tested the quantized model by deploying phi-3-mini on iPhone 14 with A16 Bionic chip running natively on-device and fully offline achieving more than 12 tokens per second."
+            },
+            {
+              "type": "h2",
+              "text": "What 12 tokens/second feels like"
+            },
+            {
+              "type": "p",
+              "html": "More than <b>12 tokens per second</b>, fully offline, on an <b>iPhone 14 (A16 Bionic)</b>. A token is roughly three-quarters of a word, so 12 tokens/sec is about 9 words/sec &mdash; faster than most people read. Figure 2 in the paper shows the 4-bit phi-3-mini writing a poem and answering questions natively in an iOS app, with no network connection."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why quantization barely hurts here:</b> 4-bit quantization rounds each weight to one of 16 levels. For a large dense model this introduces noise, but the error per weight is tiny relative to the signal, and it averages out across billions of weights and many layers. The benchmark drop from 4-bit phi-3-mini is small &mdash; the model stays in roughly the same capability class while shedding 75% of its memory."
+            },
+            {
+              "type": "p",
+              "html": "<b>The significance:</b> this closes the loop from the data recipe to a shipped artifact. Aggressive data curation made a small model capable; a small capable model made 4-bit quantization viable; viable quantization made phone deployment real. Each earlier choice pays off here."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Benchmarks: punching far above its weight",
+          "subtitle": "phi-3-mini vs. Mixtral, Llama-3, and GPT-3.5",
+          "pdfPages": [6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Claims are easy; the question is whether a 3.8B model actually competes with models 2x to 25x its size. The paper reports head-to-head numbers across reasoning, math, code, and knowledge benchmarks against Mixtral 8x7B (~47B), Llama-3-8B, and GPT-3.5."
+            },
+            {
+              "type": "h2",
+              "text": "Headline scores"
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "phi-3-mini (3.8B)", "Mixtral 8x7B", "GPT-3.5"],
+              "rows": [
+                ["MMLU (5-shot)", "68.8", "70.5", "71.4"],
+                ["HellaSwag", "76.7", "70.4", "78.8"],
+                ["GSM-8K (math)", "82.5", "64.7", "78.1"],
+                ["MT-bench", "8.38", "&mdash;", "8.4 (GPT-3.5 range)"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "How to read this: <b>MMLU</b> is 57 subjects of multiple-choice knowledge &mdash; phi-3-mini's 68.8% lands within a few points of GPT-3.5's 71.4% despite being a fraction of the size. On <b>GSM-8K</b> grade-school math, phi-3-mini's 82.5% actually <i>beats</i> both Mixtral and GPT-3.5, exactly the reasoning skill the synthetic phase-2 data was designed to instill. <b>MT-bench</b> measures multi-turn chat quality judged by GPT-4; 8.38 sits right in the GPT-3.5 neighborhood."
+            },
+            {
+              "type": "p",
+              "html": "The pattern is telling: phi-3-mini is <b>strongest on reasoning and math</b> (where curated/synthetic data helps most) and <b>relatively weaker on broad factual recall</b> (e.g. TriviaQA), exactly as the data-optimal trade-off predicted. Capability was spent where the team chose to spend it."
+            },
+            {
+              "type": "h2",
+              "text": "Scaling up the recipe"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Params", "MMLU"],
+              "rows": [
+                ["phi-3-mini", "3.8B", "68.8"],
+                ["phi-3-small", "7B", "75.7"],
+                ["phi-3-medium", "14B", "78.0"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The same data recipe applied at 7B and 14B keeps climbing: <b>phi-3-small</b> reaches 75.7% MMLU and <b>phi-3-medium</b> 78.0%, approaching the strongest models of the era. This is the real evidence for the thesis &mdash; the gains are not a fluke of one size; the data recipe scales cleanly."
+            },
+            {
+              "type": "p",
+              "html": "<b>Caveat the authors raise themselves:</b> benchmark scores can be inflated by data contamination or by over-fitting the curation to known test distributions. The team stresses internal/manual testing alongside academic benchmarks, and is explicit that raw factual breadth remains the weak spot &mdash; the honest framing is 'GPT-3.5-class reasoning at 3.8B', not 'strictly better at everything'."
+            }
+          ]
+        },
+        {
+          "title": "Post-training: safety and chat",
+          "subtitle": "Turning a capable base model into a usable assistant",
+          "pdfPages": [5, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A strong pre-trained model predicts text; it is not yet a helpful, safe assistant. The gap is closed by <b>post-training</b>, and the paper is explicit that it has two stages working together."
+            },
+            {
+              "type": "quote",
+              "html": "Post-training of phi-3-mini went through two stages, including supervised finetuning (SFT) and direct preference optimization (DPO)."
+            },
+            {
+              "type": "h2",
+              "text": "SFT then DPO"
+            },
+            {
+              "type": "p",
+              "html": "<b>SFT (supervised fine-tuning)</b> shows the model curated high-quality examples of good answers across math, coding, reasoning, conversation, and safety &mdash; teaching it the <i>format</i> and <i>tone</i> of a helpful response by imitation. <b>DPO (direct preference optimization)</b> then steers behavior using pairs of (preferred, rejected) responses: it directly raises the probability of the chosen answer and lowers the rejected one, pushing the model away from unwanted behaviors without needing a separate reward model the way RLHF does."
+            },
+            {
+              "type": "quote",
+              "html": "SFT leverages highly curated high-quality data across diverse domains, e.g., math, coding, reasoning, conversation, model identity, and safety. The DPO data covers chat format data, reasoning, and responsible AI (RAI) efforts. ... DPO steers the model away from unwanted behavior, by using those responses as 'rejected' responses."
+            },
+            {
+              "type": "h2",
+              "text": "Safety: red-teaming the small model"
+            },
+            {
+              "type": "p",
+              "html": "Phi-3 was developed in line with Microsoft's responsible AI principles. The safety alignment ran an iterative loop: identify harm categories, generate datasets targeting them, then SFT + DPO to reduce harmful responses &mdash; repeated over multiple rounds. The team also ran independent <b>red-teaming</b> (in-house and external) to find failure modes the automated process missed, then folded those back into the next round of alignment data."
+            },
+            {
+              "type": "quote",
+              "html": "Phi-3-mini was developed in accordance with Microsoft's responsible AI principles. The overall approach consisted of safety alignment in post-training, red-teaming, automated testing and evaluations across dozens of RAI harm categories."
+            },
+            {
+              "type": "p",
+              "html": "Figure 4 in the paper shows that this iterative alignment cut the rate of harmful content generation substantially after safety post-training, measured by Microsoft's internal RAI benchmarks. The takeaway: a small on-device model is not a safety shortcut &mdash; it receives the same alignment treatment as a frontier model."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this stage is non-negotiable:</b> a model you ship to phones runs <i>offline, in users' hands, with no server-side filter to catch bad outputs</i>. The alignment has to live in the weights themselves. That makes the SFT+DPO pipeline here load-bearing in a way it is not for a server-gated API."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Phi-3 mattered",
+          "subtitle": "What it proved and what it set in motion",
+          "pdfPages": [1, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the numbers. Phi-3's lasting contribution is a single demonstrated claim: <b>data quality can substitute for model scale</b>. For years the field assumed GPT-3.5-level capability required tens of billions of parameters and a data center. Phi-3 showed you can reach that class at 3.8B by being ruthless about what the model learns from."
+            },
+            {
+              "type": "h2",
+              "text": "The chain of consequences"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Curation over scale</b> &mdash; the 'data optimal regime' became a standard lever, not a curiosity. Filtering for educational value and adding targeted synthetic data is now common practice for small models.",
+                "<b>Synthetic data legitimized</b> &mdash; using larger LLMs to generate training data for smaller ones moved from fringe trick to core technique.",
+                "<b>On-device AI made concrete</b> &mdash; '1.8 GB, 12+ tokens/sec on an iPhone' turned 'AI on your phone' from a slogan into a measured result, accelerating the small-language-model wave.",
+                "<b>Open tooling compatibility</b> &mdash; mirroring the Llama-2 block structure and tokenizer meant the community could adopt phi-3 with zero new infrastructure."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "p",
+              "html": "Phi-3 is the culmination of the 'textbooks' line: phi-1 and phi-1.5 (<i>Textbooks Are All You Need</i>, 2023) on code and reasoning, phi-2 scaling the idea, and phi-3 finally rivaling GPT-3.5. It stands alongside <b>Llama-2/3</b> and <b>Mistral/Mixtral</b> as a pillar of the open small-model movement, but argues a different thesis than they do &mdash; not 'efficient architecture at scale' but 'better data at small scale'."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest limitations</b>, in the authors' own framing: a 3.8B model cannot store the breadth of factual knowledge a 70B model can &mdash; it under-performs on knowledge-heavy tasks like TriviaQA, and the proposed remedy is <i>augmentation with a search engine</i> rather than more parameters. It also inherits the usual LLM risks (hallucination, bias) and is primarily English-centric."
+            },
+            {
+              "type": "p",
+              "html": "The enduring lesson for a practitioner: <b>before reaching for a bigger model, ask whether you are training on the right data.</b> Phi-3 is the strongest single piece of evidence that, for a fixed capability target, curating the diet can be worth more than adding parameters &mdash; and that the payoff can be a frontier-class assistant running offline in your pocket."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

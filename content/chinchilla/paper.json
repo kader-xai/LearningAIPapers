@@ -1,0 +1,275 @@
+{
+  "title": "Training Compute-Optimal Large Language Models (Chinchilla)",
+  "authors": "Hoffmann, et al. (DeepMind)",
+  "year": "2022",
+  "venue": "arXiv:2203.15556",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The whole field was building models the wrong size",
+          "subtitle": "What this paper claims, and why it shook the LLM scaling consensus",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2022, the recipe for a better language model seemed obvious: <b>make it bigger</b>. GPT-3 had 175B parameters, Gopher 280B, Megatron-Turing NLG 530B. Everyone raced to add parameters. This paper asks a deceptively simple question: <i>given a fixed compute budget, how should you split it between model size and the amount of training data?</i> The shocking answer is that the giant models of the era were <b>far too big and trained on far too little data</b>."
+            },
+            {
+              "type": "p",
+              "html": "The headline finding: for compute-optimal training, <b>model size and the number of training tokens should be scaled equally</b>. Double your compute, and you should make the model ~1.4x bigger <i>and</i> train on ~1.4x more data — not pour it all into parameters. As a rule of thumb that became famous: you want roughly <b>20 tokens of training data per parameter</b>."
+            },
+            {
+              "type": "quote",
+              "html": "We find that current large language models are significantly undertrained, a consequence of the recent focus on scaling language models whilst keeping the amount of training data constant."
+            },
+            {
+              "type": "p",
+              "html": "To prove it, they trained <b>Chinchilla</b>: a 70B-parameter model — <i>four times smaller than Gopher</i> — but on <b>4x more data</b> (1.4 trillion tokens), using the <i>exact same compute budget</i> as Gopher. Chinchilla then beats Gopher (280B), GPT-3 (175B), Jurassic-1 (178B), and Megatron-Turing NLG (530B) on a wide range of evaluations."
+            },
+            {
+              "type": "quote",
+              "html": "Chinchilla uniformly and significantly outperforms Gopher (280B), GPT-3 (175B), Jurassic-1 (178B), and Megatron-Turing NLG (530B) on a large range of downstream evaluation tasks."
+            },
+            {
+              "type": "p",
+              "html": "The bonus: a smaller model is <b>cheaper to use</b>. Every query to Chinchilla costs ~4x less compute than Gopher, and fine-tuning and inference get easier too. So the 'optimal' model is not just better — it is also lighter to deploy. This single insight redirected how the entire field allocates compute."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Question",
+      "pages": [
+        {
+          "title": "The compute budget is a fixed pie — how do you slice it?",
+          "subtitle": "Why model size and data are in tension under a fixed FLOP budget",
+          "pdfPages": [2, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Training a large model has one dominant cost: <b>compute</b>, measured in FLOPs (floating-point operations). You rarely get unlimited compute — you get a budget, set by how many GPUs/TPUs you have and for how long. Every design choice has to fit inside that budget. The two biggest knobs are the <b>number of parameters</b> $N$ and the <b>number of training tokens</b> $D$."
+            },
+            {
+              "type": "p",
+              "html": "Here is the crucial fact that makes this a real trade-off: for a transformer, the training compute is approximately the <b>product</b> of the two."
+            },
+            {
+              "type": "math",
+              "tex": "C \\approx 6\\,N\\,D"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $C$ is the total training compute in FLOPs (a scalar). $N$ is the number of model parameters. $D$ is the number of training tokens the model sees. The constant <b>6</b> comes from counting operations in a transformer — roughly 2 FLOPs per parameter for the forward pass and 4 for the backward pass, per token. So if you want to <i>double</i> the model size $N$ but keep compute $C$ fixed, you must <b>halve</b> the data $D$. They fight over the same pie."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> Gopher had $N = 280\\text{B}$ parameters and was trained on $D = 300\\text{B}$ tokens. Its budget was about $C \\approx 6 \\times (2.8\\times10^{11}) \\times (3\\times10^{11}) \\approx 5\\times10^{23}$ FLOPs. The paper's claim is that with that <i>same</i> $5\\times10^{23}$ FLOPs, a better choice is $N \\approx 70\\text{B}$ and $D \\approx 1.4\\text{T}$ — a quarter of the parameters, but 4.7x the data. Same pie, sliced very differently."
+            },
+            {
+              "type": "h2",
+              "text": "Why the previous answer was wrong"
+            },
+            {
+              "type": "p",
+              "html": "Kaplan et al. (2020) — the original 'scaling laws' paper from OpenAI — had studied this and concluded you should put <b>most</b> new compute into parameters and increase data only mildly. That recommendation is what produced the era of giant, data-starved models. Chinchilla's authors redo the experiment more carefully and find the opposite: <b>parameters and data should scale in equal proportion</b>. Pinning down <i>why</i> Kaplan's estimate was off is much of the paper's technical content."
+            },
+            {
+              "type": "p",
+              "html": "Formally, the goal is to find the functions $N_{opt}(C)$ and $D_{opt}(C)$ that minimize the final loss $L$ subject to the budget constraint $C \\approx 6ND$. The next pages walk through the three independent methods they use to estimate them — and reassuringly, all three agree."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method: 3 Estimates",
+      "pages": [
+        {
+          "title": "Three roads to the same answer",
+          "subtitle": "Approach 1 (IsoFLOP curves) and the equal-scaling result",
+          "pdfPages": [4, 5, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A claim this consequential needs to be robust, not an artifact of one fitting choice. So the authors estimate the optimal $N(C)$ and $D(C)$ <b>three different ways</b>, with different assumptions, and check that they converge. If three independent methods agree, you trust the answer. Here is the cleanest one to picture: <b>Approach 2, IsoFLOP profiles</b>."
+            },
+            {
+              "type": "h2",
+              "text": "The IsoFLOP experiment"
+            },
+            {
+              "type": "p",
+              "html": "Pick a fixed compute budget — say $6\\times10^{18}$ FLOPs. Now train <i>many</i> models at exactly that budget, but trade off size vs. data: a tiny model on lots of tokens, a small model on fewer, a medium model on fewer still, and so on. Because $C$ is fixed, every model along this 'IsoFLOP' (equal-FLOP) curve uses the same compute. Plot each model's <b>final loss</b> against its parameter count, and you get a <b>U-shaped curve</b>: too-small models underfit, too-big models run out of data, and the <b>bottom of the U</b> is the optimal size for that budget."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> At $6\\times10^{18}$ FLOPs the valley sits near a few hundred million parameters; train a model 4x bigger and loss rises because it saw too little data; train one 4x smaller and loss rises because it lacked capacity. Repeat the whole sweep at $10^{19}$, $10^{20}$, $10^{21}$ FLOPs — you get a nest of U-curves (the paper's Figure 3), and the valley bottoms march steadily to the right (bigger $N$) and down (lower loss) as the budget grows."
+            },
+            {
+              "type": "p",
+              "html": "Connect the valley bottoms across budgets and you have measured $N_{opt}(C)$ directly. Fit a power law to those optimal points."
+            },
+            {
+              "type": "math",
+              "tex": "N_{opt} \\propto C^{\\,a}, \\qquad D_{opt} \\propto C^{\\,b}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $N_{opt}$ is the optimal parameter count and $D_{opt}$ the optimal token count, each as a power of the compute budget $C$. The exponents $a$ and $b$ say how fast each should grow. If $a = b = 0.5$, then size and data grow at the <i>same rate</i> — square-root of compute each — which is exactly the 'scale them equally' headline."
+            },
+            {
+              "type": "table",
+              "headers": ["Approach", "Coeff. a (for N)", "Coeff. b (for D)"],
+              "rows": [
+                ["1. Minimum over training curves", "0.50", "0.50"],
+                ["2. IsoFLOP profiles", "0.49", "0.51"],
+                ["3. Fitting a parametric loss", "0.46", "0.54"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "All three land near $a \\approx b \\approx 0.5$. By contrast, Kaplan et al. had reported $a \\approx 0.73$, $b \\approx 0.27$ — heavily favoring parameters. The gap between $0.5$ and $0.73$ is the entire reason the era's models were oversized. The authors trace Kaplan's discrepancy partly to using a <i>fixed</i> learning-rate schedule rather than one that decays to match each run's token count."
+            }
+          ]
+        },
+        {
+          "title": "A formula for loss as a function of size and data",
+          "subtitle": "Approach 3: the parametric loss and where the optimum comes from",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The IsoFLOP method <i>measures</i> the optimum but does not <i>explain</i> it. Approach 3 fits an actual equation for the loss as a function of $N$ and $D$. Once you have that equation, you can derive the optimal allocation analytically — and you can extrapolate to budgets far larger than anything you trained. This is the most powerful and most reusable of the three methods."
+            },
+            {
+              "type": "p",
+              "html": "They propose this functional form for the final pre-training loss (a classical decomposition going back to risk-decomposition ideas):"
+            },
+            {
+              "type": "math",
+              "tex": "\\hat{L}(N, D) = E + \\frac{A}{N^{\\alpha}} + \\frac{B}{D^{\\beta}}"
+            },
+            {
+              "type": "p",
+              "html": "Reading every term. $\\hat{L}(N,D)$ is the predicted loss (nats per token) for a model of $N$ parameters trained on $D$ tokens. $E$ is the <b>irreducible loss</b> — the entropy of natural text itself, the floor you could never beat even with infinite model and infinite data. $\\frac{A}{N^{\\alpha}}$ is the <b>capacity error</b>: how much a finite-size model falls short of a perfect transformer; it shrinks as $N$ grows. $\\frac{B}{D^{\\beta}}$ is the <b>optimization/data error</b>: how much a model trained on only $D$ tokens (for a single epoch, not to convergence) falls short; it shrinks as you feed more data. $A$, $B$, $\\alpha$, $\\beta$ are positive constants fit to the data."
+            },
+            {
+              "type": "p",
+              "html": "The fitted values from their ~400 training runs: $E \\approx 1.69$, $A \\approx 406.4$, $B \\approx 410.7$, $\\alpha \\approx 0.34$, $\\beta \\approx 0.28$. The near-equality of $\\alpha$ and $\\beta$ is the secret: because the two error terms decay at nearly the same rate, the cheapest way to drive the loss down is to shrink <i>both</i> terms together — i.e., grow $N$ and $D$ in lockstep."
+            },
+            {
+              "type": "h2",
+              "text": "Solving the constrained optimization"
+            },
+            {
+              "type": "p",
+              "html": "Now minimize $\\hat{L}(N,D)$ subject to $C = 6ND$. This is a textbook Lagrange-multiplier problem. The solution gives the optimal split as power laws in compute:"
+            },
+            {
+              "type": "math",
+              "tex": "N_{opt}(C) = G\\left(\\frac{C}{6}\\right)^{a}, \\qquad D_{opt}(C) = G^{-1}\\left(\\frac{C}{6}\\right)^{b}, \\qquad a = \\frac{\\beta}{\\alpha+\\beta}, \\;\\; b = \\frac{\\alpha}{\\alpha+\\beta}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $N_{opt}$ and $D_{opt}$ are the compute-optimal parameter and token counts; $G$ is a constant set by $A,B,\\alpha,\\beta$. The key result is in the exponents: $a = \\beta/(\\alpha+\\beta)$ and $b = \\alpha/(\\alpha+\\beta)$, which always sum to 1. Plugging in $\\alpha \\approx 0.34$, $\\beta \\approx 0.28$ gives $a \\approx 0.46$ and $b \\approx 0.54$ — once again, near $0.5$ each. The mathematics <i>forces</i> equal scaling whenever $\\alpha \\approx \\beta$."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters practically.</b> Because $a+b = 1$, the equation also lets you read off the token-to-parameter ratio at the optimum: it stays roughly constant at <b>~20 tokens per parameter</b> across budgets. That is the number practitioners now quote. Want a compute-optimal 10B model? Train it on ~200B tokens. A 70B model? ~1.4T tokens — which is exactly Chinchilla."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Chinchilla",
+      "pages": [
+        {
+          "title": "Building the model the theory ordered",
+          "subtitle": "Chinchilla vs Gopher: same compute, very different shape",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A scaling law is a prediction; the only way to test it is to <b>build the predicted model and see if it wins</b>. The authors take Gopher's exact compute budget ($\\approx 5.76\\times10^{23}$ FLOPs) and ask their fitted laws: what is the optimal $(N, D)$ for that budget? The answer comes back ~70B parameters and ~1.4T tokens. So they train precisely that model and name it <b>Chinchilla</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["", "Gopher", "Chinchilla"],
+              "rows": [
+                ["Parameters", "280B", "70B"],
+                ["Training tokens", "300B", "1.4T"],
+                ["Training FLOPs", "~5.76e23", "~5.76e23 (same)"],
+                ["Tokens / parameter", "~1.1", "~20"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Same compute, but the shape is inverted: Chinchilla is <b>4x smaller</b> and trained on <b>~4.7x more data</b>. Crucially, the comparison is <b>fair</b> — same budget, same training data distribution (MassiveText), same tokenizer (mostly), and a learning-rate schedule properly decayed to match the longer token horizon. Everything is held constant except the size/data split the paper is testing."
+            },
+            {
+              "type": "p",
+              "html": "<b>The result.</b> Chinchilla beats Gopher essentially everywhere. The flagship number is <b>MMLU</b> (a 57-subject knowledge and reasoning benchmark): Chinchilla scores <b>67.6%</b>, beating Gopher's 60.0% by 7.6 points and surpassing the average human expert. On language-modeling and reading-comprehension benchmarks the win is broad and consistent, not cherry-picked."
+            },
+            {
+              "type": "quote",
+              "html": "Chinchilla outperforms Gopher and the other large models on the vast majority of these language modelling tasks."
+            },
+            {
+              "type": "p",
+              "html": "And it is <b>cheaper at every stage after training</b>. With a quarter of the parameters, inference uses ~4x less compute and memory, fine-tuning is lighter, and the model fits more easily on serving hardware. The compute-optimal model is the gift that keeps giving: you pay the same to train it and then save forever on every query."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works.</b> Gopher's 280B parameters were a vast, under-exploited capacity — like a library with millions of shelves but only enough books to fill a quarter of them. The model had room to learn far more than its 300B tokens could teach it. Redirecting that wasted capacity-budget into <i>4x more data</i> filled the shelves, and the data-starved error term $B/D^{\\beta}$ dropped sharply while the capacity term barely rose."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "The rule that re-sized an entire field",
+          "subtitle": "What Chinchilla changed, and the asterisks worth knowing",
+          "pdfPages": [1, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Chinchilla did not introduce a new architecture or a clever trick. Its contribution is a <b>corrected scaling law</b> and a single memorable rule — <b>~20 tokens per parameter</b> — that immediately changed how labs spend compute. After this paper, the race to ever-larger parameter counts cooled, and the focus shifted to gathering and curating <i>far more training data</i> for more modestly sized models."
+            },
+            {
+              "type": "p",
+              "html": "<b>Direct lineage.</b> Meta's LLaMA (2023) took the lesson and ran past it: a 7B model trained on 1T tokens, a 13B on 1T — deliberately <i>over</i>-trained relative to Chinchilla-optimal, because at inference time a smaller-but-overtrained model is cheaper to serve. This 'inference-aware' twist is the natural sequel: Chinchilla optimizes <i>training</i> compute, but if you will serve billions of queries, paying extra training to shrink the model further is worth it."
+            },
+            {
+              "type": "p",
+              "html": "<b>The key reframe.</b> Chinchilla shifted the bottleneck of progress from <i>parameters</i> to <i>data</i>. If optimal training needs ~20x more tokens than people were using, then the supply of high-quality text becomes the binding constraint — a realization that drove the field's later obsession with data quality, deduplication, and eventually the 'are we running out of tokens?' debate."
+            },
+            {
+              "type": "h2",
+              "text": "Caveats the authors flag"
+            },
+            {
+              "type": "list",
+              "items": [
+                "The laws are fit over budgets up to ~1e24 FLOPs; extrapolating many orders of magnitude beyond that is an assumption, not a guarantee.",
+                "The ~20:1 ratio is the optimum for minimizing <i>training</i> loss for a single epoch — it ignores inference cost, which is why LLaMA-style overtraining can be the better real-world choice.",
+                "All runs use a single pass over data (no repeated epochs); whether the laws hold when you re-use tokens was an open question the paper does not settle.",
+                "Bigger high-quality datasets raise toxicity, bias, and data-contamination concerns that scaling laws alone do not address."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The lasting lesson.</b> Before Chinchilla, 'state of the art' meant 'most parameters.' After it, the question became 'are you compute-optimal?' — and the answer for nearly every model of the GPT-3 era was a resounding no. A 70B model beating a 530B one on equal compute is the kind of result that does not just improve the leaderboard; it rewrites the playbook."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,327 @@
+{
+  "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+  "authors": "Asai, et al.",
+  "year": "2023",
+  "venue": "arXiv:2310.11511",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The pitch: a model that knows when to look things up",
+          "subtitle": "And that grades its own work as it writes",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Large language models are confident liars. They generate fluent text that <i>sounds</i> authoritative but is frequently wrong, because they answer purely from the parameters baked in during pretraining. The obvious fix is <b>Retrieval-Augmented Generation (RAG)</b>: before answering, fetch some documents and stuff them into the prompt. But standard RAG is clumsy in two ways the paper calls out directly."
+            },
+            {
+              "type": "p",
+              "html": "First, it retrieves a <b>fixed number</b> of passages for <b>every</b> query, whether or not retrieval helps. Ask \"Write a poem about the ocean\" and RAG still drags in Wikipedia passages, diluting the prompt and sometimes derailing a task the model already does well. Second, RAG never checks whether the generated output is actually <b>supported</b> by the passages it retrieved. The model can cite a document and then contradict it, and nothing notices."
+            },
+            {
+              "type": "p",
+              "html": "<b>Self-RAG</b> (Self-Reflective Retrieval-Augmented Generation) trains a single language model to do three things on its own: decide <b>when</b> retrieval would help, retrieve <b>only then</b>, and <b>critique</b> both the passages and its own generations using special vocabulary words called <b>reflection tokens</b>. Crucially, retrieval is <i>on demand</i> and can fire multiple times within one answer, or never."
+            },
+            {
+              "type": "quote",
+              "html": "We introduce a new framework called Self-Reflective Retrieval-Augmented Generation (Self-RAG) that improves an LLM's quality and factuality through retrieval and self-reflection. ... Self-RAG trains a single arbitrary LM that adaptively retrieves passages on-demand, and generates and reflects on retrieved passages and its own generations using special tokens, called reflection tokens."
+            },
+            {
+              "type": "p",
+              "html": "The headline numbers: a <b>Self-RAG (7B and 13B)</b> trained this way <b>outperforms ChatGPT and the retrieval-augmented Llama2-chat</b> on open-domain QA, reasoning, and fact-verification tasks, and gives large gains in <b>factuality and citation accuracy</b> for long-form generation. The whole trick is teaching the model to talk to itself with a handful of new tokens."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Adaptive retrieval</b>: a <code>Retrieve</code> token decides per-step whether to fetch passages at all.",
+                "<b>Self-critique</b>: <code>ISREL</code>, <code>ISSUP</code>, <code>ISUSE</code> tokens grade relevance, factual support, and overall usefulness.",
+                "<b>Controllable at inference</b>: the same trained model can be tuned soft-vs-hard on factuality without retraining."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Why bolting retrieval onto an LLM goes wrong",
+          "subtitle": "Indiscriminate retrieval hurts as often as it helps",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine a smart intern who, before answering <i>any</i> question, sprints to the library and grabs the first three books off a shelf, even when you asked them their own opinion or asked them to write a limerick. Sometimes those books are exactly right. Sometimes they are about the wrong topic entirely, and now the intern is paraphrasing an irrelevant book instead of just answering. That is conventional RAG."
+            },
+            {
+              "type": "p",
+              "html": "The paper frames two concrete failure modes of the standard \"retrieve a fixed $k$, then generate\" recipe. They matter because both are silent: nothing in the pipeline detects them."
+            },
+            {
+              "type": "h2",
+              "text": "Failure 1: retrieval you didn't need"
+            },
+            {
+              "type": "p",
+              "html": "Retrieving a fixed number of passages <i>regardless</i> of whether retrieval is relevant introduces irrelevant context. For tasks the model already handles from its parameters (open-ended writing, simple reasoning), this is pure noise. It dilutes the prompt and can actively lower quality. The paper notes this indiscriminate retrieval can hurt versatility and produce <b>lower-quality</b> outputs."
+            },
+            {
+              "type": "quote",
+              "html": "Indiscriminately retrieving and incorporating a fixed number of retrieved passages, regardless of whether retrieval is necessary or passages are relevant, diminishes LM versatility or can lead to unhelpful response generation."
+            },
+            {
+              "type": "h2",
+              "text": "Failure 2: outputs that ignore the evidence"
+            },
+            {
+              "type": "p",
+              "html": "Even when retrieval <i>is</i> appropriate, there is no guarantee the generation is consistent with the retrieved passages. Standard models are not explicitly trained to stay grounded, so they can confabulate facts not present in any retrieved document while still appearing to use them. The paper observes outputs are <b>not guaranteed to be consistent with retrieved relevant passages</b> because models are not explicitly trained to leverage and follow facts from the provided passages."
+            },
+            {
+              "type": "p",
+              "html": "Self-RAG attacks both at once. Instead of treating retrieval as a fixed preprocessing step glued to the front of the model, it makes retrieval a <b>decision the model makes</b>, and makes grounding a <b>property the model checks</b> — both expressed in the model's own output stream."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method: Reflection Tokens",
+      "pages": [
+        {
+          "title": "Reflection tokens: giving the model a vocabulary for self-doubt",
+          "subtitle": "Four new token families that punctuate generation",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The core idea is almost embarrassingly simple: <b>add new words to the model's vocabulary</b> that don't appear in normal text, and that mean things like \"I should look this up now\" or \"that passage was irrelevant.\" The model emits these <b>reflection tokens</b> inline, exactly the way it emits ordinary words, so a single forward pass through the same decoder both writes the answer <i>and</i> annotates it with self-assessment."
+            },
+            {
+              "type": "p",
+              "html": "There are four families. One controls retrieval; three are critiques."
+            },
+            {
+              "type": "table",
+              "headers": ["Token", "Role", "Possible values"],
+              "rows": [
+                ["<code>Retrieve</code>", "Should I retrieve passages now?", "yes / no / continue"],
+                ["<code>ISREL</code>", "Is the retrieved passage relevant?", "relevant / irrelevant"],
+                ["<code>ISSUP</code>", "Is my output supported by the passage?", "fully / partially / no support"],
+                ["<code>ISUSE</code>", "How useful is my overall response?", "1, 2, 3, 4, 5"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read that table as a checklist the model walks through. <code>Retrieve</code> is the gate. If it fires <code>yes</code>, passages come in. For each passage, <code>ISREL</code> says whether it's even on-topic. After generating a segment grounded in a passage, <code>ISSUP</code> says whether the passage actually <i>backs up</i> what was written (the factual-grounding check). Finally <code>ISUSE</code> rates the whole answer's usefulness on a 1–5 scale, independent of retrieval."
+            },
+            {
+              "type": "h2",
+              "text": "A worked trace"
+            },
+            {
+              "type": "p",
+              "html": "Take the prompt <i>\"How did US states get their names?\"</i> Self-RAG's output stream might look like: emit <code>Retrieve=yes</code> → pull passage $d_1$ → emit <code>ISREL=relevant</code> → write \"Of the fifty states, eleven are named after individuals...\" → emit <code>ISSUP=fully supported</code> → at the next sentence emit <code>Retrieve=yes</code> again for a fresh fact, grade the new passage, and so on. A different prompt like \"Write a poem\" would emit <code>Retrieve=no</code> and proceed with no retrieval at all."
+            },
+            {
+              "type": "p",
+              "html": "Why bake these into the vocabulary instead of running a separate classifier? Because then the <b>same</b> autoregressive objective that learns to write also learns to critique — no extra model at inference, and the critique can condition on everything generated so far. Decoding stays a single left-to-right pass. The reflection tokens are just more tokens to predict."
+            }
+          ]
+        },
+        {
+          "title": "Training: distill a critic, then teach the generator",
+          "subtitle": "GPT-4 grades, a small critic learns to grade, the corpus gets annotated",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "We need training data where every passage and every segment is already tagged with the right reflection tokens. Hand-labeling millions of examples is hopeless. The paper's answer is a two-stage distillation: use a powerful teacher (<b>GPT-4</b>) to label a modest amount of data, train a small <b>critic model</b> $\\mathcal{C}$ to reproduce those labels cheaply, then run the critic over a large corpus to produce a fully self-annotated training set for the <b>generator</b> $\\mathcal{M}$."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 1 — train the critic C"
+            },
+            {
+              "type": "p",
+              "html": "GPT-4 is prompted to predict reflection tokens for sampled inputs/outputs. Those judgments are distilled into an in-house critic $\\mathcal{C}$ trained by standard next-token prediction on the labels:"
+            },
+            {
+              "type": "math",
+              "tex": "\\max_{\\mathcal{C}}\\ \\mathbb{E}_{((x,y),r)\\sim \\mathcal{D}_{\\text{critic}}}\\ \\log p_{\\mathcal{C}}(r \\mid x, y)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $x$ is the input (the prompt, possibly with a retrieved passage), $y$ is the output segment being judged, and $r$ is the gold reflection token (e.g. <code>ISSUP=fully supported</code>) that GPT-4 assigned. $\\mathcal{D}_{\\text{critic}}$ is the dataset of these (input, output, reflection-token) triples. $p_{\\mathcal{C}}(r \\mid x, y)$ is the critic's predicted probability of the correct token. Maximizing the expected log-probability simply trains $\\mathcal{C}$ to mimic GPT-4's grades. The paper reports the critic reaches over <b>90% agreement</b> with GPT-4 predictions, so it's a faithful, cheap stand-in."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 2 — train the generator M on critic-annotated data"
+            },
+            {
+              "type": "p",
+              "html": "Now run $\\mathcal{C}$ offline over a large instruction-following corpus. For each example it inserts <code>Retrieve</code> decisions, retrieves passages where needed, and tags each segment with <code>ISREL</code>/<code>ISSUP</code>/<code>ISUSE</code>. The result is a corpus $\\mathcal{D}_{\\text{gen}}$ where reflection tokens sit inline as ordinary tokens. The generator $\\mathcal{M}$ is then trained with the plain next-token objective over this augmented sequence:"
+            },
+            {
+              "type": "math",
+              "tex": "\\max_{\\mathcal{M}}\\ \\mathbb{E}_{(x,y,r)\\sim \\mathcal{D}_{\\text{gen}}}\\ \\log p_{\\mathcal{M}}(y, r \\mid x)"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\mathcal{M}$ learns to predict both the real output tokens $y$ <b>and</b> the reflection tokens $r$ jointly, conditioned on input $x$. Because critique tokens are now just part of the target sequence, no special loss is needed — it's vanilla language-model training. The two big payoffs: (1) the generator learns to <b>generate reflection tokens itself</b>, so at test time it needs no separate critic; (2) the retriever is only invoked during this <b>offline</b> annotation, so the expensive retrieve-and-grade loop is amortized away from training-time backprop."
+            },
+            {
+              "type": "p",
+              "html": "Notice the elegance of the split: the critic absorbs the expensive GPT-4 supervision once; the generator inherits all that judgment for free as ordinary tokens. This is the same distillation logic behind much of instruction tuning, but applied to <i>meta-judgments about retrieval and grounding</i> rather than to answers."
+            }
+          ]
+        },
+        {
+          "title": "Inference: segment-level beam search with tunable critique",
+          "subtitle": "Adaptive retrieval, then score candidates by their own grades",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "At inference Self-RAG generates segment by segment. At each step it first predicts a <code>Retrieve</code> token. Because reflection tokens are real vocabulary, the model assigns them probabilities, and that gives a clean knob for <b>adaptive retrieval</b>: retrieve only when the model is confident enough that retrieval helps."
+            },
+            {
+              "type": "h2",
+              "text": "The retrieval gate is just a threshold"
+            },
+            {
+              "type": "p",
+              "html": "Let the model's normalized probability of <code>Retrieve=yes</code> be compared against a threshold $\\delta$. Retrieval is triggered when:"
+            },
+            {
+              "type": "math",
+              "tex": "\\frac{p(\\texttt{Retrieve}=\\text{yes})}{p(\\texttt{Retrieve}=\\text{yes}) + p(\\texttt{Retrieve}=\\text{no})} > \\delta"
+            },
+            {
+              "type": "p",
+              "html": "The numerator is the probability mass the model puts on retrieving; the denominator normalizes over the yes/no choice. $\\delta$ is a single user-set knob: lower $\\delta$ means retrieve more eagerly (favoring factuality), higher $\\delta$ means retrieve only when very sure (favoring speed and fluency). The same trained model spans this whole trade-off with no retraining — that's the \"controllable\" claim."
+            },
+            {
+              "type": "h2",
+              "text": "When it does retrieve: parallel candidates, then rank"
+            },
+            {
+              "type": "p",
+              "html": "If retrieval fires, the model processes the top-$K$ passages <b>in parallel</b>, generating one candidate continuation per passage. Each candidate carries its own critique tokens — its <code>ISREL</code>, <code>ISSUP</code>, <code>ISUSE</code> grades. A <b>segment-level beam search</b> then keeps the best continuations, where each candidate's score combines its language-model probability with a <b>critic score</b> $\\mathcal{S}$ built from those reflection tokens:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{S}(\\text{Critique}) = \\sum_{t \\in \\{\\texttt{ISREL}, \\texttt{ISSUP}, \\texttt{ISUSE}\\}} w_t\\, s_t"
+            },
+            {
+              "type": "p",
+              "html": "Each $s_t$ is the (normalized) probability the model assigns to the <i>desirable</i> value of critique token $t$ — for example $s_{\\texttt{ISSUP}}$ is the probability of <code>fully supported</code>. Each $w_t$ is a tunable weight saying how much that dimension matters. Summing the weighted grades gives one scalar per candidate. The final ranking score is the LM likelihood adjusted by $\\mathcal{S}$, so a fluent-but-unsupported continuation gets penalized relative to a well-grounded one."
+            },
+            {
+              "type": "p",
+              "html": "This is the lever that makes grounding <i>actually win</i> at decode time. Beam search normally chases pure likelihood; here the critique tokens reshape the objective so the beam prefers segments the model itself judges relevant and supported. And because the $w_t$ are inference-time weights, a deployment that cares about citation precision can crank $w_{\\texttt{ISSUP}}$ up — again, no retraining."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Adaptive</b>: $\\delta$ decides if retrieval happens at all, per segment.",
+                "<b>Parallel</b>: top-$K$ passages each spawn a graded candidate.",
+                "<b>Controllable</b>: weights $w_t$ reweight relevance vs. support vs. usefulness at test time."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Beating ChatGPT and retrieval-augmented Llama2",
+          "subtitle": "Six tasks: QA, reasoning, fact-checking, long-form generation",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The evaluation spans short-form QA (<b>PopQA</b>, <b>TriviaQA</b>), a fact-verification task (<b>PubHealth</b>), multiple-choice reasoning (<b>ARC-Challenge</b>), and long-form generation (a <b>biography generation</b> task scored by FactScore, and the <b>ASQA</b> long-form QA task scored by correctness and citation precision/recall). Baselines include vanilla and retrieval-augmented LLMs both with and without retrieval — among them ChatGPT, Llama2-chat (7B/13B), Alpaca, and Llama2 + standard RAG."
+            },
+            {
+              "type": "p",
+              "html": "The central finding is stated plainly: Self-RAG <b>significantly outperforms</b> prior open-source LLMs and their retrieval-augmented variants, and on several tasks it beats <b>ChatGPT</b> too, despite being a far smaller, open model."
+            },
+            {
+              "type": "quote",
+              "html": "Self-RAG (7B and 13B) outperforms ChatGPT and retrieval-augmented Llama2-chat on Open-domain QA, reasoning and fact verification tasks, and it shows significant gains in improving factuality and citation accuracy for long-form generations relative to these models."
+            },
+            {
+              "type": "table",
+              "headers": ["Task", "Strong baseline", "Self-RAG result"],
+              "rows": [
+                ["PopQA (open QA acc.)", "Llama2-chat / RAG below Self-RAG", "Highest among open models; tops ChatGPT-no-retrieval"],
+                ["PubHealth (fact verification)", "ChatGPT competitive", "Self-RAG beats retrieval-augmented Llama2-chat"],
+                ["ARC-Challenge (reasoning)", "Llama2-chat lower", "Self-RAG 7B/13B lead open models"],
+                ["Bio generation (FactScore)", "Standard RAG less factual", "Large factuality gain"],
+                ["ASQA (citation prec./rec.)", "Llama2 + RAG weak grounding", "Big citation-accuracy gains"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The two long-form tasks are where the self-critique earns its keep. On the biography task, <b>FactScore</b> measures the fraction of generated facts that are actually supported — exactly what <code>ISSUP</code> was trained to encourage — and Self-RAG posts a large jump over standard RAG. On <b>ASQA</b>, <b>citation precision and recall</b> measure whether each claim is correctly attributed to a source, and the critique-weighted beam search drives substantial improvements. Grounding that the model checks turns into grounding the metrics can see."
+            },
+            {
+              "type": "p",
+              "html": "Ablations confirm the parts are load-bearing: removing the critique-driven retrieval or the reflection-token scoring degrades performance, and the adaptive-retrieval threshold $\\delta$ traces out a real factuality-vs-efficiency frontier — proof that the controllability knob isn't cosmetic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Self-RAG mattered",
+          "subtitle": "From bolt-on retrieval to retrieval as a learned behavior",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Self-RAG's lasting contribution is conceptual: it reframes retrieval from an <b>external pipeline stage</b> into a <b>behavior the model learns and controls</b>. The model decides when to retrieve, judges what it gets back, and grades its own grounding — all in one decoder, all expressed as ordinary tokens. That collapse of \"retriever + generator + verifier\" into a single self-reflective LM is the idea everyone took away."
+            },
+            {
+              "type": "h2",
+              "text": "What it fixed about RAG"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>No more blind retrieval</b>: the <code>Retrieve</code> gate skips retrieval when it would only add noise, restoring versatility on tasks the model already handles.",
+                "<b>Grounding becomes measurable mid-generation</b>: <code>ISSUP</code> turns \"is this supported?\" into a token the model predicts and the decoder can optimize for.",
+                "<b>One model, many operating points</b>: the threshold $\\delta$ and critique weights $w_t$ let one trained checkpoint be tuned for factuality, citation precision, or speed without retraining."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "p",
+              "html": "Self-RAG builds on the original RAG line of work (Lewis et al., 2020) and dense retrievers, but its self-critique machinery echoes a broader 2022–2023 wave of models grading their own outputs — the same instinct as chain-of-thought verification and self-refinement. Its distillation recipe (GPT-4 → small critic → annotated corpus) is the now-standard pattern of using a strong teacher to bootstrap supervision that would otherwise be unlabelable."
+            },
+            {
+              "type": "p",
+              "html": "Its influence shows up wherever \"<b>agentic</b>\" or \"<b>active</b>\" retrieval is discussed: systems that decide for themselves when to call a tool, then check whether the result was useful. The reflection-token idea — special vocabulary that carries control and self-assessment signals inline — anticipated later work on tool-use tokens and self-verifying generation. Self-RAG is the paper that made \"the model should decide when to look things up, and check its own homework\" a concrete, trainable objective rather than a slogan."
+            },
+            {
+              "type": "p",
+              "html": "The practical legacy is just as real: an open 7B/13B model matching or beating ChatGPT on knowledge-intensive and long-form-factuality tasks showed that <i>how</i> a model uses retrieval can matter more than raw scale — a hopeful message for everyone working below frontier model sizes."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

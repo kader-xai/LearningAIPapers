@@ -1,0 +1,243 @@
+{
+  "title": "Mixture-of-Depths: Dynamically Allocating Compute in Transformers",
+  "authors": "Raposo, et al. (DeepMind)",
+  "year": "2024",
+  "venue": "arXiv:2404.02258",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Spend compute where it matters",
+          "subtitle": "Not every token needs the whole network",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A standard transformer spends <b>exactly the same amount of compute on every single token</b>. The word \"the\" in \"the cat\" gets the full stack of attention and MLP layers, and so does the final token of a hard multi-step reasoning problem. That is obviously wasteful: predicting the next token is sometimes trivial and sometimes very hard, yet the model treats both identically. This paper asks a simple question: <i>can we let the model decide, per token and per layer, whether a token even needs to pass through that layer?</i>"
+            },
+            {
+              "type": "p",
+              "html": "The answer is <b>Mixture-of-Depths (MoD)</b>. At each transformer block, a small <i>router</i> assigns a scalar score to every token. Only the top-<code>k</code> highest-scoring tokens get processed by the block's attention and MLP; the rest <b>skip the block entirely via the residual connection</b>. Because <code>k</code> is fixed in advance, the total compute (FLOPs) of a forward pass is <b>known and capped before you ever run the model</b> — unlike earlier \"early-exit\" or conditional-compute schemes whose cost varies unpredictably."
+            },
+            {
+              "type": "quote",
+              "html": "Transformer-based language models spread FLOPs uniformly across input sequences. In this work we demonstrate that transformers can instead learn to dynamically allocate FLOPs (or compute) to specific positions in a sequence, optimizing the allocation along the sequence for different layers across the model depth."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: MoD models can match a vanilla transformer's final loss while using a <b>fraction of the compute per forward pass</b>, and because each step is cheaper they can be up to <b>~50% faster to step during inference</b>. Crucially, MoD is not a smaller model — it has the <i>same or more parameters</i> than the baseline, it just routes most tokens around most layers."
+            },
+            {
+              "type": "p",
+              "html": "The key engineering trick is to express the routing as a <b>top-<code>k</code> selection</b> rather than a per-token threshold. Top-<code>k</code> guarantees a static computation graph and a fixed tensor size, so MoD plays nicely with the batched, fixed-shape execution that makes GPUs and TPUs fast. This is what separates MoD from a long line of conditional-compute ideas that were elegant on paper but awkward on real hardware."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Idea",
+      "pages": [
+        {
+          "title": "Why uniform compute is the wrong default",
+          "subtitle": "Borrowing the routing trick from Mixture-of-Experts",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Think about how you read. You skim filler words and slow down on the surprising, load-bearing ones. A transformer cannot do this: every token is shoved through all <code>L</code> layers with identical cost. The paper's premise is that <b>the difficulty of predicting a token varies enormously across a sequence</b>, so compute should vary too — and the model should <i>learn</i> where to spend it rather than being told."
+            },
+            {
+              "type": "p",
+              "html": "MoD inherits its machinery from <b>Mixture-of-Experts (MoE)</b>. In MoE, a router sends each token to one of several expert MLPs — it chooses <i>which</i> computation a token gets. MoD makes a smaller, sharper choice: there is effectively one \"expert\" (the normal block) and one alternative (a no-op identity), so the router decides <b>whether a token gets computed at all in this block</b>. Same router idea, applied along the <i>depth</i> of the network instead of across a bank of experts."
+            },
+            {
+              "type": "h2",
+              "text": "A concrete budget"
+            },
+            {
+              "type": "p",
+              "html": "Suppose a sequence has <code>S = 512</code> tokens. In a vanilla block, all 512 tokens go through attention and the MLP. In an MoD block with a <b>capacity of 12.5%</b>, the router keeps only <code>k = 64</code> tokens and the other 448 slide past on the residual stream untouched. Self-attention now operates over a 64-token set instead of 512 — and since attention cost grows quadratically, that is roughly a <b>64×</b> reduction in that block's attention FLOPs, plus an <b>8×</b> reduction in MLP FLOPs. Stack many such blocks and the savings compound."
+            },
+            {
+              "type": "quote",
+              "html": "We use a mechanism reminiscent of Mixture-of-Experts (MoE) transformers, in which a top-k routing mechanism is used to make a static, known-in-advance compute budget."
+            },
+            {
+              "type": "p",
+              "html": "The phrase <b>\"static, known-in-advance\"</b> is doing a lot of work. Earlier conditional-compute methods (adaptive computation time, early exit, PonderNet) let each token decide for itself how much compute it wants. That sounds ideal but produces <i>ragged, data-dependent</i> tensor shapes that are slow to batch and hard to train stably. MoD sidesteps this entirely: by fixing <code>k</code>, the shapes never change, so the speedup is real on actual accelerators."
+            }
+          ]
+        },
+        {
+          "title": "The MoD block: router, top-k, residual",
+          "subtitle": "How a token decides to skip a layer",
+          "pdfPages": [3, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the mechanism for one block. Every token's hidden vector <code>x</code> gets a scalar <b>router weight</b> from a tiny learned linear projection. The block then keeps the top-<code>k</code> tokens by weight, processes <i>only those</i> through attention + MLP, and routes the rest straight through. The clever part is how the router weight feeds back into the output so that the router actually receives a gradient."
+            },
+            {
+              "type": "math",
+              "tex": "x_i^{l+1} = \\begin{cases} r_i^l\\, f\\!\\left(\\tilde{X}^l\\right)_i + x_i^l, & \\text{if } r_i^l > P_\\beta\\!\\left(R^l\\right) \\\\ x_i^l, & \\text{if } r_i^l < P_\\beta\\!\\left(R^l\\right) \\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term. <code>x_i^l</code> is the hidden vector for token <code>i</code> at layer <code>l</code>, a vector in <code>R^d</code> where <code>d</code> is the model width. <code>r_i^l = w_θ · x_i^l</code> is the <b>scalar router weight</b> for that token, produced by a learned vector <code>w_θ ∈ R^d</code>. <code>R^l</code> is the set of all router weights for the sequence, and <code>P_β(R^l)</code> is the <b>β-th percentile</b> of those weights — the cutoff that selects the top-<code>k</code>. <code>f(·)</code> is the block's actual computation (self-attention then MLP), and <code>X̃^l</code> is the small set of selected tokens that <code>f</code> runs on."
+            },
+            {
+              "type": "p",
+              "html": "The two branches say it cleanly. <b>Top branch (token is selected):</b> the token's new value is the block's output <code>f(X̃)_i</code> scaled by its own router weight <code>r_i^l</code>, added back to the residual <code>x_i^l</code>. <b>Bottom branch (token not selected):</b> the new value is just the old value — a pure identity skip, zero compute. The capacity <code>β</code> sets how many tokens survive: if <code>β = 0.875</code> then 87.5% are dropped and only 12.5% are processed."
+            },
+            {
+              "type": "p",
+              "html": "Why multiply the output by <code>r_i^l</code> instead of just routing? Because that scalar puts the router <b>on the gradient path</b>. The selected token's contribution is weighted by <code>r_i^l</code>, so the loss can push that weight up or down — the router <i>learns</i> which tokens were worth processing. The authors note this <b>\"gradients flow through the router\"</b> behavior is what lets the routing decisions improve during training rather than staying random."
+            },
+            {
+              "type": "quote",
+              "html": "Critically, the routing decision is non-trivial because the token's representation will be used by other tokens via self-attention... including the router's weight in the residual pathway means gradients pass through the routing decision, allowing it to be learned."
+            },
+            {
+              "type": "p",
+              "html": "A subtlety the paper highlights: a skipped token is not gone. Even if token <code>i</code> bypasses the block, <i>other</i> selected tokens can still attend to its (unchanged) key and value in self-attention. So skipping a layer for a token does not isolate it — its information remains visible to the rest of the sequence. This is why routing is a genuinely hard learning problem and not just dropping tokens."
+            }
+          ]
+        },
+        {
+          "title": "The causal-sampling problem and how to dodge it",
+          "subtitle": "Top-k is non-causal, so predict the choice instead",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Top-<code>k</code> has a hidden flaw for language models. To pick the top <code>k</code> tokens by router weight, you must <b>compare a token against all the others in the sequence</b> — including tokens that come <i>after</i> it. During training that's fine (the whole sequence is present). But at inference you generate left to right and <b>cannot see future tokens</b>, so you cannot know whether the current token is in the top <code>k</code>. This is the <b>non-causal</b> problem, and it must be solved or MoD would be untrainable for autoregressive sampling."
+            },
+            {
+              "type": "p",
+              "html": "The paper tries two fixes and reports both. The first is a small <b>auxiliary loss</b>: a binary classifier (like the routing-balance loss in MoE) is trained to predict, from a token's hidden state alone, whether it <i>would have been</i> in the top <code>k</code>. The second, which they find simpler and reliable, is a tiny <b>auxiliary MLP predictor</b> — a second router that outputs a yes/no \"will this token be selected\" decision causally, using only information available up to the current position."
+            },
+            {
+              "type": "quote",
+              "html": "These approaches introduce no new significant computation and... allow us to sample from the MoD transformer autoregressively, while only minimally affecting performance."
+            },
+            {
+              "type": "p",
+              "html": "The reassuring finding: the predictor only needs to be <i>approximately</i> right. The auxiliary methods cost almost nothing and barely dent quality — the model is robust to the occasional token being routed differently at inference than it would have been during training. So the elegant top-<code>k</code> training and the causal autoregressive inference can coexist."
+            },
+            {
+              "type": "h2",
+              "text": "A worked routing example"
+            },
+            {
+              "type": "p",
+              "html": "Imagine layer 5 of an MoD model on the sentence \"the capital of France is ___\". The router scores each token. Filler tokens (\"the\", \"of\", \"is\") get low weights; the content tokens (\"capital\", \"France\") and the prediction position get high weights. With 12.5% capacity on a short sequence, only the highest-scoring positions enter the block; the filler tokens ride the residual past layer 5 untouched. The model has learned to <b>concentrate that layer's compute on the tokens that determine the answer</b> — exactly the behavior the routing heatmaps in the paper display."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Free lunch on the isoFLOP frontier",
+          "subtitle": "Same compute, lower loss, faster steps",
+          "pdfPages": [2, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The central experiment is an <b>isoFLOP analysis</b>: hold the training compute budget fixed and ask whether an MoD model can match or beat a vanilla transformer trained on the same budget. The clean result is that there exist MoD configurations that are <b>strictly better than the optimal baseline</b> — same FLOPs, lower loss. That is the rare \"free lunch\": the routing doesn't just trade quality for speed, it can improve both."
+            },
+            {
+              "type": "quote",
+              "html": "There exist MoD variants that take a fraction of the FLOPs per forward pass... yet achieve lower loss than the isoFLOP optimal baseline. Some of these models step as much as 50% faster during sampling."
+            },
+            {
+              "type": "p",
+              "html": "The winning recipe they identify: <b>aggressive capacity (route only 12.5% of tokens) but apply MoD on alternating blocks</b> rather than every block. Routing every other layer keeps a full-compute layer in between, which preserves enough capacity for the hard cases while still slashing total FLOPs. The best MoD variant in the search used a <b>capacity of 12.5%</b> with this alternating pattern."
+            },
+            {
+              "type": "p",
+              "html": "Why does this beat the baseline rather than just matching it? Because at a fixed FLOP budget, the saved compute can be reinvested: an MoD model can be <b>larger (more parameters / more layers)</b> for the same per-step cost as a smaller vanilla model. More representational capacity, spent only where the router deems it useful, ends up at a lower loss. The model effectively buys depth and width by not wasting compute on easy tokens."
+            },
+            {
+              "type": "p",
+              "html": "The speed number is the headline for deployment: because each forward step processes far fewer tokens through the expensive layers, some MoD models <b>step up to 50% faster during autoregressive sampling</b>. For a chatbot or any latency-bound generation workload, that is a direct, compounding win on top of equal-or-better quality."
+            }
+          ]
+        },
+        {
+          "title": "Learned routing, ablations, and MoDE",
+          "subtitle": "What the model learns, and combining with experts",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Does the router learn something sensible, or is it routing at random? The paper checks by replacing the learned router with <b>random (stochastic) routing</b> at the same capacity. Learned routing wins clearly — performance is much better than dropping tokens at random — which confirms the router is identifying genuinely useful tokens rather than the savings coming \"for free\" from any sparsity."
+            },
+            {
+              "type": "quote",
+              "html": "Learned routing is critical: when MoD transformers use stochastic (rather than learned) routing they perform significantly worse."
+            },
+            {
+              "type": "p",
+              "html": "The routing patterns themselves are interpretable. Across the sequence and across depth, the model concentrates compute non-uniformly, and the choices are <b>consistent and structured</b>, not noise. This is direct evidence that some token positions really are harder to predict and the model has discovered which ones — the original motivation, now validated empirically."
+            },
+            {
+              "type": "h2",
+              "text": "MoD meets MoE: Mixture-of-Depths-and-Experts"
+            },
+            {
+              "type": "p",
+              "html": "Because MoD reuses the MoE routing machinery, the two compose naturally into <b>MoDE (Mixture-of-Depths-and-Experts)</b>. The paper describes two flavors: a <b>staged</b> MoDE that first applies the MoD layer-skip routing and then the MoE expert routing in sequence, and an <b>integrated</b> MoDE that folds the \"skip this block\" option into the expert router itself — adding a no-op as one of the expert choices. Integrated MoDE is the cleaner design: one router decides both <i>whether</i> to compute and <i>which</i> expert to use."
+            },
+            {
+              "type": "p",
+              "html": "The takeaway is that MoD is an <b>orthogonal axis of sparsity</b>. MoE makes models sparse <i>across width</i> (pick a few experts); MoD makes them sparse <i>across depth</i> (skip layers). Stacking both lets a model be conditionally sparse in two dimensions at once, multiplying the compute savings — a natural next step for efficient large-model design."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Mixture-of-Depths matters",
+          "subtitle": "Conditional compute that actually runs fast",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Conditional computation — letting a network spend different effort on different inputs — is an old and seductive idea. Adaptive Computation Time (Graves, 2016), early-exit networks, PonderNet, and others all chased it. They struggled in practice because <b>data-dependent compute breaks the fixed-shape, batched execution</b> that modern accelerators need to go fast. The speedups were theoretical; the wall-clock often wasn't."
+            },
+            {
+              "type": "p",
+              "html": "MoD's contribution is mostly about <b>doing conditional compute in a hardware-friendly way</b>. The top-<code>k</code> formulation gives a <i>static computation graph with a fixed, known compute budget</i>, so the savings show up as real speed on real chips. It reframes \"how much compute does this token need\" as \"is this token in the top <code>k</code> for this layer\" — a question with a fixed-size answer."
+            },
+            {
+              "type": "p",
+              "html": "It also sits perfectly alongside <b>Mixture-of-Experts</b>, the dominant sparsity paradigm in frontier LLMs. MoE (Shazeer et al.; Switch Transformer) routes across <i>width</i>; MoD routes across <i>depth</i>; MoDE shows you can do both at once. That makes MoD a natural building block for the next generation of sparse, efficient models rather than a standalone curiosity."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Same parameter count as a vanilla transformer, but most tokens skip most layers — compute is decoupled from capacity.",
+                "FLOPs per forward pass are fixed and known in advance, because routing is top-k rather than a per-token threshold.",
+                "Best variant: ~12.5% token capacity on alternating blocks, matching or beating the isoFLOP-optimal baseline.",
+                "Up to ~50% faster autoregressive sampling steps at equal-or-better loss.",
+                "Composes with MoE into MoDE — sparsity across both depth and width."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The deeper message is a shift in how we think about transformer compute. The field had quietly accepted that <b>every token pays the same price</b>. Mixture-of-Depths shows that assumption was never necessary — a model can learn, layer by layer, which tokens are worth the full computation and which can simply be passed along. It is a small architectural change with a large conceptual payoff: <i>compute is a resource to allocate, not a constant to pay.</i>"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

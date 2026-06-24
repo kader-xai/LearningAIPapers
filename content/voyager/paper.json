@@ -1,0 +1,368 @@
+{
+  "title": "Voyager: An Open-Ended Embodied Agent with LLMs",
+  "authors": "Wang, et al.",
+  "year": "2023",
+  "venue": "arXiv:2305.16291",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "An agent that learns forever, without touching a single weight",
+          "subtitle": "What Voyager is and why it was surprising",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine dropping a brand-new player into <b>Minecraft</b> with no manual, no score, no level to beat, and no human guiding the mouse. A good player would not freeze. They would chop a tree, craft a table, mine some stone, dig for iron, and over hours bootstrap themselves from bare hands to a diamond pickaxe. <b>Voyager</b> is the first LLM-powered agent that does this <i>on its own</i>, continuously, with <b>no gradient updates at all</b>. The model weights of GPT-4 never change; all the learning happens in <i>text and code</i>."
+            },
+            {
+              "type": "p",
+              "html": "This page answers one question: <i>what is the central trick?</i> Voyager treats <b>writing programs</b> as the act of learning. Every skill the agent masters (\"mine wood,\" \"craft a furnace,\" \"combat a zombie\") is stored as a small JavaScript function. The agent keeps a growing <b>skill library</b> of these functions and reuses them like a programmer reusing a codebase. Learning is not adjusting numbers in a neural net; it is <i>accumulating, debugging, and composing code</i>."
+            },
+            {
+              "type": "quote",
+              "html": "Voyager is the first LLM-powered embodied lifelong learning agent that drives exploration, masters a wide range of skills, and makes new discoveries continually without human intervention."
+            },
+            {
+              "type": "p",
+              "html": "Three components make this work, and the rest of this lesson unpacks each: (1) an <b>automatic curriculum</b> that proposes the next task to attempt, maximizing exploration; (2) a <b>skill library</b> of executable code that grows and is retrieved by meaning; (3) an <b>iterative prompting mechanism</b> that turns environment errors and feedback into self-correcting program edits."
+            },
+            {
+              "type": "p",
+              "html": "The headline numbers, which we will revisit with real figures: compared to prior state-of-the-art LLM agents, Voyager obtains <b>3.3x more unique items</b>, travels <b>2.3x longer distances</b>, and unlocks key tech-tree milestones <b>up to 15.3x faster</b>. It also generalizes <b>zero-shot</b>: drop its learned skill library into a fresh world with new goals and it solves tasks other methods cannot."
+            },
+            {
+              "type": "p",
+              "html": "Why does this matter beyond a video game? Minecraft is an <b>open-ended</b> world with no fixed objective and an enormous tech tree, which makes it a clean testbed for the real question behind embodied AI: can an agent set its own goals and keep getting better forever? Voyager is a proof that a frozen LLM, wrapped in the right scaffolding, can behave like a <b>lifelong learner</b>."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Why \"just prompt GPT-4 to play\" fails",
+          "subtitle": "The gap between a smart model and a competent agent",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "GPT-4 clearly <i>knows</i> a lot about Minecraft from its training data. So why not just ask it, turn by turn, what to do next? Prior agents tried exactly this and hit three walls. Understanding these walls is the key to appreciating Voyager's design, because every component exists to knock one down."
+            },
+            {
+              "type": "h2",
+              "text": "Wall 1: low-level control is the wrong interface"
+            },
+            {
+              "type": "p",
+              "html": "Reinforcement-learning agents and earlier LLM agents act through <b>primitive keyboard/mouse actions</b> (move forward, click) sampled step by step. A task like \"craft a stone pickaxe\" is hundreds of these micro-actions, so the credit-assignment horizon is brutal and exploration is hopelessly slow. Voyager instead acts by <b>writing code</b>: one generated program can encode an entire temporally-extended skill, sidestepping the long-horizon problem."
+            },
+            {
+              "type": "quote",
+              "html": "Voyager interacts with GPT-4 by utilizing the Mineflayer JavaScript APIs, with code as the action space rather than low-level motor commands."
+            },
+            {
+              "type": "h2",
+              "text": "Wall 2: no curriculum means no exploration"
+            },
+            {
+              "type": "p",
+              "html": "An open world has no score and no goal. Without a target, an LLM agent dithers or loops. Hand-written task lists do not scale and cap the agent at the designer's imagination. Voyager needs something to keep proposing <i>novel, achievable</i> next steps forever, which is the job of the automatic curriculum."
+            },
+            {
+              "type": "h2",
+              "text": "Wall 3: no memory means relearning from scratch"
+            },
+            {
+              "type": "p",
+              "html": "A vanilla prompted agent forgets. Each new episode it re-derives how to make a furnace, wasting tokens and making the same mistakes. True lifelong learning needs a <b>persistent, reusable, compositional</b> store of competence. Voyager's answer is a skill library where complex skills are built by <i>calling</i> simpler ones, exactly like software."
+            },
+            {
+              "type": "p",
+              "html": "Putting it together: Voyager is the loop <code>curriculum proposes task -> iterative prompting writes/debugs code until it works -> verified skill is stored -> retrieved later to build harder skills</code>. The next pages dissect each box."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Component 1: the automatic curriculum",
+          "subtitle": "Letting the agent decide what to learn next",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The first job is deciding <i>what to attempt</i>. Voyager's <b>automatic curriculum</b> is generated by GPT-4 in the spirit of <i>novelty search</i>: it proposes the next task to maximize exploration, always pitched to the agent's <b>current state and skill level</b>. The goal is to suggest tasks that are neither trivially easy nor impossibly hard, an emergent \"learning frontier.\""
+            },
+            {
+              "type": "p",
+              "html": "Concrete walk-through. Early on, with an empty inventory in a forest, the curriculum suggests <i>\"Mine 3 wood logs.\"</i> Once that succeeds, the agent's state has changed (it now holds wood), so the next proposal escalates: <i>\"Craft a crafting table,\"</i> then <i>\"Craft a wooden pickaxe,\"</i> then <i>\"Mine stone.\"</i> If the agent is suddenly in a desert at night surrounded by zombies, the curriculum adapts and proposes <i>\"Craft a stone sword and combat a zombie\"</i> instead. Nobody scripted this ordering; it falls out of the prompt."
+            },
+            {
+              "type": "p",
+              "html": "What does GPT-4 see when it proposes a task? The prompt is built from several state signals so the suggestion is grounded in reality rather than hallucinated:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Directives encouraging diverse behaviors and self-imposed constraints (\"the goal is to discover as many diverse things as possible\").",
+                "The agent's current state: inventory contents, equipment, nearby blocks and entities, biome, time, health, and hunger.",
+                "Previously completed and failed tasks, so it does not repeat itself and ramps difficulty.",
+                "Additional context retrieved by a self-querying step: the agent asks itself sub-questions (\"what do I need to mine diamond?\") and answers them from a GPT-3.5/wiki knowledge source before committing to a task."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why generate the curriculum instead of fixing it? A fixed list assumes you already know the optimal learning order in a world with countless paths. The LLM curriculum is <b>adaptive</b>: it conditions on what just happened, so if the agent unexpectedly finds a cave full of iron, the next tasks pivot toward smelting. This is the engine that turns a static model into an open-ended <i>explorer</i>."
+            },
+            {
+              "type": "p",
+              "html": "Design rationale and trivia: this is a deliberate echo of <b>novelty search</b> and <b>open-ended learning</b> (Lehman & Stanley) and of automatic-curriculum ideas in RL, but realized entirely in natural language with a frozen model. The curriculum's only objective is <i>diversity of discovery</i>, not a reward; that is what keeps Voyager from converging and stalling."
+            }
+          ]
+        },
+        {
+          "title": "Component 2: the skill library",
+          "subtitle": "Code as memory, composition as growth",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Once a task is proposed and solved, Voyager does not throw the solution away. It <b>stores the working program as a skill</b>. The skill library is the agent's long-term memory, and crucially its entries are <i>executable code</i>, not natural-language notes. This makes skills <b>compositional</b>: a hard skill is literally a function that calls easier skills, so competence compounds."
+            },
+            {
+              "type": "p",
+              "html": "Example of composition. The skill <code>craftStonePickaxe</code> does not re-derive everything; its body calls <code>mineWood()</code>, then <code>craftCraftingTable()</code>, then <code>craftWoodenPickaxe()</code>, then <code>mineStone()</code>, then assembles the pickaxe. Each callee is itself a previously stored skill. Building <code>combatZombie</code> later can reuse <code>craftStoneSword</code> for free. The library behaves like a personal standard library that keeps getting richer."
+            },
+            {
+              "type": "h2",
+              "text": "How a skill gets indexed and retrieved"
+            },
+            {
+              "type": "p",
+              "html": "Each new skill is stored as a key-value pair. The <b>value</b> is the program code. The <b>key</b> is an embedding of a GPT-generated <i>description</i> of what the program does (its docstring), so retrieval is by <i>meaning</i>, not by exact name."
+            },
+            {
+              "type": "math",
+              "tex": "k = \\text{embed}\\big(\\text{describe}(\\text{program})\\big), \\qquad \\text{skill\\_library}[k] = \\text{program}"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: <code>program</code> is the verified JavaScript function (the Mineflayer code that actually ran successfully in the world). <code>describe(program)</code> is a short natural-language summary GPT-4 writes for that program (e.g. \"crafts a stone pickaxe from raw materials\"). <code>embed(...)</code> maps that text to a fixed-length vector $k \\in \\mathbb{R}^{d}$ using a text-embedding model. That vector $k$ is the lookup key; the stored value is the program itself."
+            },
+            {
+              "type": "p",
+              "html": "Retrieval when a new task arrives works by nearest neighbor in embedding space. Given a task, the curriculum's self-querying produces a description of <i>what is needed</i>, that description is embedded into a query vector $q$, and the top skills are pulled by similarity:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{retrieve}(q) = \\operatorname{top\\text{-}k}_{k \\,\\in\\, \\text{skill\\_library}} \\; \\cos\\!\\big(q, k\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Here $q \\in \\mathbb{R}^{d}$ is the embedding of the query/context description, $k$ ranges over all stored skill keys, $\\cos(q,k)$ is cosine similarity between the two vectors, and <code>top-k</code> returns the few most relevant skills. Those retrieved programs are pasted into the prompt as <i>in-context examples</i>, so GPT-4 writes the new program already knowing the relevant building blocks it can call."
+            },
+            {
+              "type": "p",
+              "html": "Why code and not English notes? Code is <b>executable</b> (so a retrieved skill is immediately useful, not just inspirational), <b>composable</b> (functions call functions), and <b>verifiable</b> (you can run it and check the world state). A natural-language memory has none of these guarantees. Voyager's ablation later shows that removing the library cripples long-horizon progress, because the agent loses the ability to stand on its earlier work."
+            }
+          ]
+        },
+        {
+          "title": "Component 3: iterative prompting with feedback",
+          "subtitle": "Turning errors into better code",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "GPT-4 rarely writes a flawless Minecraft program on the first try. It forgets a prerequisite, mistypes an item name, or assumes a block is nearby that is not. Voyager's third component is an <b>iterative prompting mechanism</b> that closes the loop: run the code, observe what went wrong, feed that back, and let GPT-4 rewrite the program until it actually works."
+            },
+            {
+              "type": "p",
+              "html": "Worked example. Voyager generates <code>craftStoneSword()</code>. On execution the world reports an error: <i>no stone in inventory</i>. That message, plus the agent's current state, is fed back. GPT-4 reasons that it must mine stone first, edits the program to call <code>mineStone()</code> before crafting, and reruns. This refine-rerun cycle repeats until the program completes without error or a retry budget is hit."
+            },
+            {
+              "type": "h2",
+              "text": "The three feedback sources"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Environment feedback: the agent's own intermediate observations (\"I cannot make an iron chestplate because I need 7 more iron ingots\"), surfaced via chat messages from the Mineflayer bot.",
+                "Execution errors: JavaScript/runtime errors raised by the program or the API (wrong arguments, missing materials), which usually pinpoint the bug.",
+                "Self-verification: a separate GPT-4 instance acts as a critic, checking whether the task was actually accomplished and, if not, suggesting how to complete it."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The whole correction step can be read as a small fixed-point loop. Let $p_t$ be the program at iteration $t$ and $e_t$ the feedback from running it:"
+            },
+            {
+              "type": "math",
+              "tex": "p_{t+1} = \\text{GPT4}\\big(p_t,\\; e_t,\\; s_t,\\; \\text{retrieved skills}\\big), \\qquad e_t = \\text{Env}(p_t) \\,\\cup\\, \\text{Verify}(p_t)"
+            },
+            {
+              "type": "p",
+              "html": "Reading the loop: $p_t$ is the current generated program; $\\text{Env}(p_t)$ is what the Minecraft simulator returns when it runs (observations plus any execution error); $\\text{Verify}(p_t)$ is the self-verification critic's judgment of success/failure with advice; $s_t$ is the agent's current state; \"retrieved skills\" are the nearest skills from the library. GPT-4 fuses all of this into the next, hopefully-fixed program $p_{t+1}$. Iteration stops when verification passes."
+            },
+            {
+              "type": "p",
+              "html": "Why this is the secret sauce. The paper finds <b>self-verification is the single most important feedback type</b> for unlocking the tech tree: without the critic deciding when a task is truly done, the agent declares premature success and never advances. The loop also means errors become <i>training signal in text form</i>: every failure makes the next program better, all without a gradient step."
+            },
+            {
+              "type": "p",
+              "html": "Once a program survives this loop and self-verification confirms success, it is promoted into the skill library (Component 2), and the curriculum (Component 1) proposes the next frontier task. That closes the full Voyager cycle."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Exploration and the tech tree",
+          "subtitle": "How far and how fast Voyager gets",
+          "pdfPages": [1, 6, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now the payoff: does all this scaffolding actually produce a better explorer? Voyager is compared against strong LLM-agent baselines, principally <b>ReAct</b>, <b>Reflexion</b>, and <b>AutoGPT</b> (all also driven by GPT-4 for a fair fight), on two axes that matter in an open world: <i>how many distinct things you discover</i> and <i>how deep into the tech tree you get</i>."
+            },
+            {
+              "type": "h2",
+              "text": "Discovery: more items, more ground covered"
+            },
+            {
+              "type": "p",
+              "html": "Over the course of exploration Voyager discovers far more <b>unique items</b> and travels much farther than the baselines, which tend to get stuck repeating themselves."
+            },
+            {
+              "type": "table",
+              "headers": ["Metric", "Voyager vs. prior SOTA"],
+              "rows": [
+                ["Unique items obtained", "3.3x more"],
+                ["Distance traversed", "2.3x longer"],
+                ["Tech-tree milestones unlocked", "up to 15.3x faster (in prompting iterations)"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Tech tree: unlocking the diamond path"
+            },
+            {
+              "type": "p",
+              "html": "Minecraft's signature progression is <code>wood -> stone -> iron -> diamond</code> tools, where each tier is a hard prerequisite for the next. Voyager is the only method that reliably climbs it. It unlocks the wooden, stone, iron, and diamond tool tiers, and the paper reports it reaches the <b>diamond pickaxe</b> tier that the baselines essentially never reach. The gap widens at deeper tiers: easy milestones are close, but the harder the milestone, the more Voyager's curriculum-plus-library advantage compounds."
+            },
+            {
+              "type": "p",
+              "html": "Why the baselines stall: ReAct and Reflexion reason in text but act through primitives and have no growing code memory, so they cannot accumulate the long chains of competence the diamond path requires. AutoGPT plans but lacks the curriculum's exploration drive and the verified skill library. Voyager's three components are precisely what the deep tech tree demands."
+            },
+            {
+              "type": "p",
+              "html": "A telling qualitative result: Voyager's <b>exploration map</b> shows it ranging widely across distinct terrains, while baselines circle a small region. Breadth of exploration is not a side effect; it is the direct output of a curriculum that rewards novelty."
+            }
+          ]
+        },
+        {
+          "title": "Zero-shot generalization and ablations",
+          "subtitle": "Does the learned library transfer, and which part matters?",
+          "pdfPages": [7, 8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Two questions decide whether Voyager really <i>learned</i> something or just got lucky: (1) does its skill library help in a <b>new world on new tasks</b> it was never trained for, and (2) if you remove each component, how much do you lose?"
+            },
+            {
+              "type": "h2",
+              "text": "Zero-shot transfer of the skill library"
+            },
+            {
+              "type": "p",
+              "html": "The authors take the skill library Voyager built during exploration and drop it into <b>freshly instantiated worlds</b> with unseen tasks (e.g. a \"diamond\" challenge), with no further learning. Voyager <b>consistently solves these tasks</b>, and solves several that AutoGPT cannot solve at all, even when AutoGPT is given the same tasks from scratch. The library is genuine, reusable competence, not memorized trajectories, which is the strongest evidence that code-as-skill is real lifelong learning."
+            },
+            {
+              "type": "h2",
+              "text": "Ablations: which component carries the weight?"
+            },
+            {
+              "type": "p",
+              "html": "Each component is removed in turn and progress on the tech tree is measured. The pattern is clear and instructive:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Remove the automatic curriculum: exploration collapses, because the agent no longer gets novel, appropriately-scaled goals; tech-tree progress drops sharply.",
+                "Remove the skill library: long-horizon tasks suffer most, since the agent can no longer compose earlier skills and keeps re-solving prerequisites.",
+                "Remove self-verification (within iterative prompting): this is the most damaging single ablation for unlocking milestones, because the agent declares success too early and never advances.",
+                "Swap GPT-4 for GPT-3.5 in code generation: a large drop, because writing correct, composable programs is exactly where GPT-4's coding ability is decisive."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The ablation story is the thesis in miniature: <b>no single trick is enough</b>. The curriculum supplies direction, the library supplies cumulative competence, and self-verifying iterative prompting supplies correctness. Pull any one and the open-ended loop breaks."
+            },
+            {
+              "type": "p",
+              "html": "Limitations the authors are candid about: GPT-4 access is costly (the paper notes it is roughly 15x the cost of GPT-3.5 for code generation, motivating the GPT-3.5 comparison), the system occasionally produces inaccurate code or hallucinated steps that the feedback loop must catch, and everything is demonstrated in Minecraft rather than the physical world."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Voyager mattered",
+          "subtitle": "Code as the action space, and the road to agentic LLMs",
+          "pdfPages": [1, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from Minecraft. Voyager landed a few ideas that reshaped how people build LLM agents, and most of them have nothing to do with games."
+            },
+            {
+              "type": "h2",
+              "text": "1. Code is a powerful action space"
+            },
+            {
+              "type": "p",
+              "html": "By having GPT-4 emit <b>programs</b> instead of single actions, Voyager turned each decision into a temporally-extended, reusable, debuggable artifact. This \"code as action\" idea, paired with a skill library, became a template far beyond Minecraft: it is how many modern agents now write tools for themselves rather than only calling fixed ones."
+            },
+            {
+              "type": "h2",
+              "text": "2. Lifelong learning without gradients"
+            },
+            {
+              "type": "p",
+              "html": "Voyager showed that a <b>frozen</b> model can keep getting better indefinitely if you give it the right external memory and feedback loops. Learning moved out of the weights and into an <i>append-only skill library plus an adaptive curriculum</i>. This decoupling of \"the model\" from \"what the agent knows how to do\" is now a standard mental model for agentic systems."
+            },
+            {
+              "type": "h2",
+              "text": "3. Self-verification as a control signal"
+            },
+            {
+              "type": "p",
+              "html": "The finding that a separate critic-LLM deciding <i>when a task is truly done</i> is the most load-bearing feedback foreshadowed today's heavy use of LLM self-checking, verifier models, and self-correction loops. Errors and verifications became the agent's training signal, expressed entirely in text."
+            },
+            {
+              "type": "p",
+              "html": "Lineage: Voyager sits alongside <b>MineDojo</b> (the same group's Minecraft benchmark) and earlier instruction-following agents, and it built directly on prompting/agent patterns like <b>ReAct</b>, <b>Reflexion</b>, and <b>AutoGPT</b>, surpassing all three. Its central message has aged well: the bottleneck for capable agents is often not the base model but the <b>scaffolding</b> around it, the curriculum, the memory, and the feedback that let a fixed model behave like an open-ended, lifelong learner."
+            },
+            {
+              "type": "p",
+              "html": "Future directions the paper flags include grounding the same recipe in real-world robotics and multimodal perception (it currently reads text state, not raw pixels), reducing reliance on a single expensive API model, and pushing toward agents that invent their own goals across many domains, not just one."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

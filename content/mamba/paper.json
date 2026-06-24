@@ -1,0 +1,366 @@
+{
+  "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+  "authors": "Gu, Dao",
+  "year": "2023",
+  "venue": "arXiv:2312.00752",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The Transformer tax, and a way out",
+          "subtitle": "What problem is Mamba solving?",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern foundation models almost all run on the <b>Transformer</b>, and the Transformer runs on <b>attention</b>. Attention is powerful because every token can look directly at every other token. But that power has a price: to process a sequence of length $L$, attention computes an $L \\times L$ grid of pairwise interactions. Double the context, quadruple the cost. This $O(L^2)$ scaling is the single biggest obstacle to long-context models, whether the 'sequence' is a book, a genome, or an audio waveform."
+            },
+            {
+              "type": "p",
+              "html": "The obvious alternative is a <b>recurrent</b> model that walks through the sequence one step at a time, carrying a fixed-size memory (a 'state') and updating it. That is linear in $L$ and needs no growing cache. The catch, historically, is that recurrent models forget: a single small state cannot hold everything, and the classic fix (LSTMs, GRUs) is slow to train and still struggles past a few hundred tokens. <b>Mamba</b> is the paper that finally makes a recurrent model both fast <i>and</i> accurate enough to rival attention."
+            },
+            {
+              "type": "p",
+              "html": "The key insight is what the authors call <b>selectivity</b>. Prior linear-time models (the S4 family of state-space models) used the <i>same</i> update rule at every position, no matter what the token was. Mamba lets the model's update depend on the current input, so it can choose to remember an important token and ignore filler. This one change, plus a GPU-friendly way to compute it, is the whole paper."
+            },
+            {
+              "type": "quote",
+              "html": "We introduce a new class of selective state space models, that improves on prior work on several axes to achieve the modeling power of Transformers while scaling linearly in sequence length."
+            },
+            {
+              "type": "p",
+              "html": "The headline claims, all of which the paper backs with experiments: Mamba has <b>5x higher inference throughput</b> than a Transformer of similar size, scales <b>linearly</b> in sequence length (tested to a million tokens), and on language modeling a Mamba model <b>matches or beats Transformers twice its size</b>. It is also state-of-the-art across modalities as different as DNA and audio, despite using <b>no attention and no MLP blocks</b> at all."
+            },
+            {
+              "type": "p",
+              "html": "Mamba was released in December 2023 by <b>Albert Gu</b> (Carnegie Mellon, and lead author of the earlier S4 line) and <b>Tri Dao</b> (Princeton, author of FlashAttention). It set off a wave of 'is attention finally obsolete?' research and spawned a large family of follow-ups (Vision Mamba, MambaByte, Jamba, Mamba-2, and more)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background: State Space Models",
+      "pages": [
+        {
+          "title": "A continuous system, discretized",
+          "subtitle": "The machinery Mamba inherits from S4",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before Mamba's twist, you need the object it modifies: the <b>structured state space model (SSM)</b>. The mental picture is a physical system, think of a mass on a spring, or the water level in a series of connected tanks. There is a hidden <b>state</b> $h$ that summarizes everything the system 'remembers,' an <b>input</b> $x$ that pushes on it, and an <b>output</b> $y$ you read off. The state evolves smoothly over continuous time according to a fixed law."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, imagine $N = 4$ internal 'tanks.' At each instant the input $x(t)$ (a single number) flows into the tanks, the tanks leak into each other at fixed rates, and the output $y(t)$ is a weighted readout of the tank levels. The whole behavior is set by four matrices. This is the continuous form:"
+            },
+            {
+              "type": "math",
+              "tex": "h'(t) = \\mathbf{A}\\, h(t) + \\mathbf{B}\\, x(t)"
+            },
+            {
+              "type": "math",
+              "tex": "y(t) = \\mathbf{C}\\, h(t)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $h(t) \\in \\mathbb{R}^{N}$ is the hidden state vector (the $N$ tank levels); $h'(t)$ is its time-derivative (how fast each tank is changing); $x(t) \\in \\mathbb{R}$ is the scalar input at time $t$; $y(t) \\in \\mathbb{R}$ is the scalar output. $\\mathbf{A} \\in \\mathbb{R}^{N \\times N}$ is the <b>state transition</b> matrix (the leak/coupling rates), $\\mathbf{B} \\in \\mathbb{R}^{N \\times 1}$ maps input into the state, and $\\mathbf{C} \\in \\mathbb{R}^{1 \\times N}$ reads the state out. In practice a model runs $D$ of these in parallel, one per feature channel, so a $D$-dimensional sequence is handled by $D$ independent SSMs."
+            },
+            {
+              "type": "p",
+              "html": "Real data is not continuous, it is a sequence of discrete tokens $x_0, x_1, x_2, \\dots$. So the continuous system is <b>discretized</b> with a step size $\\Delta$ (think: how much 'time' passes between two tokens). A standard <b>zero-order hold (ZOH)</b> rule turns the continuous $\\mathbf{A}, \\mathbf{B}$ into discrete versions $\\bar{\\mathbf{A}}, \\bar{\\mathbf{B}}$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\bar{\\mathbf{A}} = \\exp(\\Delta \\mathbf{A}), \\qquad \\bar{\\mathbf{B}} = (\\Delta \\mathbf{A})^{-1}(\\exp(\\Delta \\mathbf{A}) - \\mathbf{I}) \\cdot \\Delta \\mathbf{B}"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\exp$ is the matrix exponential, $\\mathbf{I}$ is the $N \\times N$ identity, and $\\Delta \\in \\mathbb{R}$ is the timestep. The intuition for $\\Delta$ is a 'zoom' knob: a large $\\Delta$ means the system takes a big step and the current input dominates the state; a tiny $\\Delta$ means the input barely nudges the state, so old information persists. Hold onto that, $\\Delta$ becomes the heart of Mamba's selectivity."
+            }
+          ]
+        },
+        {
+          "title": "Two faces of the same model: recurrence and convolution",
+          "subtitle": "Why S4 was fast but rigid",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Once discretized, the SSM can be computed two equivalent ways, and this dual nature is exactly what made S4 attractive. The first is a plain <b>recurrence</b>, perfect for generating one token at a time during inference:"
+            },
+            {
+              "type": "math",
+              "tex": "h_t = \\bar{\\mathbf{A}}\\, h_{t-1} + \\bar{\\mathbf{B}}\\, x_t, \\qquad y_t = \\mathbf{C}\\, h_t"
+            },
+            {
+              "type": "p",
+              "html": "where $h_t \\in \\mathbb{R}^{N}$ is the state after seeing token $t$, $x_t \\in \\mathbb{R}$ is the current input, $y_t \\in \\mathbb{R}$ the output, and $\\bar{\\mathbf{A}}, \\bar{\\mathbf{B}}, \\mathbf{C}$ are the discretized matrices. Each step is $O(N)$ work and stores only the $N$-dimensional state, no growing KV cache. This is the recurrent dream: constant memory per step, linear total cost."
+            },
+            {
+              "type": "p",
+              "html": "The second face: because $\\bar{\\mathbf{A}}, \\bar{\\mathbf{B}}, \\mathbf{C}$ are the <i>same</i> at every step, unrolling the recurrence collapses into a single <b>convolution</b> with a fixed kernel $\\bar{\\mathbf{K}}$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\bar{\\mathbf{K}} = (\\mathbf{C}\\bar{\\mathbf{B}},\\ \\mathbf{C}\\bar{\\mathbf{A}}\\bar{\\mathbf{B}},\\ \\dots,\\ \\mathbf{C}\\bar{\\mathbf{A}}^{L-1}\\bar{\\mathbf{B}}), \\qquad y = x * \\bar{\\mathbf{K}}"
+            },
+            {
+              "type": "p",
+              "html": "$\\bar{\\mathbf{K}} \\in \\mathbb{R}^{L}$ is a single convolution kernel as long as the sequence, $L$ is the sequence length, and $*$ is convolution. This form can be computed for the whole sequence in parallel (via FFT) during training, the way a CNN processes all positions at once. So S4 trains like a convolution and runs like an RNN, the best of both worlds for speed."
+            },
+            {
+              "type": "h2",
+              "text": "The fatal limitation: linear time invariance"
+            },
+            {
+              "type": "p",
+              "html": "But the convolution trick only works because $\\bar{\\mathbf{A}}, \\bar{\\mathbf{B}}, \\mathbf{C}, \\Delta$ are <b>fixed for all time</b>, a property called <b>linear time invariance (LTI)</b>. The model applies the identical filter to every position regardless of content. That is a fatal weakness for tasks that require <i>choosing</i> what to keep. The paper demonstrates this with a toy task called <b>Selective Copying</b>: copy a few special tokens out of a stream of random distractors. An LTI model cannot do it, because deciding 'this token matters, that one is noise' requires the update to <i>depend on the input</i>, which LTI forbids by definition."
+            },
+            {
+              "type": "quote",
+              "html": "From this point of view, we argue that a fundamental problem of sequence modeling is compressing context into a smaller state. ... attention is both effective and inefficient because it explicitly does not compress context at all."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Selection Mechanism",
+      "pages": [
+        {
+          "title": "Making the SSM input-dependent",
+          "subtitle": "The one idea that defines Mamba",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the whole paper in one sentence: <b>let $\\mathbf{B}$, $\\mathbf{C}$, and $\\Delta$ be functions of the input token</b> instead of fixed constants. That is the <b>selection mechanism</b>. It sounds almost too small to matter, but it is precisely the thing LTI forbade, and it is what lets the model selectively remember or forget based on content."
+            },
+            {
+              "type": "p",
+              "html": "The analogy: an LTI SSM is a security camera that records everything at a fixed frame rate, it cannot decide that one moment is more important than another. Mamba is a camera that speeds up to capture an important event in detail and idles through the boring parts. The 'frame rate' knob is exactly $\\Delta$, now computed per token."
+            },
+            {
+              "type": "p",
+              "html": "Mechanically, where S4 had constant matrices, Mamba inserts small linear projections of the input. In the paper's notation (Algorithm 2), for an input sequence of shape $(B, L, D)$ with state size $N$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{B} = s_B(x) = \\text{Linear}_N(x), \\qquad \\mathbf{C} = s_C(x) = \\text{Linear}_N(x)"
+            },
+            {
+              "type": "math",
+              "tex": "\\Delta = \\tau_\\Delta\\big(\\text{Parameter} + s_\\Delta(x)\\big), \\qquad s_\\Delta(x) = \\text{Broadcast}_D(\\text{Linear}_1(x))"
+            },
+            {
+              "type": "p",
+              "html": "Reading these: $x$ is the input of shape $(B, L, D)$ where $B$ is batch, $L$ is length, $D$ is channels. $\\text{Linear}_N$ is a learned projection to dimension $N$, so now $\\mathbf{B}$ and $\\mathbf{C}$ have shape $(B, L, N)$, a <i>different</i> value at every position. $\\Delta$ gets its own projection down to $1$, broadcast across the $D$ channels, then passed through $\\tau_\\Delta = \\text{softplus}$ to keep it positive. The matrix $\\mathbf{A}$ stays fixed, but because $\\bar{\\mathbf{A}} = \\exp(\\Delta \\mathbf{A})$ and $\\Delta$ is now input-dependent, the <i>effective</i> transition changes at every step too."
+            },
+            {
+              "type": "h2",
+              "text": "What $\\Delta$ does: a gate in disguise"
+            },
+            {
+              "type": "p",
+              "html": "The paper shows this gives the classic <b>gating</b> of RNNs as a special case. When $\\Delta_t \\to \\infty$ (large step), the recurrence becomes $h_t \\approx \\bar{\\mathbf{B}} x_t$, the state <b>resets</b> to the current input and forgets the past, exactly what you want at the start of a new important token. When $\\Delta_t \\to 0$ (tiny step), $h_t \\approx h_{t-1}$, the model <b>ignores</b> the current input and holds its memory, perfect for skipping filler. So a single input-dependent scalar gives both 'remember this' and 'ignore that.'"
+            },
+            {
+              "type": "quote",
+              "html": "The selection mechanism is meant to address the inability of LTI models to efficiently select data ... selectivity allows the model to filter out irrelevant noise tokens that may occur between inputs of interest."
+            },
+            {
+              "type": "p",
+              "html": "The cost of this freedom: the moment $\\bar{\\mathbf{A}}, \\bar{\\mathbf{B}}, \\mathbf{C}$ vary by position, the convolution view dies. There is no single fixed kernel anymore, so you can no longer use the FFT to train in parallel. You are back to a step-by-step recurrence over $L$ positions, which on a GPU is potentially catastrophic for speed. Solving that is the next page."
+            }
+          ]
+        },
+        {
+          "title": "The hardware-aware parallel scan",
+          "subtitle": "How to run a recurrence fast on a GPU",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A naive sequential recurrence is the enemy of GPU throughput: GPUs love thousands of parallel multiply-adds, and hate a long chain of 'wait for step $t-1$ before step $t$.' Mamba's selectivity reintroduces exactly such a chain. The fix is the <b>parallel scan</b> (a.k.a. prefix scan), plus a careful eye on the GPU memory hierarchy. This engineering is why Mamba is practical and not just a nice equation."
+            },
+            {
+              "type": "p",
+              "html": "<b>The parallel scan idea.</b> A recurrence $h_t = \\bar{\\mathbf{A}}_t h_{t-1} + \\bar{\\mathbf{B}}_t x_t$ <i>looks</i> sequential, but it is an <b>associative</b> operation: you can combine elements in any grouping and still get the right answer. Like computing a running sum of 8 numbers, instead of 7 sequential adds, you add pairs, then pairs of pairs, in a tree of depth $\\log_2 8 = 3$. A parallel scan computes the whole sequence of states in $O(L)$ total work but only $O(\\log L)$ sequential depth, so the GPU's parallel lanes stay busy."
+            },
+            {
+              "type": "p",
+              "html": "<b>The hardware-aware part.</b> The expanded SSM state is large: with $D$ channels and state size $N$, the intermediate tensor is shape $(B, L, D, N)$, far too big to keep in slow GPU main memory (HBM) without thrashing. Mamba uses <b>kernel fusion</b>: it loads the small inputs ($\\Delta, \\mathbf{A}, \\mathbf{B}, \\mathbf{C}$) into the GPU's fast on-chip SRAM, materializes the giant $(B, L, D, N)$ state <i>only there</i>, runs the discretization and scan in SRAM, and writes back only the final outputs. The huge intermediate never touches HBM."
+            },
+            {
+              "type": "quote",
+              "html": "We instead fuse the discretization step, scan, and multiplication by C ... in SRAM ... and only the final outputs of size (B, L, D) are written back to HBM."
+            },
+            {
+              "type": "p",
+              "html": "<b>Recomputation for the backward pass.</b> Training needs the intermediate states to compute gradients, but storing the full $(B, L, D, N)$ tensor would blow the memory budget. So Mamba does <b>not</b> save it; it recomputes the states on the fly during the backward pass, again in fast SRAM. This trades a little extra compute for a large memory saving, the same activation-recomputation trick FlashAttention uses (Tri Dao, a Mamba co-author, wrote FlashAttention)."
+            },
+            {
+              "type": "p",
+              "html": "The payoff is concrete: the paper reports that the fused selective scan is up to <b>20-40x faster</b> than a naive implementation built from standard PyTorch operations, and its memory use matches the highly-optimized FlashAttention-2. This is what turns the selection mechanism from a theoretical nicety into a model you can actually train at scale."
+            }
+          ]
+        },
+        {
+          "title": "The Mamba block",
+          "subtitle": "One simple block, no attention, no MLP",
+          "pdfPages": [8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "How do you turn this selective SSM into a full neural network? Most architectures sandwich a 'mixing' layer (attention) with a separate MLP, and stack the pair. Mamba instead designs a <b>single, homogeneous block</b> that you just stack over and over, replacing <i>both</i> attention and MLP. Simplicity is the point: the whole network is one repeated unit."
+            },
+            {
+              "type": "p",
+              "html": "The Mamba block fuses two lineages. It takes the <b>gated-MLP / GLU</b> structure (a value path multiplied by a gating path) and the <b>H3</b> SSM block (an SSM wrapped in convolutions and linear projections) and merges them. Concretely, an input is projected up to a larger inner dimension along two parallel branches:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Main branch:</b> linear projection up, then a short causal <b>1D convolution</b> (local context), a <b>SiLU/Swish</b> activation, then the <b>selective SSM</b> (the input-dependent scan from the last two pages).",
+                "<b>Gate branch:</b> a parallel linear projection up, passed through a SiLU activation, used to <b>multiplicatively gate</b> the main branch's output (like the gate in a GLU).",
+                "<b>Merge:</b> the gated result is projected back down to the model dimension. A residual connection and normalization wrap the block, as usual."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The model dimension $D$ is typically expanded by a factor $E = 2$ inside the block, and the paper notes the two extra projections dominate the parameter count, so stacking these blocks gives a clean parameter budget comparable to a standard Transformer layer (attention + MLP) of the same size."
+            },
+            {
+              "type": "p",
+              "html": "Putting it all together, the full Mamba architecture is just: embed tokens, then stack $L$ identical Mamba blocks with residuals and RMSNorm, then a linear head. No attention matrix is ever formed. Because the core is a recurrence, generation is $O(1)$ memory and $O(1)$ time <i>per step</i>, the source of the 5x inference speedup."
+            },
+            {
+              "type": "quote",
+              "html": "We simplify prior deep sequence model architectures by combining the design of prior SSM architectures with the MLP block of Transformers into a single block, leading to a simple and homogeneous architecture design (Mamba)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Selectivity solves the synthetic tasks",
+          "subtitle": "Does the mechanism actually do what it claims?",
+          "pdfPages": [10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before scaling up, the paper checks that selectivity does the job it was designed for, using two diagnostic tasks that have tormented sequence models for years."
+            },
+            {
+              "type": "h2",
+              "text": "Selective Copying"
+            },
+            {
+              "type": "p",
+              "html": "The model sees a stream of tokens where a few 'colored' tokens are scattered among many random distractors, and must output just the colored ones in order. The trick is that the positions are <b>randomized</b>, so the model cannot use a fixed schedule, it must <i>decide</i> per token whether to remember or skip. LTI models (S4, and even gated convolutions) plateau well below solving it. Adding the selection mechanism lets the model solve the task, jumping to near-perfect accuracy. This is direct evidence that input-dependent $\\Delta, \\mathbf{B}$ provide content-based filtering that fixed kernels cannot."
+            },
+            {
+              "type": "h2",
+              "text": "Induction Heads"
+            },
+            {
+              "type": "p",
+              "html": "Induction heads are the canonical 'in-context learning' probe: after seeing a pattern like '...A B... A', predict 'B', i.e. recall what followed the last time you saw this token. Crucially, the paper trains on sequences of length 256 and tests <b>length extrapolation</b>. A selective Mamba trained at length 256 solves induction heads at sequences up to <b>1 million tokens</b>, over <b>4000x longer</b> than training, while attention and prior SSMs fail to generalize. This shows the recurrent state, when it can choose what to store, generalizes to lengths it never saw."
+            },
+            {
+              "type": "quote",
+              "html": "Mamba ... is able to extrapolate to sequences over 1,000,000 in length, or 4000x longer than it saw during training, while no other method goes beyond 2x."
+            }
+          ]
+        },
+        {
+          "title": "Language, DNA, and audio at scale",
+          "subtitle": "The headline benchmarks with real numbers",
+          "pdfPages": [11, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The real test is whether selectivity holds up against Transformers on serious, large-scale data. It does, across three very different modalities."
+            },
+            {
+              "type": "h2",
+              "text": "Language modeling"
+            },
+            {
+              "type": "p",
+              "html": "Trained on The Pile, Mamba is the <b>first attention-free model to match the performance of a strong modern Transformer recipe</b> (the 'Transformer++' baseline, the GPT-3 architecture with the latest tricks). On scaling-law curves from 125M up to 1.3B+ parameters, Mamba sits on or below the Transformer++ line. On downstream zero-shot evals (LAMBADA, HellaSwag, PIQA, ARC, WinoGrande), the paper reports that <b>Mamba matches or exceeds Transformers roughly twice its size</b>, e.g. Mamba-1.4B is competitive with ~2.8B baselines like Pythia and GPT-Neo."
+            },
+            {
+              "type": "table",
+              "headers": ["Claim", "Result"],
+              "rows": [
+                ["Language modeling quality", "First attention-free model to match Transformer++ on The Pile scaling laws"],
+                ["Downstream zero-shot", "Matches / beats open Transformers (Pythia, GPT-Neo) of ~2x the parameter count"],
+                ["Inference throughput", "~5x higher than a Transformer of similar size (no KV cache to grow)"],
+                ["Sequence-length scaling", "Linear in L; verified to 1M-token context"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "DNA and audio"
+            },
+            {
+              "type": "p",
+              "html": "On <b>DNA modeling</b> (the HG38 human genome), Mamba's quality keeps improving as both model size and sequence length grow, all the way to context lengths of <b>1 million base pairs</b>, where convolution-based baselines (HyenaDNA) stop improving or degrade. On <b>audio waveform</b> generation (the SC09 speech dataset and a YouTubeMix piano set), Mamba beats the prior SSM state-of-the-art (SaShiMi) on both quality and training efficiency, again with quality rising as context lengthens. The same architecture, unchanged, is state-of-the-art on text, genomics, and raw audio."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why long context helps here.</b> These results validate the core thesis: a model that compresses context into a fixed-size state, but compresses <i>selectively</i>, can exploit very long sequences without the quadratic blowup of attention. The longer the relevant dependencies (a gene's regulatory region, a musical phrase), the more Mamba's linear scaling pays off."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Mamba mattered",
+          "subtitle": "Context, trade-offs, and influence",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Mamba's importance is less about any single benchmark and more about a <b>proof of existence</b>: it showed that a sub-quadratic, attention-free model can match Transformers at the scales people actually care about. For five years 'attention is all you need' had been taken almost literally. Mamba reopened the question."
+            },
+            {
+              "type": "h2",
+              "text": "The lineage it completed"
+            },
+            {
+              "type": "p",
+              "html": "Mamba is the capstone of a multi-year arc by the same group: <b>HiPPO</b> (2020, the theory of optimal continuous memory), <b>S4</b> (2021, the first SSM to handle very long-range dependencies and the <code>structured</code> matrix that made it efficient), <b>H3</b> and <b>Hyena</b> (2022-23, closing the gap with attention on language). Each prior step kept the LTI assumption for the sake of the convolution speedup. Mamba's contribution was the courage to <i>break</i> LTI for selectivity, and the engineering (the hardware-aware scan) to make that affordable."
+            },
+            {
+              "type": "h2",
+              "text": "The honest trade-off"
+            },
+            {
+              "type": "p",
+              "html": "Mamba is not a free lunch. Its memory is a fixed-size state, so unlike attention it <i>must</i> compress and can in principle lose detail that a full KV cache would retain (some later work shows attention still wins on exact-recall / copying-from-a-long-prompt tasks). The bet is that selective compression keeps the information that matters, and on the modalities tested, that bet pays. This tension, lossless-but-quadratic attention versus lossy-but-linear recurrence, is the central design axis the paper frames."
+            },
+            {
+              "type": "quote",
+              "html": "Mamba achieves state-of-the-art performance across several modalities ... As a general sequence model backbone, Mamba achieves state-of-the-art performance ... and as the first model to truly achieve the promise of linear-time sequence models."
+            },
+            {
+              "type": "p",
+              "html": "<b>Influence.</b> Within months Mamba spawned an ecosystem: <b>Vision Mamba</b> and <b>VMamba</b> (images), <b>MambaByte</b> (tokenizer-free language), <b>Jamba</b> (a production hybrid interleaving Mamba and attention layers), and <b>Mamba-2</b> (which reframes the selective SSM as a form of structured attention, unifying the two paradigms). Whether or not pure SSMs ultimately replace Transformers, Mamba permanently established selective state spaces as a first-class tool, and made 'linear-time sequence modeling that actually works' a real research program rather than an aspiration."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

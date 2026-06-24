@@ -1,0 +1,331 @@
+{
+  "title": "Consistency Models",
+  "authors": "Song, Dhariwal, Chen, Sutskever (OpenAI)",
+  "year": "2023",
+  "venue": "arXiv:2303.01469",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "One step instead of a thousand",
+          "subtitle": "Why diffusion sampling is slow, and the bet this paper makes",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Diffusion models like DDPM, score-based SDEs, and Stable Diffusion produce stunning images, but they generate them <i>the slow way</i>. To make one picture, you start from pure noise and run the model again and again, nudging the noise a little closer to a real image each step. A good sample often needs <b>10 to 2000</b> sequential evaluations of a large neural network. Each step depends on the previous one, so you cannot parallelize them away. That is why a GAN spits out a face in <b>one</b> network call while a diffusion model can take seconds per image."
+            },
+            {
+              "type": "p",
+              "html": "The question this paper answers: <b>can we keep the training stability and sample quality of diffusion, but collapse those hundreds of steps into one?</b> The authors' answer is the <b>consistency model</b> &mdash; a network trained so that, from <i>any</i> point along the noise-to-image trajectory, it jumps <i>directly</i> to the clean image at the end."
+            },
+            {
+              "type": "p",
+              "html": "Think of the diffusion process as a river carrying a clear photo downstream, getting blurrier with noise as it goes. A diffusion sampler is a boat that paddles back upstream one careful stroke at a time. A consistency model is a <i>helicopter</i>: drop it anywhere on the river and it flies straight to the source. Crucially, if you drop it at two different points on the <i>same</i> river path, it must land in the <i>same</i> spot &mdash; that is the &lsquo;consistency&rsquo; the name refers to."
+            },
+            {
+              "type": "quote",
+              "html": "We propose consistency models, a new family of models that generate high quality samples by directly mapping noise to data. They support fast one-step generation by design, while still allowing multistep sampling to trade compute for sample quality."
+            },
+            {
+              "type": "p",
+              "html": "Two ways to train them are offered. <b>Consistency distillation (CD)</b> uses a pre-trained diffusion model as a teacher. <b>Consistency training (CT)</b> needs no teacher at all &mdash; it learns directly from data as a standalone generative model. The headline numbers: a new state of the art for one-step generation, <b>FID 3.55 on CIFAR-10</b> and <b>6.20 on ImageNet 64x64</b> via distillation, outperforming all prior single-step diffusion distillation methods."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>One-step generation:</b> a single network call turns noise into an image (no iterative loop required).",
+                "<b>Few-step option:</b> you can spend 2&ndash;4 steps to push quality higher &mdash; compute traded for fidelity, your choice.",
+                "<b>Zero-shot editing:</b> the same model does inpainting, colorization, super-resolution, and stroke-guided editing without ever being trained on those tasks."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Backdrop: Diffusion as an ODE",
+      "pages": [
+        {
+          "title": "The probability-flow ODE",
+          "subtitle": "Every diffusion model hides a smooth, deterministic trajectory",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To understand consistency models you first need the object they act on: the <b>probability flow (PF) ODE</b>. Score-based diffusion (Song et al., 2021) describes adding noise to data as a continuous-time stochastic process. Remarkably, that random process has a <i>deterministic</i> twin &mdash; an ordinary differential equation whose solution trajectories have the exact same distribution of points at every time. The randomness can be factored out, leaving a smooth curve from a clean image to noise."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, picture noise level $t$ running from a tiny $\\epsilon$ (almost clean) up to $T=80$ (essentially pure Gaussian noise). The forward process is $p_t(x) = p_{\\text{data}}(x) \\otimes \\mathcal{N}(0, t^2 I)$ &mdash; the data distribution blurred by Gaussian noise of standard deviation $t$. At $t=\\epsilon$ you basically see the photo; at $t=T$ you see static. The PF ODE is the deterministic path connecting them."
+            },
+            {
+              "type": "math",
+              "tex": "\\frac{dx_t}{dt} = -t\\, \\nabla_x \\log p_t(x_t)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x_t \\in \\mathbb{R}^d$ is the (flattened) image at noise level $t$, a $d$-dimensional vector. $\\frac{dx_t}{dt}$ is the instantaneous direction the image moves as you change the noise level. $\\nabla_x \\log p_t(x_t)$ is the <b>score</b> &mdash; the gradient of the log-density, an arrow pointing toward higher-probability (more image-like) regions; it also lives in $\\mathbb{R}^d$. The factor $-t$ scales that arrow and sets the direction of travel (this is the variance-exploding form the paper adopts from Karras et al., 2022). A neural network $s_\\phi(x, t)$ is trained to approximate the score."
+            },
+            {
+              "type": "p",
+              "html": "So sampling becomes: start at $x_T \\sim \\mathcal{N}(0, T^2 I)$ and numerically integrate this ODE backward down to $t=\\epsilon$. Standard solvers (Euler, Heun) take this in many small steps &mdash; and <i>that</i> is the source of slowness. Each step calls the score network $s_\\phi$ once."
+            },
+            {
+              "type": "p",
+              "html": "Why care about the ODE rather than the SDE? Because an ODE trajectory is a <b>single, well-defined curve</b> through each point: given a point $x_t$ at time $t$, the curve it sits on, and hence its clean endpoint at $t=\\epsilon$, are uniquely determined. That uniqueness is exactly the hook consistency models grab onto. The authors offset the endpoint to $\\epsilon = 0.002$ rather than literally $0$ to dodge numerical blow-ups where the score becomes ill-defined near zero noise."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "The consistency function",
+          "subtitle": "One map from any point on a trajectory to its clean origin",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the central definition. Take one PF-ODE trajectory $\\{x_t\\}_{t \\in [\\epsilon, T]}$ &mdash; one curve from a clean image up to noise. Define the <b>consistency function</b> $f$ to map <i>every</i> point on that curve to the same endpoint, the clean image at $t=\\epsilon$."
+            },
+            {
+              "type": "math",
+              "tex": "f(x_t, t) = x_\\epsilon \\quad \\text{for all } t \\in [\\epsilon, T]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $f$ takes two inputs &mdash; a noisy image $x_t \\in \\mathbb{R}^d$ and its noise level $t \\in [\\epsilon, T]$ (a scalar) &mdash; and returns $x_\\epsilon \\in \\mathbb{R}^d$, the clean image at the start of <i>that particular</i> trajectory. The defining property is <b>self-consistency</b>: any two points on the same curve produce identical outputs, $f(x_t, t) = f(x_{t'}, t')$ for all $t, t'$ on that trajectory. That is the helicopter-lands-at-the-source property from the abstract, written as an equation."
+            },
+            {
+              "type": "p",
+              "html": "Concrete mini-example. Suppose a trajectory passes through three points: a noisy blob $x_{40}$ at $t=40$, a half-formed image $x_{10}$ at $t=10$, and the clean photo $x_{0.002}$ at $t=\\epsilon$. A correct consistency function satisfies $f(x_{40}, 40) = f(x_{10}, 10) = x_{0.002}$ &mdash; all three calls return the same clean photo. Generation then needs just one call: sample noise $\\hat{x}_T \\sim \\mathcal{N}(0, T^2 I)$ and output $\\hat{x}_\\epsilon = f(\\hat{x}_T, T)$. Done in one network evaluation."
+            },
+            {
+              "type": "h2",
+              "text": "The boundary condition that makes it well-posed"
+            },
+            {
+              "type": "p",
+              "html": "There is a subtle requirement. At the very end of the trajectory ($t=\\epsilon$), the input is <i>already</i> the clean image, so $f$ must hand it back untouched. This is the <b>boundary condition</b>, and it is not optional &mdash; without it the trivial constant function $f \\equiv 0$ would satisfy self-consistency too."
+            },
+            {
+              "type": "math",
+              "tex": "f(x_\\epsilon, \\epsilon) = x_\\epsilon"
+            },
+            {
+              "type": "p",
+              "html": "It reads: at the smallest noise level $\\epsilon$, the function is the identity &mdash; input equals output. The authors bake this in <i>architecturally</i> using skip connections, so it holds exactly for free (next page), rather than hoping the network learns it from data. This anchors $f$ to the truth at one end and forces self-consistency to propagate something meaningful back along the whole curve."
+            }
+          ]
+        },
+        {
+          "title": "Building $f$ so the boundary is free",
+          "subtitle": "Skip connections enforce $f(x_\\epsilon,\\epsilon)=x_\\epsilon$ exactly",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "You could try to <i>train</i> a raw network $F_\\theta(x,t)$ to satisfy $f(x_\\epsilon, \\epsilon) = x_\\epsilon$, but the constraint would only ever hold approximately, and a violated boundary condition lets the whole scheme collapse to a constant. The fix is to <b>parameterize</b> $f$ so the boundary condition is true by construction, no matter what the network outputs. This is the same trick EDM (Karras et al., 2022) used to precondition diffusion networks."
+            },
+            {
+              "type": "math",
+              "tex": "f_\\theta(x, t) = c_{\\text{skip}}(t)\\, x + c_{\\text{out}}(t)\\, F_\\theta(x, t)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $x \\in \\mathbb{R}^d$ is the noisy input image; $F_\\theta(x,t) \\in \\mathbb{R}^d$ is the free neural network (a U-Net) with parameters $\\theta$; $f_\\theta$ is the consistency model we actually use. $c_{\\text{skip}}(t)$ and $c_{\\text{out}}(t)$ are scalar functions of the noise level that blend the two. $c_{\\text{skip}}$ weights how much of the input passes straight through unchanged; $c_{\\text{out}}$ weights how much the network is allowed to alter it."
+            },
+            {
+              "type": "p",
+              "html": "The magic is choosing these two functions so that <b>at $t=\\epsilon$</b>, $c_{\\text{skip}}(\\epsilon) = 1$ and $c_{\\text{out}}(\\epsilon) = 0$. Plug those in: $f_\\theta(x, \\epsilon) = 1 \\cdot x + 0 \\cdot F_\\theta(x, \\epsilon) = x$. The boundary condition holds <i>exactly</i>, automatically, for any weights $\\theta$ &mdash; the network's contribution is literally multiplied by zero there. At larger $t$, $c_{\\text{out}}$ grows and the network takes over the heavy denoising. The functions are also required to be differentiable so the model can be trained with gradients."
+            },
+            {
+              "type": "p",
+              "html": "Why this matters: it converts a hard constraint into a <i>structural guarantee</i>. The optimizer never has to spend capacity learning &lsquo;return the input when noise is tiny&rsquo; &mdash; the architecture already does it. This frees self-consistency training to focus entirely on the interesting part: making distant, noisy points agree with the clean endpoint."
+            },
+            {
+              "type": "p",
+              "html": "An alternative they note is to simply set $f_\\theta(x,t) = F_\\theta(x,t)$ for $t > \\epsilon$ and hard-code the identity at $t=\\epsilon$, but the smooth skip-connection version is differentiable everywhere and empirically trains better, so it is the one used throughout."
+            }
+          ]
+        },
+        {
+          "title": "Training: making nearby points agree",
+          "subtitle": "Distillation from a teacher, or standalone training",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "How do you train $f_\\theta$ to be self-consistent when you do not have the true clean endpoint for each noisy point? The trick: enforce consistency <i>locally</i> between <b>adjacent</b> points on a trajectory. If $f$ gives the same answer for every neighboring pair along the curve, then by transitivity it gives the same answer for the whole curve. So you only ever compare two points one small step apart."
+            },
+            {
+              "type": "h2",
+              "text": "Consistency Distillation (CD)"
+            },
+            {
+              "type": "p",
+              "html": "With a pre-trained score model $s_\\phi$ available, generate a pair as follows. Sample a clean image $x$, pick a noise level $t_{n+1}$, and form $x_{t_{n+1}}$ by adding noise. Then take <i>one</i> numerical ODE step <i>backward</i> (using the teacher's score) to get an estimate $\\hat{x}_{t_n}^\\phi$ at the slightly lower noise level $t_n$. Now the two points $(x_{t_{n+1}}, t_{n+1})$ and $(\\hat{x}_{t_n}^\\phi, t_n)$ lie on (approximately) the same trajectory &mdash; so $f_\\theta$ should map both to the same place."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{CD} = \\mathbb{E}\\!\\left[\\, \\lambda(t_n)\\, d\\!\\left( f_\\theta(x_{t_{n+1}}, t_{n+1}),\\; f_{\\theta^-}(\\hat{x}_{t_n}^\\phi, t_n) \\right) \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $d(\\cdot,\\cdot)$ is a distance (squared $\\ell_2$, $\\ell_1$, or LPIPS perceptual distance) measuring how far the two outputs are. $f_\\theta$ is the online model being trained on the noisier point; $f_{\\theta^-}$ is a <b>target network</b> applied to the less-noisy point. $\\lambda(t_n) > 0$ is a per-noise-level weight. $\\theta^-$ is an exponential moving average (EMA) of $\\theta$, updated as $\\theta^- \\leftarrow \\mu\\,\\theta^- + (1-\\mu)\\,\\theta$ &mdash; a slowly-trailing copy of the weights."
+            },
+            {
+              "type": "p",
+              "html": "Why the EMA target network? If both sides used the live $\\theta$, the model could cheat by making its outputs collapse together (a moving target chasing itself), and training destabilizes. Freezing one side as a slow EMA copy &mdash; an idea borrowed from self-supervised learning and RL &mdash; gives a stable reference and was found to <b>greatly improve</b> training. LPIPS as the distance $d$ also noticeably beat plain $\\ell_2$ on sample quality."
+            },
+            {
+              "type": "h2",
+              "text": "Consistency Training (CT): no teacher needed"
+            },
+            {
+              "type": "p",
+              "html": "CD inherits whatever flaws its teacher has. <b>Consistency training</b> removes the teacher entirely. The key realization: you can replace the teacher's score estimate with an <i>unbiased</i> estimator built from the data itself. Adding fresh noise to the same clean image $x$ at two adjacent levels $t_n$ and $t_{n+1}$ gives a pair that, in the limit of small steps, lies on the same trajectory &mdash; no score network required."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{CT} = \\mathbb{E}\\!\\left[\\, \\lambda(t_n)\\, d\\!\\left( f_\\theta(x + t_{n+1} z,\\, t_{n+1}),\\; f_{\\theta^-}(x + t_n z,\\, t_n) \\right) \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Here $x \\sim p_{\\text{data}}$ is a real image, $z \\sim \\mathcal{N}(0, I)$ is a single shared noise vector, and $x + t\\,z$ is that image noised to level $t$ (the variance-exploding parameterization). The <i>same</i> $z$ feeds both branches so the two noisy versions sit on the same path. Everything else matches $\\mathcal{L}_{CD}$. The authors prove $\\mathcal{L}_{CT}$ has the same gradient as $\\mathcal{L}_{CD}$ in the continuous limit, so CT is a legitimate teacher-free objective &mdash; consistency models become a <b>standalone generative model family</b>, not just a distillation trick."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Sampling & Editing",
+      "pages": [
+        {
+          "title": "One step, or a few, your call",
+          "subtitle": "Multistep sampling trades compute for quality",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole point is one-step generation, and it is dead simple: draw $\\hat{x}_T \\sim \\mathcal{N}(0, T^2 I)$ and output $f_\\theta(\\hat{x}_T, T)$. One network call, one image. But sometimes you want higher fidelity and can afford a little more compute. Consistency models offer a <b>multistep</b> procedure that interpolates smoothly between one shot and many."
+            },
+            {
+              "type": "p",
+              "html": "The idea: apply $f_\\theta$ to jump to a clean estimate, then <i>re-noise</i> that estimate to an intermediate level and apply $f_\\theta$ again. Each cycle alternates a deterministic jump-to-clean with a stochastic noise-injection, letting the model refine details it got wrong on the first pass."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Step 1:</b> from noise $\\hat{x}_T$, compute $x \\leftarrow f_\\theta(\\hat{x}_T, T)$ &mdash; a first clean guess.",
+                "<b>Step 2:</b> pick an intermediate level $\\tau_n$, re-noise: $\\hat{x}_{\\tau_n} \\leftarrow x + \\sqrt{\\tau_n^2 - \\epsilon^2}\\, z$ with fresh $z \\sim \\mathcal{N}(0, I)$.",
+                "<b>Step 3:</b> jump again: $x \\leftarrow f_\\theta(\\hat{x}_{\\tau_n}, \\tau_n)$. Repeat for the chosen handful of levels $\\tau_1 > \\tau_2 > \\dots$"
+              ]
+            },
+            {
+              "type": "p",
+              "html": "In the re-noising step, $x \\in \\mathbb{R}^d$ is the current clean estimate, $\\tau_n$ is the target intermediate noise level, $z \\sim \\mathcal{N}(0, I)$ is fresh Gaussian noise, and $\\sqrt{\\tau_n^2 - \\epsilon^2}$ is exactly the standard deviation that lifts a level-$\\epsilon$ image up to level $\\tau_n$. The greedy search over which few $\\tau$ values to use (the paper uses ternary search) finds good schedules; <b>2 steps</b> already buys a large quality jump over 1 step, with diminishing returns after."
+            },
+            {
+              "type": "h2",
+              "text": "Zero-shot editing for free"
+            },
+            {
+              "type": "p",
+              "html": "Because the model knows how to map any noisy image to a clean one, it does <b>image editing without task-specific training</b>. Inpainting, colorization, super-resolution, and stroke-guided generation (SDEdit-style) all reduce to: corrupt or constrain the image, run the multistep sampler, and re-impose the known pixels after each step. The same single checkpoint handles all of them &mdash; a capability diffusion models have but one-step GANs typically lack."
+            },
+            {
+              "type": "p",
+              "html": "This is the quiet strength of building on the diffusion framework: consistency models keep diffusion's flexibility (a smooth latent trajectory you can manipulate) while shedding its cost. You get GAN-like speed and diffusion-like editability in one model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "The numbers: state of the art one-step",
+          "subtitle": "CIFAR-10 and ImageNet 64x64 by FID",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Generative image quality is scored mainly by <b>FID</b> (Fr&eacute;chet Inception Distance) &mdash; lower is better; it measures how close generated images' feature statistics are to real ones. The benchmark question: among methods that generate in a <i>single</i> network call, how good is a consistency model?"
+            },
+            {
+              "type": "p",
+              "html": "Via <b>consistency distillation (CD)</b>, the answer is a new record for single-step diffusion-based generation. On CIFAR-10 one-step CD reaches <b>FID 3.55</b>; on ImageNet 64x64 it reaches <b>FID 6.20</b> &mdash; beating progressive distillation and every prior one-step diffusion-distillation method the authors compare against."
+            },
+            {
+              "type": "table",
+              "headers": ["Setting", "Method", "NFE (steps)", "FID"],
+              "rows": [
+                ["CIFAR-10", "CD (consistency distillation)", "1", "3.55"],
+                ["CIFAR-10", "CD (consistency distillation)", "2", "2.93"],
+                ["CIFAR-10", "CT (consistency training)", "1", "8.70"],
+                ["CIFAR-10", "CT (consistency training)", "2", "5.83"],
+                ["ImageNet 64x64", "CD", "1", "6.20"],
+                ["ImageNet 64x64", "CD", "2", "4.70"],
+                ["ImageNet 64x64", "CT", "1", "13.0"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the table as: <b>NFE</b> = number of function (network) evaluations, i.e. how many sequential model calls per image &mdash; 1 is true one-shot generation. Two patterns jump out. First, going from 1 to 2 steps consistently sharpens quality (CIFAR-10 CD: 3.55 &rarr; 2.93), confirming the multistep trade-off works as designed. Second, CD beats CT &mdash; the teacher helps &mdash; but <b>CT with no teacher at all</b> still lands in a competitive range (8.70 one-step on CIFAR-10), outperforming several prior <i>standalone</i> single-step generative models."
+            },
+            {
+              "type": "p",
+              "html": "That second point is the surprising one. CT means consistency models are not merely a way to compress an existing diffusion model &mdash; they are a genuine generative model you can train from scratch, and they already rival GANs and one-step methods without a pre-trained teacher. The gap to CD also tells you exactly where future gains live: better teachers or better teacher-free score estimates."
+            },
+            {
+              "type": "p",
+              "html": "Design ablations confirmed the choices that matter: the <b>LPIPS</b> perceptual distance for $d$ clearly beat $\\ell_2$, and the <b>EMA target network</b> ($\\theta^-$) was essential for stable training &mdash; removing it degraded results sharply. These are the two levers that turned a fragile idea into a working method."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why this paper mattered",
+          "subtitle": "From a distillation trick to a new model family",
+          "pdfPages": [1, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Consistency models reframed the central tension in generative modeling. For years the field traded off two things you could not have together: diffusion's <b>quality and stable training</b> versus GANs' <b>single-pass speed</b>. By learning a direct map from any point on the PF-ODE trajectory to its clean origin, this paper showed you can keep diffusion's foundations and still sample in one step."
+            },
+            {
+              "type": "p",
+              "html": "The conceptual move &mdash; enforce <i>self-consistency</i> along an ODE trajectory and anchor it with a hard boundary condition &mdash; is clean and general. It built directly on the score-based SDE/ODE framework (Song et al., 2021) and the EDM preconditioning of Karras et al. (2022), and it sits alongside <b>progressive distillation</b> (Salimans &amp; Ho, 2022) as the other major route to few-step diffusion sampling &mdash; but unlike progressive distillation, consistency training needs no teacher."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Two training modes:</b> distillation (CD) to compress an existing diffusion model, or standalone training (CT) as a brand-new generative family.",
+                "<b>Compute on a dial:</b> the same model runs in 1 step for speed or a few steps for quality &mdash; no retraining to change the trade-off.",
+                "<b>Diffusion's toolbox retained:</b> zero-shot inpainting, colorization, super-resolution, and stroke editing all transfer over for free."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The follow-on impact was large and fast. The same authors' <b>&lsquo;Improved Techniques for Training Consistency Models&rsquo;</b> (Song &amp; Dhariwal, 2023) pushed CT quality much higher, and the idea fed directly into the era of <b>few-step and real-time image generators</b> &mdash; latent consistency models (LCM) for Stable Diffusion, and later consistency-style distillation behind interactive, near-instant text-to-image tools. The notion of training a network to be self-consistent along a learned trajectory became a standard ingredient in fast generative sampling."
+            },
+            {
+              "type": "p",
+              "html": "The lasting lesson is methodological: instead of imitating the slow numerical solver step by step, define the <i>property</i> the ideal fast map must satisfy (consistency along the trajectory plus a correct endpoint) and train for that property directly. Drop the helicopter anywhere on the river &mdash; it should always find the source."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

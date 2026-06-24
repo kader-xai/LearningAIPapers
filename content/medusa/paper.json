@@ -1,0 +1,333 @@
+{
+  "title": "Medusa: Simple LLM Inference Acceleration with Multiple Decoding Heads",
+  "authors": "Cai, et al.",
+  "year": "2024",
+  "venue": "arXiv:2401.10774",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Why generating one token at a time is so slow",
+          "subtitle": "The memory-bandwidth bottleneck that Medusa attacks",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern LLMs generate text <b>autoregressively</b>: to produce token number 100 they must first produce tokens 1 through 99, one after another, each in its own forward pass. The painful part is <i>not</i> the math. The painful part is that every single forward pass has to drag the model's billions of weights out of <b>High-Bandwidth Memory (HBM)</b> and into the chip's fast cache — and all that data movement produces exactly <b>one</b> token. The GPU's arithmetic units sit mostly idle, starved by the memory bus. This is what people mean when they say LLM inference is <b>memory-bandwidth-bound</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>A concrete picture.</b> Imagine a librarian who must walk the entire length of a warehouse to fetch a book, hand you one word from it, then walk all the way back — and repeat for every word. The walk (loading 7 billion weights) dominates; reading the word (the actual compute) is trivial. If you could fetch <i>several</i> words per trip, you would barely add to the walk but multiply your output. That is the whole idea behind Medusa."
+            },
+            {
+              "type": "p",
+              "html": "<b>Speculative decoding</b> already tried this: use a small, fast <b>draft model</b> to guess several future tokens cheaply, then let the big model verify them all in one pass. It works, but it has a logistics problem — you need a <i>separate</i> draft model that is small, fast, <i>and</i> distribution-matched to the big one. Training and serving that second model, especially across a distributed cluster, is a real engineering headache. The paper notes one prior approach burned <b>275 NVIDIA A100 GPU-hours</b> just pre-training the draft model."
+            },
+            {
+              "type": "quote",
+              "html": "In this paper, we present MEDUSA, an efficient method that augments LLM inference by adding extra decoding heads to predict multiple subsequent tokens in parallel. Using a tree-based attention mechanism, MEDUSA constructs multiple candidate continuations and verifies them simultaneously in each decoding step."
+            },
+            {
+              "type": "p",
+              "html": "<b>Medusa's bet:</b> you don't need a separate draft model at all. Bolt a few extra lightweight <b>decoding heads</b> onto the original model — head 1 guesses the next token, head 2 the token after that, and so on — so a single forward pass emits a guess for several future positions at once. A <b>tree attention</b> mechanism then checks many guessed continuations in one shot, and the longest verified prefix is accepted. No second model, no distribution mismatch, trivial to drop into an existing serving stack."
+            },
+            {
+              "type": "p",
+              "html": "<b>Headline results.</b> The paper offers two recipes. <b>Medusa-1</b> trains the heads on top of a <i>frozen</i> backbone — lossless, and it already gives over <b>2.2&times;</b> wall-clock speedup. <b>Medusa-2</b> trains the heads <i>jointly</i> with the backbone for sharper guesses, pushing speedups to <b>2.3&ndash;2.8&times;</b> with essentially no drop in generation quality."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in history.</b> Medusa (Cai et al., ICML 2024) is a direct descendant of Stern et al. (2018)'s blockwise parallel decoding and of speculative decoding (Leviathan et al., 2022; Chen et al., 2023). Its contribution is pragmatic: strip away the separate draft model, keep the speedup. That simplicity is why Medusa heads showed up almost immediately in production inference stacks like TensorRT-LLM and vLLM."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Medusa Heads",
+      "pages": [
+        {
+          "title": "Extra heads that each predict a different future token",
+          "subtitle": "One tiny layer per head, initialized to mimic the original model",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the core question this page answers: <b>how do you guess several future tokens without a second model?</b> Medusa's answer is almost embarrassingly simple. The big model already computes a rich <b>last hidden state</b> $h_t$ at each position — a vector that summarizes everything seen so far. The standard <b>language-model head</b> turns $h_t$ into a prediction for the <i>very next</i> token. Medusa just adds a few more heads that read the <i>same</i> $h_t$ and each predict a token <i>further</i> into the future."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy.</b> Think of $h_t$ as a weather front. The normal head forecasts tomorrow. Medusa adds forecasters for the day after, two days after, three days after — all reading the same atmospheric snapshot. Each is a specialist for its own horizon. They're less certain the further out they look (forecasting 3 days ahead is harder than 1), but even a rough guess is useful if the big model can cheaply confirm it."
+            },
+            {
+              "type": "p",
+              "html": "<b>Setup.</b> Given the backbone's last hidden state $h_t$ at position $t$, Medusa attaches $K$ extra decoding heads. The $k$-th head predicts the token at position $t+k+1$. The original LM head still handles position $t+1$. So with $K$ heads you get guesses for positions $t+1$ (original head) through $t+K+1$ — that's $K+1$ future tokens from a single forward pass. Each head's output is written $p_t^{(k)}$, a probability distribution over the vocabulary."
+            },
+            {
+              "type": "math",
+              "tex": "p_t^{(k)} = \\text{softmax}\\!\\left( W_2^{(k)} \\cdot \\left( \\text{SiLU}(W_1^{(k)} \\cdot h_t) + h_t \\right) \\right), \\quad \\text{where } W_2^{(k)} \\in \\mathbb{R}^{d \\times V},\\ W_1^{(k)} \\in \\mathbb{R}^{d \\times d}"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it term by term.</b> $h_t \\in \\mathbb{R}^{d}$ is the backbone's last hidden state at position $t$, where $d$ is the hidden width. $W_1^{(k)} \\in \\mathbb{R}^{d \\times d}$ is the $k$-th head's first weight matrix — it mixes the hidden state and keeps it the same width. $\\text{SiLU}(\\cdot)$ is the smooth activation $\\text{SiLU}(x) = x\\,\\sigma(x)$, the same nonlinearity Llama uses. The <b>residual connection</b> ($+\\,h_t$) adds the original hidden state straight back in, so the head starts from the model's own representation rather than from scratch. $W_2^{(k)} \\in \\mathbb{R}^{d \\times V}$ projects to the vocabulary of size $V$, and $\\text{softmax}$ turns logits into the probability vector $p_t^{(k)}$. Each head is therefore a <b>single feed-forward layer with a residual</b> — that's it."
+            },
+            {
+              "type": "p",
+              "html": "<b>The clever initialization.</b> $W_2^{(k)}$ is initialized to be <i>identical to the original LM head</i>, and $W_1^{(k)}$ is initialized to <b>zero</b>. With $W_1^{(k)} = 0$, the SiLU term vanishes and the head computes $\\text{softmax}(W_2^{(k)} \\cdot h_t)$ — exactly what the original model would predict. So at step zero every Medusa head is a faithful copy of the base model's next-token predictor; training only nudges them toward their own future horizon. This is why the heads never start from garbage and converge fast."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this works / what breaks without it.</b> Because the heads sit on top of the <i>same</i> backbone and are trained alongside it, their predictions are automatically <b>distribution-matched</b> to the original model — eliminating the draft-model mismatch that plagues speculative decoding. And because each head is just one extra layer (the size of one LM head), Medusa adds almost nothing to the serving system's complexity or memory. The design traces directly back to Stern et al. (2018), who first used parallel feed-forward heads for machine translation and image super-resolution."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Tree Attention",
+      "pages": [
+        {
+          "title": "Verifying many guessed continuations in one forward pass",
+          "subtitle": "A Cartesian-product tree plus a custom attention mask",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The heads give us probability distributions for the next $K+1$ tokens. The naive move is to take each head's single best token and stitch them into <i>one</i> candidate continuation. But each head is uncertain, so a single guess is fragile — one wrong token early kills the whole chain. This page answers: <b>how do we hedge across many guesses and check them all at once, without ballooning the batch size?</b>"
+            },
+            {
+              "type": "p",
+              "html": "<b>The trick: keep the top-$s_k$ guesses from each head and take their Cartesian product.</b> Worked example from the paper's Figure 2: let head 1 keep its top $s_1 = 2$ tokens and head 2 keep its top $s_2 = 3$. Combining them gives $2 \\times 3 = 6$ candidate two-token continuations. If head 1 says <code>['is', \"'\"]</code> and head 2 says <code>['difficult', 'is', \"'\"]</code>, you build all six branches — <code>is&middot;difficult</code>, <code>is&middot;is</code>, <code>is&middot;'</code>, <code>'&middot;difficult</code>, and so on — and verify every branch simultaneously. As long as <i>any</i> branch is correct, you advance multiple tokens this step."
+            },
+            {
+              "type": "p",
+              "html": "These candidates form a <b>tree</b>: $s_k$ branches sprout at level $k$. A virtual root sits at level 0 (the original LM head's prediction, sampled independently). The total number of new candidate tokens packed into one forward pass is:"
+            },
+            {
+              "type": "math",
+              "tex": "\\#\\text{candidate tokens} = \\sum_{k=1}^{K} \\prod_{i=1}^{k} s_i"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it term by term.</b> $K$ is the number of Medusa heads. $s_i$ is how many top predictions head $i$ contributes. The inner product $\\prod_{i=1}^{k} s_i$ counts the nodes at depth $k$ (every combination of choices down to that level), and the outer sum $\\sum_{k=1}^{K}$ adds up nodes across all depths. With $s_1=2, s_2=3$ you get $2 + (2\\cdot3) = 8$ candidate tokens in the tree — all processed in <b>one</b> pass."
+            },
+            {
+              "type": "p",
+              "html": "<b>The custom attention mask.</b> Normally, causal attention lets every token attend to all earlier tokens in the sequence. But these tree branches are <i>mutually exclusive hypotheses</i> — the token <code>'difficult</code> in branch 1 must <b>not</b> see <code>'is</code> from branch 4. So Medusa replaces the standard causal mask with a <b>tree mask</b>: a token may attend only to its own <b>ancestors</b> along its branch, never to siblings or cousins in other branches. The positional encodings are likewise adjusted to each token's depth in the tree. This is how all candidates ride inside a single sequence without contaminating each other — and crucially, <b>without expanding the batch dimension</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works / the trade-off.</b> More candidates raise the chance that some branch matches what the big model truly wants, so the expected number of accepted tokens per step goes up. But more candidates also mean a longer sequence to attend over, which costs compute. Medusa strikes the balance by keeping the tree modest; Section 2.3.3 later shows a <b>sparse</b>, accuracy-aware tree (64 well-chosen nodes) beats a <b>dense</b> tree (256 nodes) — the dense tree's extra branches add overhead faster than they add accepted tokens."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> Medusa builds the tree <b>top-down</b> from the heads' structured outputs, whereas concurrent work (Miao et al., 2023, SpecInfer; Spector &amp; Re, 2023) builds it <b>bottom-up</b> by merging draft-model samples. The idea of folding a graph structure into the attention mask is borrowed from graph neural networks (Ying et al., 2021, Graphormer)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training",
+      "pages": [
+        {
+          "title": "Medusa-1 vs Medusa-2: frozen heads or joint training",
+          "subtitle": "Two recipes trading simplicity against speed",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The heads have to be <i>trained</i> to predict future tokens. The question this page answers: <b>do you freeze the backbone (cheap, lossless, but weaker guesses) or train it jointly (sharper guesses, but you risk damaging the base model)?</b> Medusa offers both."
+            },
+            {
+              "type": "h2",
+              "text": "Medusa-1: train the heads on a frozen backbone"
+            },
+            {
+              "type": "p",
+              "html": "Freeze the entire base model and train <i>only</i> the new heads with cross-entropy against the ground-truth future tokens. For the $k$-th head, the loss is $\\mathcal{L}_k = -\\log p_t^{(k)}(y_{t+k+1})$, where $y_{t+k+1}$ is the true token $k+1$ positions ahead. The total Medusa-1 loss weights the heads:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{MEDUSA-1}} = \\sum_{k=1}^{K} -\\lambda_k \\log p_t^{(k)}(y_{t+k+1})"
+            },
+            {
+              "type": "p",
+              "html": "<b>Term by term.</b> $K$ is the number of heads; $p_t^{(k)}(y_{t+k+1})$ is the probability the $k$-th head assigns to the correct token at position $t+k+1$; $\\lambda_k$ is a per-head weight. The paper observes that $\\mathcal{L}_k$ grows with $k$ — farther-out predictions are genuinely harder and more uncertain — so it down-weights distant heads by setting $\\lambda_k$ to the $k$-th power of a constant like <b>0.8</b> (so $\\lambda_1=0.8$, $\\lambda_2=0.64$, ...). Because the backbone is frozen and used only to supply hidden states, you can even <b>quantize</b> it (QLoRA-style) and train Medusa-1 for a 7B model on a single consumer GPU. The paper reports just <b>~5 hours on one A100</b> over 60k ShareGPT samples."
+            },
+            {
+              "type": "h2",
+              "text": "Medusa-2: train the heads and backbone together"
+            },
+            {
+              "type": "p",
+              "html": "Freezing the backbone caps how good the heads can get — the hidden states were never optimized to support multi-token lookahead. Medusa-2 unfreezes the backbone for a bigger speedup, but now you must protect the model's original next-token quality. The combined loss adds the backbone's own cross-entropy back in:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{MEDUSA-2}} = \\mathcal{L}_{\\text{LM}} + \\lambda_0\\, \\mathcal{L}_{\\text{MEDUSA-1}}, \\qquad \\mathcal{L}_{\\text{LM}} = -\\log p_t^{(0)}(y_{t+1})"
+            },
+            {
+              "type": "p",
+              "html": "<b>Term by term.</b> $\\mathcal{L}_{\\text{LM}}$ is the standard next-token loss of the original head $p_t^{(0)}$ on the true next token $y_{t+1}$ — this keeps the backbone good at its real job. $\\mathcal{L}_{\\text{MEDUSA-1}}$ is the head loss from above. $\\lambda_0$ balances the two: too large and the heads dominate and corrupt the backbone; too small and the heads barely learn."
+            },
+            {
+              "type": "p",
+              "html": "<b>Three tricks make joint training safe</b> (without them, the backbone gets distorted): (1) <b>Combined loss</b>, as above, anchors the backbone to its original task. (2) <b>Differential learning rates</b> — the well-trained backbone gets a small rate, the from-scratch heads a larger one. (3) <b>Heads warmup</b> — early on the heads have huge loss and huge gradients that would wreck the backbone, so train the heads alone first (as Medusa-1), then bring the backbone in gradually, optionally ramping $\\lambda_0$ up over time. This warm-start idea follows Kumar et al. (2022)."
+            },
+            {
+              "type": "p",
+              "html": "<b>How many heads?</b> Empirically <b>five heads are enough</b>. The paper recommends training five and then using the tree-optimization step to prune — often three or four heads suffice at inference, and unused heads can simply be dropped with no overhead. The pattern mirrors the broader PEFT trend (LoRA, QLoRA): bolt a small trainable module onto a frozen giant and get most of the benefit for a fraction of the cost."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Extensions",
+      "pages": [
+        {
+          "title": "Typical acceptance and self-distillation",
+          "subtitle": "Accept more guesses, and train heads even without data",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Two practical gaps remain. First: <b>how do you decide which guessed tokens to accept?</b> Speculative decoding uses <b>rejection sampling</b> to provably match the original model's distribution — but the paper notes that this <i>loses efficiency as temperature rises</i>, because the draft and original are sampled independently and a perfectly fine token can still be rejected. Second: <b>what if you have no training data</b> (the model was released without its data, or went through RLHF)? Medusa addresses both."
+            },
+            {
+              "type": "h2",
+              "text": "Typical acceptance: accept anything plausible"
+            },
+            {
+              "type": "p",
+              "html": "<b>Key insight:</b> when you sample with temperature, you're <i>asking</i> for diverse output — you don't actually need to reproduce the original model's exact distribution. You just need tokens that are <b>typical</b>: plausible enough that the original model wouldn't be shocked to produce them. So Medusa accepts a candidate token $x_{n+k}$ whenever the original model assigns it more than a threshold probability:"
+            },
+            {
+              "type": "math",
+              "tex": "p_{\\text{original}}(x_{n+k} \\mid x_1, \\dots, x_{n+k-1}) > \\min\\!\\left( \\epsilon,\\ \\delta \\exp\\!\\left( -H\\big(p_{\\text{original}}(\\cdot \\mid x_1, \\dots, x_{n+k-1})\\big) \\right) \\right)"
+            },
+            {
+              "type": "p",
+              "html": "<b>Term by term.</b> $p_{\\text{original}}(\\cdot)$ is the backbone's probability for the candidate token given the context $x_1,\\dots,x_{n+k-1}$. $H(\\cdot)$ is the <b>entropy</b> of that next-token distribution. $\\epsilon$ is a fixed (hard) floor; $\\delta$ scales an <b>entropy-dependent</b> floor. The logic: a token is accepted if it's either above the absolute floor $\\epsilon$, or — when the distribution is <i>high-entropy</i> (the model is genuinely unsure, so many continuations are reasonable) — the $\\exp(-H)$ term lowers the bar so more candidates pass. The $\\min$ takes whichever floor is looser. This criterion is adapted from truncation-sampling work (Hewitt et al., 2022)."
+            },
+            {
+              "type": "p",
+              "html": "<b>Nice properties.</b> At temperature 0 it reduces to greedy decoding (only the top token survives). As temperature rises, <i>more</i> tokens clear the bar, so accepted sequences get <i>longer</i> and decoding gets <i>faster</i> — the exact opposite of rejection sampling's behavior. To guarantee progress, the first token each step is accepted unconditionally via greedy decoding, and the <b>longest accepted prefix</b> across all candidate branches becomes the step's output. Figure 5 confirms typical acceptance gives a better speedup at similar quality."
+            },
+            {
+              "type": "h2",
+              "text": "Self-distillation: manufacture your own training data"
+            },
+            {
+              "type": "p",
+              "html": "When no matching dataset exists, let the model teach itself. Take a public <b>seed</b> dataset from a similar domain (e.g. ShareGPT prompts for a chat model), feed the prompts to the <i>target model itself</i>, and record its replies — that generated corpus matches the model's own distribution by construction. For Medusa-1 this is enough. For Medusa-2, naively training the backbone on these texts <i>degrades</i> quality, so the backbone is trained with a distillation loss instead of hard labels:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{LM-distill}} = \\text{KL}\\!\\left( p_{\\text{original},t}^{(0)} \\,\\big\\|\\, p_t^{(0)} \\right)"
+            },
+            {
+              "type": "p",
+              "html": "<b>Term by term.</b> $p_{\\text{original},t}^{(0)}$ is the <i>frozen</i> original model's next-token distribution at position $t$ (the teacher); $p_t^{(0)}$ is the model-being-trained's distribution (the student); $\\text{KL}(\\cdot\\|\\cdot)$ is the Kullback&ndash;Leibler divergence pulling student toward teacher. <b>The memory trick:</b> rather than keep two full models in memory, fine-tune the backbone with a <b>LoRA</b> adapter — then the 'original' teacher model is simply the <i>same</i> model with the adapter switched <b>off</b>. Distillation thus costs almost no extra memory. (Tip: use LoRA <i>without</i> quantization here, or the teacher itself becomes a degraded quantized model.) This echoes classic sequence-level knowledge distillation (Kim &amp; Rush, 2016)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "2.2&ndash;2.8&times; faster on Vicuna and Zephyr, no quality loss",
+          "subtitle": "MT-Bench speedups, per-category gains, and the speed/accuracy trade",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Does it actually pay off? The paper evaluates on <b>MT-Bench</b> (a multi-turn conversational benchmark) at <b>batch size 1</b> — the realistic case of an LLM hosted locally for one user — across Vicuna-7B/13B/33B and Zephyr-7B, with GPT-4 scoring output quality from 0 to 10. The baseline is the default HuggingFace implementation."
+            },
+            {
+              "type": "h2",
+              "text": "Wall-clock speedups (Figure 3)"
+            },
+            {
+              "type": "p",
+              "html": "On <b>Vicuna-7B</b>, Medusa-1 hits <b>2.18&times;</b> and Medusa-2 reaches <b>2.83&times;</b>. On <b>Vicuna-13B</b>, Medusa-1 gives <b>2.33&times;</b> and Medusa-2 again <b>2.83&times;</b>. Notice Medusa-1 alone — trained on a <i>frozen</i> backbone in ~5 GPU-hours — already roughly doubles throughput losslessly."
+            },
+            {
+              "type": "p",
+              "html": "<b>Speedups vary by task</b>, because some text is more predictable than others. For Medusa-2 Vicuna-7B across the eight MT-Bench categories, the gains climb from conversational categories up to highly structured ones: <b>Coding 3.29&times;</b> and <b>Extraction 3.62&times;</b> top the chart. This makes intuitive sense — code and structured extraction have rigid, low-entropy syntax that the heads guess correctly far more often, so longer candidate prefixes get accepted each step."
+            },
+            {
+              "type": "table",
+              "headers": ["Setting", "Vicuna-7B", "Vicuna-13B", "Vicuna-33B", "Zephyr-7B"],
+              "rows": [
+                ["Acceptance rate", "3.47", "3.51", "3.01", "3.14"],
+                ["Overhead", "1.22", "1.23", "1.27", "1.18"],
+                ["Quality (Δ vs original)", "6.18 (+0.01)", "6.43 (-0.14)", "7.18 (+0.05)", "7.25 (-0.07)"],
+                ["Speedup: SpecDecoding", "1.47", "1.56", "1.60", "—"],
+                ["Speedup: MEDUSA", "2.83", "2.83", "2.35", "2.66"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading Table 1.</b> The <b>acceptance rate</b> (~3.0&ndash;3.5) is the average number of tokens accepted per forward pass — that's the raw lookahead win. <b>Overhead</b> (~1.2) is the extra cost per pass from the tree; the net wall-clock speedup is roughly acceptance-rate &divide; overhead-related cost. <b>Quality</b> deltas are within &plusmn;0.14 of the original GPT-4 score — essentially noise, so generation quality is preserved. The bottom rows are the punchline: Medusa's <b>2.35&ndash;2.83&times;</b> nearly <b>doubles</b> the <b>1.47&ndash;1.60&times;</b> that classic speculative decoding with an open-source draft model achieves — and with no separate model to train or serve."
+            },
+            {
+              "type": "p",
+              "html": "<b>Self-distillation works, with a caveat.</b> Vicuna-33B and Zephyr-7B (RLHF-tuned, no matching data) were trained with the self-distillation pipeline and still hit 2.35&times; and 2.66&times;. The 33B's slightly lower acceptance rate is attributed to a mismatch between its hidden original training set and the self-distilled data — yet quality stays comparable (+0.05)."
+            },
+            {
+              "type": "p",
+              "html": "<b>Sparse beats dense (Figure 4).</b> The ablation confirms the tree trade-off: a <b>sparse</b>, accuracy-optimized tree of <b>64 nodes</b> achieves a <i>better</i> acceleration rate than a random <b>dense</b> tree of <b>256 nodes</b>. Past a point, piling on candidate tokens raises per-pass compute (the work becomes compute-bound) faster than it raises accepted tokens, so speed in tokens/sec actually <i>drops</i> even as the acceptance rate inches up logarithmically. The lesson: spend your node budget on the <i>likely</i> branches, not on brute-force breadth."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Medusa became a default inference trick",
+          "subtitle": "Simplicity as the feature, and where it led",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Medusa's lasting contribution is not a new theory of decoding — it's a <b>removal</b>. Speculative decoding already proved that a big model can verify multiple guessed tokens in one pass. Medusa's insight is that the <b>guesser doesn't need to be a separate model</b>: a few extra heads reading the backbone's own hidden state are cheaper to train, impossible to drift in distribution, and trivial to serve. The whole method is 'add a linear-ish head per future position, mask the tree, accept the longest plausible prefix.'"
+            },
+            {
+              "type": "quote",
+              "html": "With no requirement for a draft model, MEDUSA offers easy integration into current LLM systems, including those in distributed environments, ensuring a user-friendly experience."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the simplicity matters in practice.</b> A separate draft model is an operational liability: another checkpoint to version, another set of weights to shard across GPUs, another distribution to keep aligned after every fine-tune. Medusa heads ship <i>inside</i> the same checkpoint. When you fine-tune the base model (Medusa-2), the heads come along; there's no second model to re-align. That is exactly the property production teams want, which is why Medusa heads were adopted into <b>TensorRT-LLM</b>, <b>vLLM</b>, and other serving stacks shortly after release."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>No draft model:</b> heads attach to the existing backbone, so no separate model to acquire, align, or serve.",
+                "<b>Two cost tiers:</b> Medusa-1 (frozen, ~5 GPU-hours, lossless, >2.2&times;) for cheap drop-in; Medusa-2 (joint training, 2.3&ndash;2.8&times;) when you control fine-tuning.",
+                "<b>Data-free option:</b> self-distillation generates training data from the model itself, covering RLHF and closed-data models.",
+                "<b>Distribution-matched by construction:</b> heads share the backbone, sidestepping the draft/target mismatch.",
+                "<b>Quality-preserving acceptance:</b> typical acceptance trades exact-distribution guarantees for speed that <i>grows</i> with temperature."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Trade-offs to remember.</b> Typical acceptance does <i>not</i> guarantee output identical in distribution to the original model — it's a quality-for-speed bargain (empirically a great one, within &plusmn;0.14 MT-Bench points, but a bargain nonetheless). If you need provable distribution-matching, fall back to rejection sampling, which Medusa also supports. And the speedup is benchmarked at <b>batch size 1</b>; at large batch sizes the GPU is already compute-saturated, so the memory-bandwidth win that Medusa exploits shrinks."
+            },
+            {
+              "type": "p",
+              "html": "<b>Lineage and influence.</b> Upstream: Stern et al. (2018) for parallel heads, Leviathan et al. (2022) and Chen et al. (2023) for speculative decoding, Hewitt et al. (2022) for typical/truncation sampling, Graphormer (Ying et al., 2021) for graph-structured attention, and LoRA/QLoRA (Hu et al., 2021; Dettmers et al., 2023) for the parameter-efficient training that lets a 7B model's heads train on one GPU. Downstream, Medusa helped mainstream the idea that <b>self-drafting</b> — the model speculating on its own future — is the cleanest path to faster LLM inference, inspiring later multi-token-prediction and Eagle-style approaches."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

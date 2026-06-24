@@ -1,0 +1,293 @@
+{
+  "title": "Segment Anything",
+  "authors": "Kirillov, et al. (Meta AI)",
+  "year": "2023",
+  "venue": "arXiv:2304.02643",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A foundation model for segmentation",
+          "subtitle": "What if one model could cut out any object you point at?",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Segmentation is the task of deciding, for every pixel in an image, <i>which object it belongs to</i>. Before this paper, every new segmentation problem meant a new dataset and a new specialized model: one network for road scenes, another for medical scans, another for product photos. The dream of <b>Segment Anything (SAM)</b> is to build <i>one</i> model that, given any image and a tiny hint about what you want, returns a clean mask of that thing &mdash; even for objects and image domains it was never trained on. This is the same shift that <b>GPT-3</b> brought to language: instead of training a model per task, you train one giant model and <i>prompt</i> it."
+            },
+            {
+              "type": "p",
+              "html": "The paper delivers three coupled pieces: a <b>task</b> (promptable segmentation), a <b>model</b> (SAM), and a <b>dataset</b> (SA-1B). The authors put it plainly:"
+            },
+            {
+              "type": "quote",
+              "html": "\"We built the largest segmentation dataset to date, with over 1 billion masks on 11M licensed and privacy respecting images... SAM has impressive zero-shot performance, often competitive with or even superior to prior fully supervised results.\""
+            },
+            {
+              "type": "p",
+              "html": "Two numbers anchor the whole effort. <b>1.1 billion masks</b> &mdash; roughly <b>400&times;</b> more masks than any prior segmentation dataset. And <b>11 million images</b>, licensed and high-resolution. To make a dataset that big, the masks could not be drawn by hand alone; the model itself helped label the data in a loop, a <b>data engine</b> we return to later."
+            },
+            {
+              "type": "p",
+              "html": "The headline capability is <b>zero-shot transfer</b>: you take SAM, trained once, and apply it to a brand-new task or image type <i>without any retraining</i>. Click a point on a leaf in a plant-disease photo, or draw a box around a cell in a microscope image, and SAM returns a valid mask &mdash; despite never having seen leaves or cells during training. The authors evaluate this across <b>23 segmentation datasets</b> spanning ego-centric photos, microscopy, paintings, underwater scenes, and more."
+            },
+            {
+              "type": "p",
+              "html": "Why does this matter beyond segmentation itself? SAM is designed as a <i>component</i>. Its outputs &mdash; masks for whatever you prompt &mdash; can feed downstream systems: an AR headset, an image editor, a robot's perception stack, or a larger AI that issues prompts automatically. The model and the full dataset were released openly, which is why SAM became one of the most widely used vision building blocks of its era."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Promptable Task",
+      "pages": [
+        {
+          "title": "Segmentation as a prompting problem",
+          "subtitle": "Borrowing the prompt idea from NLP and the notion of a 'valid' mask",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The first design choice is the <b>task</b>, and it is the cleverest part of the paper. In NLP, foundation models are trained on <b>next-token prediction</b> and then <i>prompted</i> to do translation, summarization, or Q&amp;A. The authors ask: what is the segmentation equivalent of a prompt? Their answer is the <b>promptable segmentation task</b> &mdash; given any prompt indicating <i>what</i> to segment, return a valid mask for it."
+            },
+            {
+              "type": "p",
+              "html": "A <b>prompt</b> here is deliberately broad. It can be a set of foreground/background <i>points</i> (\"this pixel is part of the thing, that one is not\"), a bounding <i>box</i>, a rough <i>mask</i>, or free-form <i>text</i> (\"the cat\"). The job of the model is to take the image plus the prompt and produce a segmentation mask."
+            },
+            {
+              "type": "h2",
+              "text": "The key idea: a 'valid' mask under ambiguity"
+            },
+            {
+              "type": "p",
+              "html": "Prompts are often <b>ambiguous</b>. Concretely: you click one point on a person's shirt. Did you mean the shirt, the torso, or the whole person? All three are reasonable. A naive model trained to output a single answer gets a confusing, conflicting learning signal &mdash; sometimes the same click maps to a small region, sometimes a large one."
+            },
+            {
+              "type": "p",
+              "html": "SAM's rule is the escape hatch: even when the prompt is ambiguous, the output should be a <i>valid mask for at least one of the plausible objects</i>. The paper states the requirement directly:"
+            },
+            {
+              "type": "quote",
+              "html": "\"the requirement is that even when a prompt is ambiguous and could refer to multiple objects (for example, a point on a shirt may indicate either the shirt or the person wearing it), the output should be a reasonable mask for at least one of those objects.\""
+            },
+            {
+              "type": "p",
+              "html": "In practice SAM handles this by predicting <b>three</b> masks per prompt at once (think whole / part / subpart, like person / shirt / shirt-pocket) plus a confidence score for each. During training the loss is computed only against the <i>best-matching</i> of the three, so the model is never punished for the ambiguity &mdash; it just has to be right about one valid interpretation. This is the single most important trick that makes one-click prompting trainable."
+            },
+            {
+              "type": "p",
+              "html": "Why a <i>task</i> and not just a model? Because the task choice forces the right pre-training objective and unlocks <b>zero-shot transfer</b> by composition. If SAM can answer any point/box/mask prompt, then a downstream system can <i>compose</i> prompts to solve new tasks. The paper's example: to do edge detection, you do not retrain SAM &mdash; you prompt it on a grid of points and combine the masks. The promptable interface is the API; new tasks become new prompting recipes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Model Architecture",
+      "pages": [
+        {
+          "title": "Encode the image once, decode masks in milliseconds",
+          "subtitle": "A heavy image encoder, a light prompt encoder, and a fast mask decoder",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "For SAM to feel like a tool &mdash; click and the mask appears &mdash; it must respond in <i>real time</i> in a browser. But a high-quality image encoder is expensive (hundreds of milliseconds). The architectural insight is to <b>split</b> the model so the expensive part runs <i>once per image</i> and the cheap part runs <i>once per prompt</i>."
+            },
+            {
+              "type": "p",
+              "html": "Concretely there are three pieces:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Image encoder</b> &mdash; a heavy <b>MAE-pretrained Vision Transformer (ViT-H)</b>. Run it once on the image to get an embedding. This is the slow step (~0.15 s on a GPU) but it is amortized across every prompt on that image.",
+                "<b>Prompt encoder</b> &mdash; cheap. Points and boxes become <b>positional encodings</b> summed with learned embeddings for each prompt type; free-form text uses a <b>CLIP</b> text encoder; a rough mask input is embedded with a small convolution and added to the image embedding.",
+                "<b>Mask decoder</b> &mdash; a lightweight, modified Transformer decoder that fuses the image embedding and the prompt embeddings and maps them to a mask. It is fast enough to run many times per image."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Once the image embedding is precomputed, the prompt encoder plus mask decoder run in <b>~50 ms in a web browser on CPU</b>. That is the entire point of the split: interactive, click-by-click use needs the per-prompt path to be near-instant, and it is."
+            },
+            {
+              "type": "h2",
+              "text": "Inside the mask decoder"
+            },
+            {
+              "type": "p",
+              "html": "The decoder treats segmentation like a small set-prediction problem. It maintains <b>output tokens</b> (learned query vectors, including one per candidate mask plus an IoU-prediction token) and runs <b>two-way attention</b>: the tokens attend to the image embedding, and the image embedding attends back to the tokens. After two such blocks, each mask token is turned into a mask by a dot-product against the upsampled image embedding:"
+            },
+            {
+              "type": "math",
+              "tex": "M_k(x,y) = \\sigma\\!\\left( \\langle\\, t_k,\\; E_{\\text{img}}(x,y)\\,\\rangle \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $M_k(x,y)$ is the predicted probability that pixel $(x,y)$ belongs to mask $k$. $t_k$ is the decoded <b>mask token</b> for candidate $k$ (a vector, one of the three output masks). $E_{\\text{img}}(x,y)$ is the (upsampled) <b>image-embedding</b> vector at that pixel location. $\\langle\\,\\cdot\\,,\\cdot\\,\\rangle$ is their dot product, and $\\sigma$ is the sigmoid that squashes the score to a $[0,1]$ probability. Thresholding $M_k$ at $0.5$ gives the binary mask. A separate IoU token regresses a <b>confidence score</b> per mask so the system can pick the best of the three."
+            },
+            {
+              "type": "p",
+              "html": "Crucially the decoder is <b>ambiguity-aware</b>: it emits three masks and, during training, backpropagates loss only through the one with the lowest loss against the ground truth. This is exactly how the 'valid mask under ambiguity' requirement from the previous page is implemented in the network."
+            },
+            {
+              "type": "p",
+              "html": "Design rationale: a single fat end-to-end model would force a full forward pass per click and kill interactivity. By making the image encoder a write-once cache and the decoder featherweight, SAM gets both quality (a big ViT-H backbone) and speed (real-time prompting). That trade is why SAM works as a UI tool and as a reusable component for other systems."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Data Engine",
+      "pages": [
+        {
+          "title": "Bootstrapping 1.1 billion masks",
+          "subtitle": "Model and annotators teach each other in a three-stage loop",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "There was no existing dataset large enough to train a segmentation foundation model &mdash; web-scale image-text pairs exist, but web-scale <i>masks</i> do not. So the authors built one with a <b>data engine</b>: a loop where SAM helps annotators label faster, and that fresh data in turn makes SAM better, which makes the next round of labeling faster still. Three stages:"
+            },
+            {
+              "type": "h2",
+              "text": "Stage 1 — Assisted-manual"
+            },
+            {
+              "type": "p",
+              "html": "Professional annotators click on objects in a browser tool powered by an early SAM, refining its proposed masks with brush and eraser. As SAM improved (retrained on the growing data), annotation sped up from a slow start to about <b>14 seconds per mask</b> &mdash; roughly <b>6.5&times; faster</b> than the classic polygon-drawing baseline. This stage produced about <b>4.3M masks</b> on <b>120k images</b>."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 2 — Semi-automatic"
+            },
+            {
+              "type": "p",
+              "html": "Now the goal is <i>diversity</i>. SAM first auto-detects the confident, obvious objects; annotators are then asked to label only the things SAM <i>missed</i> &mdash; the less prominent, harder objects. Focusing human effort on the long tail added about <b>5.9M masks</b> on <b>180k images</b>, raising the average mask count per image."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 3 — Fully automatic"
+            },
+            {
+              "type": "p",
+              "html": "By now SAM is good enough to run unsupervised. The image is prompted with a regular <b>32&times;32 grid of points</b>; SAM predicts masks at each point, and the system keeps only masks that are <b>confident</b> and <b>stable</b> (the mask barely changes when the probability threshold is nudged up or down), then removes duplicates with non-maximal suppression. No human in the loop. This stage generated the overwhelming majority of the data &mdash; the final <b>SA-1B</b> dataset has <b>1.1 billion masks</b> across <b>11 million images</b>, with about <b>99.1% of masks produced fully automatically</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["Stage", "Human role", "Approx. masks"],
+              "rows": [
+                ["1. Assisted-manual", "Click + refine every mask", "4.3M"],
+                ["2. Semi-automatic", "Label only what SAM missed", "5.9M"],
+                ["3. Fully automatic", "None (32×32 point grid)", "~1.1B total"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why this works: each stage shifts human effort to where it adds the most value and lets the model absorb the rest. Quality was checked by having professional annotators re-segment a sample &mdash; the automatic masks were judged high-quality, with <b>94%</b> of pairs having IoU above 90% against careful manual masks. The result is a dataset <b>~400&times;</b> larger than any predecessor, which is the fuel that makes SAM's zero-shot generalization possible. This is the same self-improving spirit as pseudo-labeling and noisy-student training, but pushed to billion-mask scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Zero-Shot Results",
+      "pages": [
+        {
+          "title": "One click, 23 datasets, never trained on them",
+          "subtitle": "Single-point masks that often beat fully supervised interactive systems",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The real test of a foundation model is on tasks and image domains it never saw. The authors assemble a suite of <b>23 diverse segmentation datasets</b> &mdash; ego-centric photos, microscopy, underwater scenes, paintings, aerial imagery &mdash; and run SAM zero-shot, meaning <i>no retraining and no fine-tuning</i>."
+            },
+            {
+              "type": "h2",
+              "text": "Single-point segmentation"
+            },
+            {
+              "type": "p",
+              "html": "The hardest, most ambiguous prompt: <b>one</b> foreground point. From a single click, SAM must guess which object you meant and mask it. The metric is mask <b>IoU</b> (intersection over union with the ground-truth object):"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{IoU}(P, G) = \\frac{|P \\cap G|}{|P \\cup G|}"
+            },
+            {
+              "type": "p",
+              "html": "Here $P$ is the set of pixels in SAM's <b>predicted</b> mask and $G$ is the set of pixels in the <b>ground-truth</b> mask. $|P \\cap G|$ counts pixels in both (correct overlap); $|P \\cup G|$ counts pixels in either; the ratio is $1.0$ for a perfect match and $0$ for no overlap. Because one point is ambiguous, SAM is scored using the best of its three output masks (the 'oracle' that picks the most plausible interpretation), reflecting the valid-mask rule from the task definition."
+            },
+            {
+              "type": "p",
+              "html": "The result: from a single point, <b>SAM beats the strong interactive baseline RITM on 16 of the 23 datasets</b>. A model that was never trained on these domains outperforms a specialized interactive segmenter on most of them, from one click. Adding a second and third point closes the gap further on the rest."
+            },
+            {
+              "type": "h2",
+              "text": "Transferring to other tasks by composition"
+            },
+            {
+              "type": "p",
+              "html": "Because SAM is promptable, new tasks are new <i>prompting recipes</i>, no retraining:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Edge detection</b> &mdash; prompt a grid of points, collect masks, take their boundaries. SAM produces reasonable edges on BSDS500 despite never being trained for edges.",
+                "<b>Instance segmentation</b> &mdash; feed object-detector boxes as box prompts. SAM's masks are competitive with fully supervised instance segmenters, and humans often judge SAM's mask boundaries to be <i>higher quality</i> than the detector's own.",
+                "<b>Text-to-mask</b> &mdash; a proof of concept: encode a text prompt with CLIP and SAM segments the named object (e.g. 'a wheel'), without a dedicated text-segmentation dataset."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Across all of this the through-line is the same: train once on SA-1B with the promptable objective, then meet a new task by changing the prompt rather than the weights. That is what 'foundation model for segmentation' means in practice."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why Segment Anything mattered",
+          "subtitle": "A reusable vision primitive, released open, that reshaped the field",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "SAM's significance is less about a single benchmark number and more about a <b>shift in how vision systems are built</b>. Before SAM, segmentation was a wall of specialized models. SAM offered a single promptable primitive: 'give me a hint, I give you a mask,' usable as a Lego brick inside larger systems."
+            },
+            {
+              "type": "p",
+              "html": "Three deliberate decisions amplified that impact:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Open release.</b> SAM's weights, the demo, and the entire <b>SA-1B</b> dataset (1.1B masks, 11M images) were released. Anyone could plug it into their pipeline the same week the paper appeared.",
+                "<b>Composability.</b> Because it consumes prompts, SAM slots downstream of object detectors, behind text encoders, or in front of editing and AR tools. It is built to be a <i>component</i>, not an endpoint.",
+                "<b>The data engine pattern.</b> Bootstrapping a billion labels via a model-in-the-loop showed a repeatable recipe for scaling annotation in domains where web data has no ready-made labels."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "SAM borrowed its core philosophy from the NLP foundation-model wave &mdash; <b>GPT-3</b>'s prompting, <b>CLIP</b>'s open-vocabulary text encoder, the MAE-pretrained <b>ViT</b> backbone &mdash; and transplanted it into dense vision. In doing so it helped define what a 'foundation model for an image task' looks like."
+            },
+            {
+              "type": "p",
+              "html": "The influence was immediate and broad: SAM became a default tool for fast dataset annotation, medical and scientific image analysis, video object tracking (via per-frame prompting), and as the segmentation front-end for interactive and generative editing systems. It directly spawned follow-ups &mdash; faster distilled variants for mobile and edge use, and a video-native successor &mdash; cementing 'segment anything' as a standing capability rather than a one-off paper."
+            },
+            {
+              "type": "p",
+              "html": "The lasting lesson: pick the right <b>promptable task</b>, build a <b>model</b> whose architecture makes that task interactive, and bootstrap the <b>data</b> at a scale no one had reached &mdash; and you get genuine zero-shot generalization in a domain everyone assumed needed task-specific training."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

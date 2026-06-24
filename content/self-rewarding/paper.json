@@ -1,0 +1,389 @@
+{
+  "title": "Self-Rewarding Language Models",
+  "authors": "Yuan, et al. (Meta)",
+  "year": "2024",
+  "venue": "arXiv:2401.10020",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The model that grades its own homework",
+          "subtitle": "Why a frozen reward model is a ceiling, and how to remove it",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern instruction-tuned models like ChatGPT are built in two stages. First, <b>supervised fine-tuning (SFT)</b> teaches the model to imitate good answers. Then <b>RLHF</b> or <b>DPO</b> nudges it toward answers humans <i>prefer</i> over answers humans dislike. That second stage needs a <b>reward model</b> &mdash; a separate network that scores how good a response is &mdash; trained once on a fixed pile of human preference labels and then <b>frozen</b>."
+            },
+            {
+              "type": "p",
+              "html": "Here is the problem this paper attacks. The reward model is frozen, but the policy keeps improving. Soon the student (the policy) is better than the teacher (the reward model), and the teacher can no longer tell which of two strong answers is better. <b>The reward model becomes the ceiling.</b> You cannot train a model to be smarter than the judge scoring it."
+            },
+            {
+              "type": "p",
+              "html": "The core idea of <b>Self-Rewarding Language Models</b> is radical in its simplicity: <i>delete the separate judge</i>. Use the <b>same model</b> as both the student being trained and the teacher doing the scoring. The model writes candidate answers to a prompt, then &mdash; via <b>LLM-as-a-Judge</b> prompting &mdash; scores its own answers, builds preference pairs from the best and worst, and trains on them with DPO. Crucially, the next iteration uses the <i>newly improved</i> model to do the judging. The reward signal is no longer frozen; it improves alongside the policy."
+            },
+            {
+              "type": "quote",
+              "html": "To obtain superhuman agents, future models require superhuman feedback in order to provide an adequate training signal. [...] In this work, we instead propose to train a self-improving reward model that, rather than being frozen, is continually updated during LLM alignment."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: starting from <b>Llama 2 70B</b>, three iterations of self-rewarding push the AlpacaEval 2.0 win-rate from <b>9.94% to 20.44%</b>, outperforming Claude 2, Gemini Pro, and GPT-4 0613 &mdash; systems trained on proprietary data or distilled from stronger models. And the model's <i>own ability to judge</i> improves too, not just its ability to answer. Both skills lift together in a virtuous loop."
+            },
+            {
+              "type": "p",
+              "html": "This page-by-page lesson walks through: the two abilities a self-rewarding model must hold at once; the LLM-as-a-Judge scoring rubric; the iterative AIFT (AI Feedback Training) loop and its DPO objective; the seed data; and the results that show both answering and judging climbing across iterations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "One model, two jobs",
+          "subtitle": "Why the policy and the reward model must be the same network",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The central design choice: a single model $M$ must be good at <b>two different jobs simultaneously</b>. Job one is <b>instruction following</b> &mdash; given a prompt, write a helpful response. Job two is <b>self-instruction creation / reward modeling</b> &mdash; given a prompt and a candidate response, judge how good that response is and assign it a numeric score."
+            },
+            {
+              "type": "p",
+              "html": "Why insist they be the same model? Because if the judge is a separate, frozen network, it stops improving and becomes the bottleneck. By folding the judge <i>into</i> the policy, every time you make the model a better writer you <b>also</b> make it a better judge &mdash; and a better judge produces cleaner preference pairs, which makes an even better writer next round. The two abilities bootstrap each other."
+            },
+            {
+              "type": "h2",
+              "text": "A concrete analogy"
+            },
+            {
+              "type": "p",
+              "html": "Imagine a chess student with no coach. In the standard setup, you hire a coach (the reward model) who is rated 2000 Elo and freeze them. The student can climb to 2000 by imitating the coach's judgments, then stalls &mdash; the coach can no longer distinguish the student's brilliant move from a merely good one. In the self-rewarding setup, the student <b>is</b> their own coach. Each time the student gets stronger at playing, they also get sharper at evaluating positions, so they can keep generating harder training material for themselves. There is no fixed ceiling to bump into."
+            },
+            {
+              "type": "h2",
+              "text": "The skill-transfer bet"
+            },
+            {
+              "type": "p",
+              "html": "This only works because of an empirical bet the paper makes and then verifies: <b>general instruction-following ability transfers to judging ability</b>. A model trained to be a better assistant becomes, almost for free, a better evaluator &mdash; because evaluating a response well is itself an instruction-following task (\"read this answer and rate it\"). The paper confirms this directly in <i>Table 4</i>: as the model improves at answering across iterations, its pairwise judging accuracy climbs from 65.1% to 81.7% on a held-out human-labeled set."
+            },
+            {
+              "type": "p",
+              "html": "Contrast this with the dominant alternatives at the time. <b>RLHF</b> (InstructGPT, Ouyang et al. 2022) trains a fixed reward model and optimizes against it with PPO. <b>Constitutional AI / RLAIF</b> uses an AI to give feedback but with a <i>fixed</i> AI judge. <b>Distillation</b> (Alpaca, Vicuna) copies a stronger external model. Self-Rewarding is the first to make the reward source the <i>same, improving</i> model &mdash; no external supervision, no frozen judge."
+            }
+          ]
+        },
+        {
+          "title": "The LLM-as-a-Judge scoring rubric",
+          "subtitle": "How the model turns 'is this answer good?' into a number from 0 to 5",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "For the model to reward itself, it needs a repeatable way to convert a response into a score. The paper uses an <b>LLM-as-a-Judge</b> prompt: the model is shown a user instruction and a candidate response, and asked to assign an <b>additive 5-point score</b>. Instead of asking for one holistic number (noisy and inconsistent), the rubric awards <b>one point at a time</b> for each criterion the answer satisfies."
+            },
+            {
+              "type": "h2",
+              "text": "The five additive points"
+            },
+            {
+              "type": "list",
+              "items": [
+                "+1 if the response is relevant and provides some information related to the user's query.",
+                "+1 if it addresses a substantial portion of the question, even if incomplete.",
+                "+1 if it answers the basic elements of the question in a useful way.",
+                "+1 if it is clearly written from an AI Assistant's perspective, addressing the question directly and comprehensively.",
+                "+1 if it is impeccably tailored to the query, reflecting expert knowledge, high quality, engaging, and insightful."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The model is told to reason step by step, then end with the exact string <code>Score: &lt;total points&gt;</code>, which is parsed out by a regex. Worked example: a one-line, slightly-off-topic answer might earn <b>+1 +1 = 2</b>; a thorough, expert, well-structured answer earns <b>5</b>. The additive structure makes scores comparable across prompts and far more stable than \"rate this 1-10\"."
+            },
+            {
+              "type": "quote",
+              "html": "Remember to assess from the AI Assistant perspective, utilizing web search knowledge as necessary. To evaluate the response in alignment with this additive scoring model, we'll systematically attribute points based on the outlined criteria."
+            },
+            {
+              "type": "h2",
+              "text": "From scores to a preference pair"
+            },
+            {
+              "type": "p",
+              "html": "For each new prompt, the model samples <b>N = 4</b> candidate responses (temperature $T=0.7$, $p=0.9$). Each is scored by the same model. To beat the variance in a single judging pass, the score is <b>averaged over 3 evaluations</b> per response. The highest-scoring response becomes the <b>chosen</b> answer $y_w$ and the lowest-scoring becomes the <b>rejected</b> answer $y_l$. If the top and bottom scores <b>tie</b>, the pair is discarded &mdash; a tie carries no usable preference signal."
+            },
+            {
+              "type": "p",
+              "html": "This is the engine of the whole method: the model manufactures its own $(\\text{prompt}, y_w, y_l)$ preference triples with <b>no human labeling and no external model</b>. The paper builds 3,964 such pairs to train iteration 2, and 6,942 pairs to train iteration 3."
+            }
+          ]
+        },
+        {
+          "title": "The iterative AIFT training loop",
+          "subtitle": "Seed data, then DPO on self-generated preferences, then repeat",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The method trains a <b>sequence of models</b> $M_1, M_2, \\dots, M_T$. Each model is built from the one before it, using preference data that the previous model judged for itself. The data created by model $M_t$ is called <b>AIFT($M_t$)</b> &mdash; AI Feedback Training data."
+            },
+            {
+              "type": "h2",
+              "text": "Two kinds of seed data (human-provided, once)"
+            },
+            {
+              "type": "p",
+              "html": "Before any self-rewarding begins, the base Llama 2 70B is fine-tuned on two small human-authored seed sets:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "IFT (Instruction Fine-Tuning) seed: 3,200 human-written (instruction, response) examples from Open Assistant. This teaches the model to follow instructions at all.",
+                "EFT (Evaluation Fine-Tuning) seed: examples of the LLM-as-a-Judge task itself — (instruction, response, evaluation-with-score) triples, built from Open Assistant ranked responses. This teaches the model to produce the scoring rubric in the right format."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The model trained on <b>IFT + EFT seed</b> is iteration 1, called $M_1$. Notably, the paper finds adding EFT data does <i>not</i> hurt instruction-following (30.5% vs 30.9% head-to-head wins against IFT-only) while it <i>gives</i> the model its judging skill &mdash; a free lunch."
+            },
+            {
+              "type": "h2",
+              "text": "The loop"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Generate new prompts (via few-shot self-instruction from the IFT seed).",
+                "For each prompt, model M_t samples N=4 candidate responses.",
+                "Model M_t scores each response with the LLM-as-a-Judge rubric (averaged over 3 passes).",
+                "Form preference pairs (highest score = chosen, lowest = rejected); drop ties.",
+                "Train M_{t+1} from M_t on these pairs with DPO. Repeat."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "So $M_2$ is trained on $M_1$'s self-judged pairs (AIFT($M_1$)), and $M_3$ is trained on $M_2$'s self-judged pairs (AIFT($M_2$)). The reward signal in iteration 3 comes from a strictly better judge than in iteration 2 &mdash; <b>this is the part a frozen reward model can never do</b>."
+            }
+          ]
+        },
+        {
+          "title": "The DPO objective behind the scenes",
+          "subtitle": "How a preference pair becomes a gradient step, with no separate reward network",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Once the model has manufactured a preference pair $(x, y_w, y_l)$ &mdash; prompt, chosen, rejected &mdash; how does it actually <i>learn</i> from it? The paper uses <b>Direct Preference Optimization (DPO)</b> (Rafailov et al. 2023), which trains directly on preferences without ever fitting a separate reward network or running RL/PPO. This is what keeps the whole pipeline a single model."
+            },
+            {
+              "type": "h2",
+              "text": "The objective"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{DPO}} = -\\,\\mathbb{E}_{(x, y_w, y_l)}\\left[\\log \\sigma\\!\\left(\\beta \\log \\frac{\\pi_\\theta(y_w \\mid x)}{\\pi_{\\text{ref}}(y_w \\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l \\mid x)}{\\pi_{\\text{ref}}(y_l \\mid x)}\\right)\\right]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x$ is the prompt, $y_w$ the chosen (winning) response, $y_l$ the rejected (losing) response &mdash; here both produced and labeled by the model itself. $\\pi_\\theta$ is the model being trained (a probability distribution over token sequences); $\\pi_\\theta(y \\mid x)$ is its probability of generating response $y$ given $x$. $\\pi_{\\text{ref}}$ is a <b>frozen reference</b> copy of the model from the start of this iteration &mdash; it anchors training so the model does not drift too far. $\\beta$ is a scalar (typically $\\sim 0.1$) controlling how hard the model is pushed away from the reference. $\\sigma$ is the logistic sigmoid, $\\sigma(z) = 1/(1+e^{-z})$, mapping the score gap to a probability in $(0,1)$. The expectation $\\mathbb{E}$ averages the loss over all preference pairs in AIFT($M_t$)."
+            },
+            {
+              "type": "p",
+              "html": "What the gradient does, intuitively: the bracketed term is the model's <i>implicit reward</i> for $y_w$ minus its implicit reward for $y_l$, each measured <b>relative to the reference model</b>. Minimizing the loss pushes this gap to be large and positive &mdash; raising the relative likelihood of the chosen answer and lowering that of the rejected one. The $\\log(\\pi_\\theta / \\pi_{\\text{ref}})$ form is the key DPO trick: it shows the reward is <i>implicitly</i> encoded in the policy itself, so no separate reward model is needed."
+            },
+            {
+              "type": "p",
+              "html": "Why DPO and not PPO/RLHF here? Two reasons. First, DPO is stable and simple &mdash; no reward-model training loop, no on-policy rollouts, no reward hacking against a frozen scorer. Second, and more importantly for this paper, DPO lets the <b>same network</b> be policy and judge. The model judges with its LLM-as-a-Judge head, then DPO bakes those judgments straight into the same weights. A PPO setup would force a separate value/reward head, reintroducing the frozen-judge problem the paper is trying to escape."
+            },
+            {
+              "type": "p",
+              "html": "One subtlety: the reference model $\\pi_{\\text{ref}}$ is <b>re-frozen at the start of each iteration</b>. So when training $M_3$, the reference is $M_2$, not the original SFT model. This keeps each DPO step honest while still letting the model travel a long way across three iterations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Answering: the win-rate climbs each iteration",
+          "subtitle": "9.94% to 20.44% on AlpacaEval 2.0, beating Claude 2 and Gemini Pro",
+          "pdfPages": [6, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The first question: does the loop actually make the model a <b>better writer</b>? Two evaluations say yes. On head-to-head GPT-4 judging of held-out prompts, each iteration beats the last: <b>$M_2$ beats $M_1$ 55.5% to 11.7%</b> (rest ties), and <b>$M_3$ beats $M_2$ 47.7% to 12.5%</b>. The gains are large and one-directional &mdash; nothing degrades."
+            },
+            {
+              "type": "h2",
+              "text": "AlpacaEval 2.0 (win-rate vs GPT-4 Turbo, judged by GPT-4)"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Win Rate"],
+              "rows": [
+                ["Self-Rewarding Iteration 1 (M1)", "9.94%"],
+                ["Self-Rewarding Iteration 2 (M2)", "15.38%"],
+                ["Self-Rewarding Iteration 3 (M3)", "20.44%"],
+                ["GPT-4 0314", "22.07%"],
+                ["Claude 2", "17.19%"],
+                ["Gemini Pro", "16.85%"],
+                ["GPT-4 0613", "15.76%"],
+                ["GPT-3.5 Turbo 0613", "14.13%"],
+                ["Llama 2 Chat 70B", "13.87%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The story this table tells: by iteration 3, a model trained on <b>nothing but its own self-judged data</b> (plus a tiny human seed) outranks Claude 2, Gemini Pro, GPT-4 0613, GPT-3.5 Turbo, and Llama 2 Chat 70B &mdash; all of which used proprietary training data or were distilled from stronger teachers. It closes most of the gap to GPT-4 0314 (22.07%) without any external supervision in the loop."
+            },
+            {
+              "type": "p",
+              "html": "Importantly, the seed-only baselines do not get you here. Adding EFT to IFT barely moves writing ability on its own (essentially a tie). The jump comes from the <b>self-rewarding iterations</b> &mdash; the AIFT preference data generated and judged by the model itself. That isolates the loop, not the seed, as the source of improvement."
+            },
+            {
+              "type": "p",
+              "html": "Human evaluation agrees with the GPT-4 judge, ruling out gaming the automatic metric: humans rate $M_3$ over the SFT baseline <b>66.0% wins to 18.0% losses</b>, $M_2$ over SFT 56.0% to 20.0%, and $M_1$ over SFT 28.0% to 46.0% &mdash; the same monotone improvement across iterations."
+            }
+          ]
+        },
+        {
+          "title": "Judging: the reward model improves too",
+          "subtitle": "The skill that makes the whole loop possible gets sharper across iterations",
+          "pdfPages": [10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "This is the result that justifies the entire premise. If the model's <b>judging</b> ability stayed flat, self-rewarding would be no better than RLAIF with a fixed AI judge. The paper measures judging on a held-out, human-labeled evaluation set, comparing the model's scores to human rankings. Every metric improves across iterations."
+            },
+            {
+              "type": "h2",
+              "text": "Table 4: reward-modeling ability vs. held-out human judgments"
+            },
+            {
+              "type": "table",
+              "headers": ["Metric", "SFT Baseline", "M1 (IFT+EFT)", "M2", "M3"],
+              "rows": [
+                ["Pairwise accuracy", "65.1%", "78.7%", "80.4%", "81.7%"],
+                ["5-best % (exact)", "39.6%", "41.5%", "44.3%", "43.2%"],
+                ["Exact-match %", "10.1%", "13.1%", "14.3%", "14.3%"],
+                ["Spearman corr.", "0.253", "0.279", "0.331", "0.349"],
+                ["Kendall tau", "0.233", "0.253", "0.315", "0.324"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the top row: <b>pairwise accuracy</b> &mdash; how often the model agrees with humans on which of two responses is better &mdash; rises from <b>65.1%</b> (SFT baseline, no EFT) to <b>78.7%</b> once EFT seed is added ($M_1$), then keeps climbing to <b>80.4%</b> ($M_2$) and <b>81.7%</b> ($M_3$). The model is becoming a genuinely better evaluator purely as a side effect of becoming a better assistant. Spearman and Kendall rank-correlations with human scores rise in lockstep (0.253 to 0.349, 0.233 to 0.324)."
+            },
+            {
+              "type": "p",
+              "html": "Two takeaways. First, the big jump from 65.1% to 78.7% confirms the <b>EFT seed matters</b> &mdash; explicitly teaching the judging format unlocks most of the judging skill. Second, the continued climb to 81.7% confirms the <b>virtuous loop is real</b>: training the model to write better, via DPO on its own preferences, also makes it judge better, with no extra judging-specific data. This is exactly the property a frozen reward model lacks."
+            },
+            {
+              "type": "p",
+              "html": "Why this matters for the whole method: a better judge produces cleaner $(y_w, y_l)$ pairs in the next round, which yields a better writer, which yields a better judge. The numbers show both halves of the loop turning together &mdash; the empirical heart of the paper."
+            }
+          ]
+        },
+        {
+          "title": "What holds steady, and what doesn't",
+          "subtitle": "Reasoning, NLP benchmarks, and the limits the authors are honest about",
+          "pdfPages": [9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A fair worry: if you only train on self-judged <i>chat preferences</i>, does the model quietly lose its raw capabilities &mdash; reasoning, factual QA, common sense? The paper checks standard NLP benchmarks and finds performance is <b>largely maintained</b>, despite fine-tuning on very different instruction-following prompts."
+            },
+            {
+              "type": "h2",
+              "text": "Table 3: NLP benchmarks across iterations"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "ARC-c", "HellaSwag", "GSM8K", "MMLU", "NQ"],
+              "rows": [
+                ["Llama 2 70B", "57.40", "85.30", "56.80", "68.90", "25.30"],
+                ["SFT Baseline", "55.97", "85.17", "50.72", "69.76", "34.35"],
+                ["M1", "57.51", "84.99", "60.27", "69.34", "35.48"],
+                ["M2", "54.51", "84.27", "59.29", "69.31", "33.07"],
+                ["M3", "53.13", "83.29", "57.70", "69.37", "31.86"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The pattern is reassuring but not perfect. MMLU stays flat (~69), GSM8K math actually <i>jumps</i> from 50.7 to 60.3 at $M_1$, and Natural Questions improves over base Llama 2. But ARC-challenge and HellaSwag drift down slightly by $M_3$. The authors are candid: the self-generated chat data is skewed toward general assistant prompts, so highly technical reasoning categories see smaller gains."
+            },
+            {
+              "type": "p",
+              "html": "MT-Bench (Table 2) tells the same nuanced story: overall score rises from <b>6.85 (SFT) to 7.25 ($M_3$)</b>, driven by big gains in <b>Humanities / Extraction / Roleplay / Writing (8.60 to 9.10)</b>, while <b>Math / Code / Reasoning</b> barely moves (3.93 to 4.17). The loop improves what its self-generated data covers; it cannot conjure reasoning supervision it never created."
+            },
+            {
+              "type": "h2",
+              "text": "The honest limitations"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Only 3 iterations are shown — the paper does not establish whether the loop keeps improving indefinitely or eventually saturates / drifts.",
+                "Reward hacking and length bias are real risks: the model could learn to game its own rubric. The authors note this needs careful monitoring as iterations grow.",
+                "Safety is not the focus here; a self-rewarding loop with no human in it could amplify undesirable behavior if the rubric is misspecified.",
+                "Gains concentrate where the self-generated data is rich (chat, writing), not in math/code/reasoning."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why this paper mattered",
+          "subtitle": "Removing the reward-model ceiling, and the line it drew toward self-improving AI",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The lasting contribution is conceptual: <b>the reward model does not have to be frozen, and it does not have to be a separate model.</b> By making the same LLM both the policy and its own judge, and by showing that judging ability rises along with answering ability, the paper demonstrated a feedback loop that has no built-in ceiling at the level of the original human-labeled reward data."
+            },
+            {
+              "type": "p",
+              "html": "This reframes a deep question in alignment: <b>where does superhuman feedback come from?</b> If models eventually surpass human evaluators, you cannot keep getting good reward signal from frozen human-labeled judges. Self-Rewarding sketches one answer &mdash; let the judge improve in lockstep with the policy &mdash; and gives the first empirical evidence (65.1% to 81.7% pairwise accuracy) that this is feasible with current models."
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Builds directly on DPO (Rafailov et al. 2023) — the simple, RL-free preference optimizer that made it practical to fold the judge into the policy.",
+                "Inherits LLM-as-a-Judge from MT-Bench / Vicuna (Zheng et al. 2023), turning an evaluation trick into a training signal.",
+                "Contrasts with RLHF / InstructGPT (Ouyang et al. 2022) and Constitutional AI / RLAIF (Bai et al. 2022), which all use a fixed reward or fixed AI judge.",
+                "Stands apart from distillation pipelines (Alpaca, Vicuna) that copy a stronger external model — here there is no stronger teacher to copy."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "What it influenced"
+            },
+            {
+              "type": "p",
+              "html": "Self-Rewarding became a reference point for the wave of <b>self-improvement and iterative-DPO</b> methods that followed, including Meta's own follow-ups (Self-Rewarding with self-consistency, and later work adding a separate \"meta-rewarding\" judge to refine the judging step). It also fed the broader 2024 momentum behind <b>synthetic preference data</b> and <b>on-policy iterative alignment</b> &mdash; the recognition that a model's own outputs, judged by itself, can be a renewable training resource rather than a one-shot human-labeled dataset."
+            },
+            {
+              "type": "p",
+              "html": "The one-sentence legacy: <i>a language model can act as its own reward model, and by training on its own preferences it gets better at both answering and judging at the same time</i> &mdash; a small idea with outsized implications for how future systems might keep improving past the limits of human-provided feedback."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,64 +1,884 @@
 {
   "papers": [
-    { "slug": "attention-is-all-you-need", "title": "Attention Is All You Need", "authors": "Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin", "year": "2017", "venue": "NeurIPS 2017 — arXiv:1706.03762", "category": "Foundations & Transformers" },
-    { "slug": "bert", "title": "BERT: Pre-training of Deep Bidirectional Transformers", "authors": "Devlin, Chang, Lee, Toutanova", "year": "2018", "venue": "NAACL 2019 — arXiv:1810.04805", "category": "Foundations & Transformers" },
-    { "slug": "gpt-1", "title": "Improving Language Understanding by Generative Pre-Training (GPT-1)", "authors": "Radford, Narasimhan, Salimans, Sutskever", "year": "2018", "venue": "OpenAI tech report", "category": "Foundations & Transformers" },
-    { "slug": "gpt-3", "title": "Language Models are Few-Shot Learners (GPT-3)", "authors": "Brown, Mann, Ryder, Subbiah, Kaplan, et al.", "year": "2020", "venue": "NeurIPS 2020 — arXiv:2005.14165", "category": "Foundations & Transformers" },
-    { "slug": "distilbert", "title": "DistilBERT, a distilled version of BERT", "authors": "Sanh, Debut, Chaumond, Wolf", "year": "2019", "venue": "NeurIPS 2019 EMC² — arXiv:1910.01108", "category": "Foundations & Transformers" },
-    { "slug": "switch-transformers", "title": "Switch Transformers: Scaling to Trillion Parameter Models", "authors": "Fedus, Zoph, Shazeer", "year": "2021", "venue": "JMLR 2022 — arXiv:2101.03961", "category": "Foundations & Transformers" },
-    { "slug": "sha-rnn", "title": "Single Headed Attention RNN: Stop Thinking With Your Head", "authors": "Stephen Merity", "year": "2019", "venue": "arXiv:1911.11423", "category": "Foundations & Transformers" },
-
-    { "slug": "seq2seq", "title": "Sequence to Sequence Learning with Neural Networks", "authors": "Sutskever, Vinyals, Le", "year": "2014", "venue": "NeurIPS 2014 — arXiv:1409.3215", "category": "Sequence Models & Translation" },
-    { "slug": "nmt-align-translate", "title": "Neural Machine Translation by Jointly Learning to Align and Translate", "authors": "Bahdanau, Cho, Bengio", "year": "2014", "venue": "ICLR 2015 — arXiv:1409.0473", "category": "Sequence Models & Translation" },
-    { "slug": "show-and-tell", "title": "Show and Tell: A Neural Image Caption Generator", "authors": "Vinyals, Toshev, Bengio, Erhan", "year": "2014", "venue": "CVPR 2015 — arXiv:1411.4555", "category": "Sequence Models & Translation" },
-
-    { "slug": "vit", "title": "An Image Is Worth 16×16 Words (Vision Transformer)", "authors": "Dosovitskiy, Beyer, Kolesnikov, Weissenborn, Zhai, et al.", "year": "2020", "venue": "ICLR 2021 — arXiv:2010.11929", "category": "Computer Vision" },
-    { "slug": "resnet", "title": "Deep Residual Learning for Image Recognition (ResNet)", "authors": "He, Zhang, Ren, Sun", "year": "2015", "venue": "CVPR 2016 — arXiv:1512.03385", "category": "Computer Vision" },
-    { "slug": "batchnorm", "title": "Batch Normalization", "authors": "Ioffe, Szegedy", "year": "2015", "venue": "ICML 2015 — arXiv:1502.03167", "category": "Computer Vision" },
-    { "slug": "faster-rcnn", "title": "Faster R-CNN: Real-Time Object Detection with Region Proposal Networks", "authors": "Ren, He, Girshick, Sun", "year": "2015", "venue": "NeurIPS 2015 — arXiv:1506.01497", "category": "Computer Vision" },
-    { "slug": "detr", "title": "DETR: End-to-End Object Detection with Transformers", "authors": "Carion, Massa, Synnaeve, Usunier, Kirillov, Zagoruyko", "year": "2020", "venue": "ECCV 2020 — arXiv:2005.12872", "category": "Computer Vision" },
-    { "slug": "mobilenetv3", "title": "Searching for MobileNetV3", "authors": "Howard, Sandler, Chu, Chen, Chen, et al.", "year": "2019", "venue": "ICCV 2019 — arXiv:1905.02244", "category": "Computer Vision" },
-    { "slug": "bag-of-tricks", "title": "Bag of Tricks for Image Classification with CNNs", "authors": "He, Zhang, Zhang, Zhang, Xie, Li", "year": "2018", "venue": "CVPR 2019 — arXiv:1812.01187", "category": "Computer Vision" },
-
-    { "slug": "gan", "title": "Generative Adversarial Networks", "authors": "Goodfellow, Pouget-Abadie, Mirza, Xu, Warde-Farley, Ozair, Courville, Bengio", "year": "2014", "venue": "NeurIPS 2014 — arXiv:1406.2661", "category": "Generative Models" },
-    { "slug": "vae", "title": "Auto-Encoding Variational Bayes (VAE)", "authors": "Kingma, Welling", "year": "2013", "venue": "ICLR 2014 — arXiv:1312.6114", "category": "Generative Models" },
-    { "slug": "ddpm", "title": "Denoising Diffusion Probabilistic Models", "authors": "Ho, Jain, Abbeel", "year": "2020", "venue": "NeurIPS 2020 — arXiv:2006.11239", "category": "Generative Models" },
-    { "slug": "pix2pix", "title": "Image-to-Image Translation with Conditional Adversarial Nets (pix2pix)", "authors": "Isola, Zhu, Zhou, Efros", "year": "2016", "venue": "CVPR 2017 — arXiv:1611.07004", "category": "Generative Models" },
-    { "slug": "stargan", "title": "StarGAN: Unified GANs for Multi-Domain Image-to-Image Translation", "authors": "Choi, Choi, Kim, Ha, Kim, Choo", "year": "2017", "venue": "CVPR 2018 — arXiv:1711.09020", "category": "Generative Models" },
-    { "slug": "stylegan", "title": "A Style-Based Generator Architecture for GANs (StyleGAN)", "authors": "Karras, Laine, Aila", "year": "2018", "venue": "CVPR 2019 — arXiv:1812.04948", "category": "Generative Models" },
-    { "slug": "singan", "title": "SinGAN: Learning a Generative Model from a Single Natural Image", "authors": "Shaham, Dekel, Michaeli", "year": "2019", "venue": "ICCV 2019 — arXiv:1905.01164", "category": "Generative Models" },
-    { "slug": "neural-style-transfer", "title": "Image Style Transfer Using Convolutional Neural Networks", "authors": "Gatys, Ecker, Bethge", "year": "2016", "venue": "CVPR 2016", "category": "Generative Models" },
-    { "slug": "adain", "title": "Arbitrary Style Transfer in Real-time with Adaptive Instance Normalization (AdaIN)", "authors": "Huang, Belongie", "year": "2017", "venue": "ICCV 2017 — arXiv:1703.06868", "category": "Generative Models" },
-    { "slug": "meta-transfer-sr", "title": "Meta-Transfer Learning for Zero-Shot Super-Resolution", "authors": "Soh, Cho, Cho", "year": "2020", "venue": "CVPR 2020 — arXiv:2002.12213", "category": "Generative Models" },
-
-    { "slug": "lora", "title": "LoRA: Low-Rank Adaptation of Large Language Models", "authors": "Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, Chen", "year": "2021", "venue": "ICLR 2022 — arXiv:2106.09685", "category": "Efficiency & Adaptation" },
-    { "slug": "qlora", "title": "QLoRA: Efficient Finetuning of Quantized LLMs", "authors": "Dettmers, Pagnoni, Holtzman, Zettlemoyer", "year": "2023", "venue": "NeurIPS 2023 — arXiv:2305.14314", "category": "Efficiency & Adaptation" },
-    { "slug": "llm-int8", "title": "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale", "authors": "Dettmers, Lewis, Belkada, Zettlemoyer", "year": "2022", "venue": "NeurIPS 2022 — arXiv:2208.07339", "category": "Efficiency & Adaptation" },
-    { "slug": "deep-compression", "title": "Deep Compression: Pruning, Quantization and Huffman Coding", "authors": "Han, Mao, Dally", "year": "2015", "venue": "ICLR 2016 — arXiv:1510.00149", "category": "Efficiency & Adaptation" },
-
-    { "slug": "instructgpt", "title": "Training Language Models to Follow Instructions with Human Feedback (InstructGPT)", "authors": "Ouyang, Wu, Jiang, Almeida, Wainwright, Mishkin, et al.", "year": "2022", "venue": "NeurIPS 2022 — arXiv:2203.02155", "category": "Alignment, RAG & Agents" },
-    { "slug": "rag", "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks", "authors": "Lewis, Perez, Piktus, Petroni, Karpukhin, Goyal, Küttler, et al.", "year": "2020", "venue": "NeurIPS 2020 — arXiv:2005.11401", "category": "Alignment, RAG & Agents" },
-    { "slug": "agents-survey", "title": "The Rise and Potential of LLM Based Agents: A Survey", "authors": "Xi, Chen, Guo, He, Ding, Hong, et al.", "year": "2023", "venue": "arXiv:2309.07864", "category": "Alignment, RAG & Agents" },
-    { "slug": "mcp", "title": "Model Context Protocol (MCP)", "authors": "Anthropic — open standard", "year": "2024", "venue": "modelcontextprotocol.io", "category": "Alignment, RAG & Agents" },
-    { "slug": "agents-last-exam", "title": "Agents' Last Exam: A Benchmark of Real-World Professional Work", "authors": "Recursal / community", "year": "2026", "venue": "arXiv:2606.05405", "category": "Alignment, RAG & Agents" },
-
-    { "slug": "fgsm", "title": "Explaining and Harnessing Adversarial Examples (FGSM)", "authors": "Goodfellow, Shlens, Szegedy", "year": "2014", "venue": "ICLR 2015 — arXiv:1412.6572", "category": "Adversarial ML & Robustness" },
-    { "slug": "carlini-wagner", "title": "Towards Evaluating the Robustness of Neural Networks (C&W)", "authors": "Carlini, Wagner", "year": "2016", "venue": "IEEE S&P 2017 — arXiv:1608.04644", "category": "Adversarial ML & Robustness" },
-    { "slug": "pgd-madry", "title": "Towards Deep Learning Models Resistant to Adversarial Attacks (PGD)", "authors": "Madry, Makelov, Schmidt, Tsipras, Vladu", "year": "2017", "venue": "ICLR 2018 — arXiv:1706.06083", "category": "Adversarial ML & Robustness" },
-    { "slug": "adv-features", "title": "Adversarial Examples Are Not Bugs, They Are Features", "authors": "Ilyas, Santurkar, Tsipras, Engstrom, Tran, Madry", "year": "2019", "venue": "NeurIPS 2019 — arXiv:1905.02175", "category": "Adversarial ML & Robustness" },
-    { "slug": "obfuscated-gradients", "title": "Obfuscated Gradients Give a False Sense of Security", "authors": "Athalye, Carlini, Wagner", "year": "2018", "venue": "ICML 2018 — arXiv:1802.00420", "category": "Adversarial ML & Robustness" },
-    { "slug": "cert-robust-dp", "title": "Certified Robustness to Adversarial Examples with Differential Privacy", "authors": "Lecuyer, Atlidakis, Geambasu, Hsu, Jana", "year": "2018", "venue": "IEEE S&P 2019 — arXiv:1802.03471", "category": "Adversarial ML & Robustness" },
-    { "slug": "breaking-certified-defenses", "title": "Breaking Certified Defenses: Semantic Adversarial Examples", "authors": "Ghiasi, Shafahi, Goldstein", "year": "2020", "venue": "ICLR 2020 — arXiv:2003.08937", "category": "Adversarial ML & Robustness" },
-    { "slug": "adversarial-patch", "title": "Adversarial Patch", "authors": "Brown, Mané, Roy, Abadi, Gilmer", "year": "2017", "venue": "NeurIPS 2017 workshop — arXiv:1712.09665", "category": "Adversarial ML & Robustness" },
-    { "slug": "unrestricted-adv", "title": "Constructing Unrestricted Adversarial Examples with Generative Models", "authors": "Song, Shu, Kushman, Ermon", "year": "2018", "venue": "NeurIPS 2018 — arXiv:1805.07894", "category": "Adversarial ML & Robustness" },
-    { "slug": "momentum-attack", "title": "Boosting Adversarial Attacks with Momentum (MI-FGSM)", "authors": "Dong, Liao, Pang, Su, Zhu, Hu, Li", "year": "2017", "venue": "CVPR 2018 — arXiv:1710.06081", "category": "Adversarial ML & Robustness" },
-    { "slug": "poison-frogs", "title": "Poison Frogs! Targeted Clean-Label Poisoning Attacks", "authors": "Shafahi, Huang, Najibi, Suciu, Studer, Dumitras, Goldstein", "year": "2018", "venue": "NeurIPS 2018 — arXiv:1804.00792", "category": "Adversarial ML & Robustness" },
-    { "slug": "decision-based-attack", "title": "Decision-Based Adversarial Attacks (Boundary Attack)", "authors": "Brendel, Rauber, Bethge", "year": "2017", "venue": "ICLR 2018 — arXiv:1712.04248", "category": "Adversarial ML & Robustness" },
-    { "slug": "query-efficient-hardlabel", "title": "Query-Efficient Hard-label Black-box Attack (OPT)", "authors": "Cheng, Le, Chen, Yi, Zhang, Hsieh", "year": "2018", "venue": "ICLR 2019 — arXiv:1807.04457", "category": "Adversarial ML & Robustness" },
-    { "slug": "sign-opt", "title": "Sign-OPT: A Query-Efficient Hard-label Adversarial Attack", "authors": "Cheng, Singh, Chen, Chen, Liu, Hsieh", "year": "2019", "venue": "ICLR 2020 — arXiv:1909.10773", "category": "Adversarial ML & Robustness" },
-    { "slug": "hopskipjump", "title": "HopSkipJumpAttack: A Query-Efficient Decision-Based Attack", "authors": "Chen, Jordan, Wainwright", "year": "2019", "venue": "IEEE S&P 2020 — arXiv:1904.02144", "category": "Adversarial ML & Robustness" },
-    { "slug": "textfooler", "title": "Is BERT Really Robust? A Strong Baseline for NLP Attacks (TextFooler)", "authors": "Jin, Jin, Zhou, Szolovits", "year": "2019", "venue": "AAAI 2020 — arXiv:1907.11932", "category": "Adversarial ML & Robustness" },
-
-    { "slug": "cybertron", "title": "PRIMUS — Cybersecurity LLM Training Datasets (Trend Micro)", "authors": "Trend Micro Research", "year": "2025", "venue": "arXiv:2502.11191", "category": "Security & Datasets" }
+    {
+      "slug": "attention-is-all-you-need",
+      "title": "Attention Is All You Need",
+      "authors": "Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin",
+      "year": "2017",
+      "venue": "NeurIPS 2017 — arXiv:1706.03762",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "bert",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+      "authors": "Devlin, Chang, Lee, Toutanova",
+      "year": "2018",
+      "venue": "NAACL 2019 — arXiv:1810.04805",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "gpt-1",
+      "title": "Improving Language Understanding by Generative Pre-Training (GPT-1)",
+      "authors": "Radford, Narasimhan, Salimans, Sutskever",
+      "year": "2018",
+      "venue": "OpenAI tech report",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "gpt-3",
+      "title": "Language Models are Few-Shot Learners (GPT-3)",
+      "authors": "Brown, Mann, Ryder, Subbiah, Kaplan, et al.",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2005.14165",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "distilbert",
+      "title": "DistilBERT, a distilled version of BERT",
+      "authors": "Sanh, Debut, Chaumond, Wolf",
+      "year": "2019",
+      "venue": "NeurIPS 2019 EMC² — arXiv:1910.01108",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "switch-transformers",
+      "title": "Switch Transformers: Scaling to Trillion Parameter Models",
+      "authors": "Fedus, Zoph, Shazeer",
+      "year": "2021",
+      "venue": "JMLR 2022 — arXiv:2101.03961",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "sha-rnn",
+      "title": "Single Headed Attention RNN: Stop Thinking With Your Head",
+      "authors": "Stephen Merity",
+      "year": "2019",
+      "venue": "arXiv:1911.11423",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "seq2seq",
+      "title": "Sequence to Sequence Learning with Neural Networks",
+      "authors": "Sutskever, Vinyals, Le",
+      "year": "2014",
+      "venue": "NeurIPS 2014 — arXiv:1409.3215",
+      "category": "Sequence Models & Translation"
+    },
+    {
+      "slug": "nmt-align-translate",
+      "title": "Neural Machine Translation by Jointly Learning to Align and Translate",
+      "authors": "Bahdanau, Cho, Bengio",
+      "year": "2014",
+      "venue": "ICLR 2015 — arXiv:1409.0473",
+      "category": "Sequence Models & Translation"
+    },
+    {
+      "slug": "show-and-tell",
+      "title": "Show and Tell: A Neural Image Caption Generator",
+      "authors": "Vinyals, Toshev, Bengio, Erhan",
+      "year": "2014",
+      "venue": "CVPR 2015 — arXiv:1411.4555",
+      "category": "Sequence Models & Translation"
+    },
+    {
+      "slug": "vit",
+      "title": "An Image Is Worth 16×16 Words (Vision Transformer)",
+      "authors": "Dosovitskiy, Beyer, Kolesnikov, Weissenborn, Zhai, et al.",
+      "year": "2020",
+      "venue": "ICLR 2021 — arXiv:2010.11929",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "resnet",
+      "title": "Deep Residual Learning for Image Recognition (ResNet)",
+      "authors": "He, Zhang, Ren, Sun",
+      "year": "2015",
+      "venue": "CVPR 2016 — arXiv:1512.03385",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "batchnorm",
+      "title": "Batch Normalization",
+      "authors": "Ioffe, Szegedy",
+      "year": "2015",
+      "venue": "ICML 2015 — arXiv:1502.03167",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "faster-rcnn",
+      "title": "Faster R-CNN: Real-Time Object Detection with Region Proposal Networks",
+      "authors": "Ren, He, Girshick, Sun",
+      "year": "2015",
+      "venue": "NeurIPS 2015 — arXiv:1506.01497",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "detr",
+      "title": "DETR: End-to-End Object Detection with Transformers",
+      "authors": "Carion, Massa, Synnaeve, Usunier, Kirillov, Zagoruyko",
+      "year": "2020",
+      "venue": "ECCV 2020 — arXiv:2005.12872",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "mobilenetv3",
+      "title": "Searching for MobileNetV3",
+      "authors": "Howard, Sandler, Chu, Chen, Chen, et al.",
+      "year": "2019",
+      "venue": "ICCV 2019 — arXiv:1905.02244",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "bag-of-tricks",
+      "title": "Bag of Tricks for Image Classification with CNNs",
+      "authors": "He, Zhang, Zhang, Zhang, Xie, Li",
+      "year": "2018",
+      "venue": "CVPR 2019 — arXiv:1812.01187",
+      "category": "Computer Vision"
+    },
+    {
+      "slug": "gan",
+      "title": "Generative Adversarial Networks",
+      "authors": "Goodfellow, Pouget-Abadie, Mirza, Xu, Warde-Farley, Ozair, Courville, Bengio",
+      "year": "2014",
+      "venue": "NeurIPS 2014 — arXiv:1406.2661",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "vae",
+      "title": "Auto-Encoding Variational Bayes (VAE)",
+      "authors": "Kingma, Welling",
+      "year": "2013",
+      "venue": "ICLR 2014 — arXiv:1312.6114",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "ddpm",
+      "title": "Denoising Diffusion Probabilistic Models",
+      "authors": "Ho, Jain, Abbeel",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2006.11239",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "pix2pix",
+      "title": "Image-to-Image Translation with Conditional Adversarial Nets (pix2pix)",
+      "authors": "Isola, Zhu, Zhou, Efros",
+      "year": "2016",
+      "venue": "CVPR 2017 — arXiv:1611.07004",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "stargan",
+      "title": "StarGAN: Unified GANs for Multi-Domain Image-to-Image Translation",
+      "authors": "Choi, Choi, Kim, Ha, Kim, Choo",
+      "year": "2017",
+      "venue": "CVPR 2018 — arXiv:1711.09020",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "stylegan",
+      "title": "A Style-Based Generator Architecture for GANs (StyleGAN)",
+      "authors": "Karras, Laine, Aila",
+      "year": "2018",
+      "venue": "CVPR 2019 — arXiv:1812.04948",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "singan",
+      "title": "SinGAN: Learning a Generative Model from a Single Natural Image",
+      "authors": "Shaham, Dekel, Michaeli",
+      "year": "2019",
+      "venue": "ICCV 2019 — arXiv:1905.01164",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "neural-style-transfer",
+      "title": "Image Style Transfer Using Convolutional Neural Networks",
+      "authors": "Gatys, Ecker, Bethge",
+      "year": "2016",
+      "venue": "CVPR 2016",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "adain",
+      "title": "Arbitrary Style Transfer in Real-time with Adaptive Instance Normalization (AdaIN)",
+      "authors": "Huang, Belongie",
+      "year": "2017",
+      "venue": "ICCV 2017 — arXiv:1703.06868",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "meta-transfer-sr",
+      "title": "Meta-Transfer Learning for Zero-Shot Super-Resolution",
+      "authors": "Soh, Cho, Cho",
+      "year": "2020",
+      "venue": "CVPR 2020 — arXiv:2002.12213",
+      "category": "Generative Models"
+    },
+    {
+      "slug": "lora",
+      "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+      "authors": "Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, Chen",
+      "year": "2021",
+      "venue": "ICLR 2022 — arXiv:2106.09685",
+      "category": "Efficiency & Adaptation"
+    },
+    {
+      "slug": "qlora",
+      "title": "QLoRA: Efficient Finetuning of Quantized LLMs",
+      "authors": "Dettmers, Pagnoni, Holtzman, Zettlemoyer",
+      "year": "2023",
+      "venue": "NeurIPS 2023 — arXiv:2305.14314",
+      "category": "Efficiency & Adaptation"
+    },
+    {
+      "slug": "llm-int8",
+      "title": "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale",
+      "authors": "Dettmers, Lewis, Belkada, Zettlemoyer",
+      "year": "2022",
+      "venue": "NeurIPS 2022 — arXiv:2208.07339",
+      "category": "Efficiency & Adaptation"
+    },
+    {
+      "slug": "deep-compression",
+      "title": "Deep Compression: Pruning, Quantization and Huffman Coding",
+      "authors": "Han, Mao, Dally",
+      "year": "2015",
+      "venue": "ICLR 2016 — arXiv:1510.00149",
+      "category": "Efficiency & Adaptation"
+    },
+    {
+      "slug": "instructgpt",
+      "title": "Training Language Models to Follow Instructions with Human Feedback (InstructGPT)",
+      "authors": "Ouyang, Wu, Jiang, Almeida, Wainwright, Mishkin, et al.",
+      "year": "2022",
+      "venue": "NeurIPS 2022 — arXiv:2203.02155",
+      "category": "Alignment, RAG & Agents"
+    },
+    {
+      "slug": "rag",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "authors": "Lewis, Perez, Piktus, Petroni, Karpukhin, Goyal, Küttler, et al.",
+      "year": "2020",
+      "venue": "NeurIPS 2020 — arXiv:2005.11401",
+      "category": "Alignment, RAG & Agents"
+    },
+    {
+      "slug": "agents-survey",
+      "title": "The Rise and Potential of LLM Based Agents: A Survey",
+      "authors": "Xi, Chen, Guo, He, Ding, Hong, et al.",
+      "year": "2023",
+      "venue": "arXiv:2309.07864",
+      "category": "Alignment, RAG & Agents"
+    },
+    {
+      "slug": "mcp",
+      "title": "Model Context Protocol (MCP)",
+      "authors": "Anthropic — open standard",
+      "year": "2024",
+      "venue": "modelcontextprotocol.io",
+      "category": "Alignment, RAG & Agents"
+    },
+    {
+      "slug": "agents-last-exam",
+      "title": "Agents' Last Exam: A Benchmark of Real-World Professional Work",
+      "authors": "Recursal / community",
+      "year": "2026",
+      "venue": "arXiv:2606.05405",
+      "category": "Alignment, RAG & Agents"
+    },
+    {
+      "slug": "fgsm",
+      "title": "Explaining and Harnessing Adversarial Examples (FGSM)",
+      "authors": "Goodfellow, Shlens, Szegedy",
+      "year": "2014",
+      "venue": "ICLR 2015 — arXiv:1412.6572",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "carlini-wagner",
+      "title": "Towards Evaluating the Robustness of Neural Networks (C&W)",
+      "authors": "Carlini, Wagner",
+      "year": "2016",
+      "venue": "IEEE S&P 2017 — arXiv:1608.04644",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "pgd-madry",
+      "title": "Towards Deep Learning Models Resistant to Adversarial Attacks (PGD)",
+      "authors": "Madry, Makelov, Schmidt, Tsipras, Vladu",
+      "year": "2017",
+      "venue": "ICLR 2018 — arXiv:1706.06083",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "adv-features",
+      "title": "Adversarial Examples Are Not Bugs, They Are Features",
+      "authors": "Ilyas, Santurkar, Tsipras, Engstrom, Tran, Madry",
+      "year": "2019",
+      "venue": "NeurIPS 2019 — arXiv:1905.02175",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "obfuscated-gradients",
+      "title": "Obfuscated Gradients Give a False Sense of Security",
+      "authors": "Athalye, Carlini, Wagner",
+      "year": "2018",
+      "venue": "ICML 2018 — arXiv:1802.00420",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "cert-robust-dp",
+      "title": "Certified Robustness to Adversarial Examples with Differential Privacy",
+      "authors": "Lecuyer, Atlidakis, Geambasu, Hsu, Jana",
+      "year": "2018",
+      "venue": "IEEE S&P 2019 — arXiv:1802.03471",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "breaking-certified-defenses",
+      "title": "Breaking Certified Defenses: Semantic Adversarial Examples",
+      "authors": "Ghiasi, Shafahi, Goldstein",
+      "year": "2020",
+      "venue": "ICLR 2020 — arXiv:2003.08937",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "adversarial-patch",
+      "title": "Adversarial Patch",
+      "authors": "Brown, Mané, Roy, Abadi, Gilmer",
+      "year": "2017",
+      "venue": "NeurIPS 2017 workshop — arXiv:1712.09665",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "unrestricted-adv",
+      "title": "Constructing Unrestricted Adversarial Examples with Generative Models",
+      "authors": "Song, Shu, Kushman, Ermon",
+      "year": "2018",
+      "venue": "NeurIPS 2018 — arXiv:1805.07894",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "momentum-attack",
+      "title": "Boosting Adversarial Attacks with Momentum (MI-FGSM)",
+      "authors": "Dong, Liao, Pang, Su, Zhu, Hu, Li",
+      "year": "2017",
+      "venue": "CVPR 2018 — arXiv:1710.06081",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "poison-frogs",
+      "title": "Poison Frogs! Targeted Clean-Label Poisoning Attacks",
+      "authors": "Shafahi, Huang, Najibi, Suciu, Studer, Dumitras, Goldstein",
+      "year": "2018",
+      "venue": "NeurIPS 2018 — arXiv:1804.00792",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "decision-based-attack",
+      "title": "Decision-Based Adversarial Attacks (Boundary Attack)",
+      "authors": "Brendel, Rauber, Bethge",
+      "year": "2017",
+      "venue": "ICLR 2018 — arXiv:1712.04248",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "query-efficient-hardlabel",
+      "title": "Query-Efficient Hard-label Black-box Attack (OPT)",
+      "authors": "Cheng, Le, Chen, Yi, Zhang, Hsieh",
+      "year": "2018",
+      "venue": "ICLR 2019 — arXiv:1807.04457",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "sign-opt",
+      "title": "Sign-OPT: A Query-Efficient Hard-label Adversarial Attack",
+      "authors": "Cheng, Singh, Chen, Chen, Liu, Hsieh",
+      "year": "2019",
+      "venue": "ICLR 2020 — arXiv:1909.10773",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "hopskipjump",
+      "title": "HopSkipJumpAttack: A Query-Efficient Decision-Based Attack",
+      "authors": "Chen, Jordan, Wainwright",
+      "year": "2019",
+      "venue": "IEEE S&P 2020 — arXiv:1904.02144",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "textfooler",
+      "title": "Is BERT Really Robust? A Strong Baseline for NLP Attacks (TextFooler)",
+      "authors": "Jin, Jin, Zhou, Szolovits",
+      "year": "2019",
+      "venue": "AAAI 2020 — arXiv:1907.11932",
+      "category": "Adversarial ML & Robustness"
+    },
+    {
+      "slug": "cybertron",
+      "title": "PRIMUS — Cybersecurity LLM Training Datasets (Trend Micro)",
+      "authors": "Trend Micro Research",
+      "year": "2025",
+      "venue": "arXiv:2502.11191",
+      "category": "Security & Datasets"
+    },
+    {
+      "slug": "llama2",
+      "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models",
+      "authors": "Touvron, Martin, Stone, et al. (Meta AI)",
+      "year": "2023",
+      "venue": "arXiv:2307.09288",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "llama3",
+      "title": "The Llama 3 Herd of Models",
+      "authors": "Dubey, Jauhri, et al. (Meta AI)",
+      "year": "2024",
+      "venue": "arXiv:2407.21783",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "mistral7b",
+      "title": "Mistral 7B",
+      "authors": "Jiang, Sablayrolles, et al. (Mistral AI)",
+      "year": "2023",
+      "venue": "arXiv:2310.06825",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "mixtral",
+      "title": "Mixtral of Experts",
+      "authors": "Jiang, Sablayrolles, et al. (Mistral AI)",
+      "year": "2024",
+      "venue": "arXiv:2401.04088",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "gpt4-report",
+      "title": "GPT-4 Technical Report",
+      "authors": "OpenAI",
+      "year": "2023",
+      "venue": "arXiv:2303.08774",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "gemini15",
+      "title": "Gemini 1.5: Multimodal Understanding Across Millions of Tokens",
+      "authors": "Gemini Team, Google DeepMind",
+      "year": "2024",
+      "venue": "arXiv:2403.05530",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "deepseek-v3",
+      "title": "DeepSeek-V3 Technical Report",
+      "authors": "DeepSeek-AI",
+      "year": "2024",
+      "venue": "arXiv:2412.19437",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "deepseek-r1",
+      "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via RL",
+      "authors": "DeepSeek-AI",
+      "year": "2025",
+      "venue": "arXiv:2501.12948",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "qwen2",
+      "title": "Qwen2 Technical Report",
+      "authors": "Yang, Yang, et al. (Alibaba)",
+      "year": "2024",
+      "venue": "arXiv:2407.10671",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "gemma",
+      "title": "Gemma: Open Models Based on Gemini Research",
+      "authors": "Gemma Team, Google DeepMind",
+      "year": "2024",
+      "venue": "arXiv:2403.08295",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "gemma2",
+      "title": "Gemma 2: Improving Open Language Models at a Practical Size",
+      "authors": "Gemma Team, Google DeepMind",
+      "year": "2024",
+      "venue": "arXiv:2408.00118",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "phi1",
+      "title": "Textbooks Are All You Need (phi-1)",
+      "authors": "Gunasekar, Zhang, et al. (Microsoft)",
+      "year": "2023",
+      "venue": "arXiv:2306.11644",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "phi3",
+      "title": "Phi-3 Technical Report: A Highly Capable LM Locally on Your Phone",
+      "authors": "Abdin, et al. (Microsoft)",
+      "year": "2024",
+      "venue": "arXiv:2404.14219",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "olmo",
+      "title": "OLMo: Accelerating the Science of Language Models",
+      "authors": "Groeneveld, et al. (AI2)",
+      "year": "2024",
+      "venue": "arXiv:2402.00838",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "tulu3",
+      "title": "Tülu 3: Pushing Frontiers in Open Language Model Post-Training",
+      "authors": "Lambert, et al. (AI2)",
+      "year": "2024",
+      "venue": "arXiv:2411.15124",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "mamba",
+      "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+      "authors": "Gu, Dao",
+      "year": "2023",
+      "venue": "arXiv:2312.00752",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "flashattention2",
+      "title": "FlashAttention-2: Faster Attention with Better Parallelism",
+      "authors": "Tri Dao",
+      "year": "2023",
+      "venue": "arXiv:2307.08691",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "flashattention1",
+      "title": "FlashAttention: Fast and Memory-Efficient Exact Attention",
+      "authors": "Dao, Fu, Ermon, Rudra, Ré",
+      "year": "2022",
+      "venue": "arXiv:2205.14135",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "gqa",
+      "title": "GQA: Training Generalized Multi-Query Transformer Models",
+      "authors": "Ainslie, et al. (Google)",
+      "year": "2023",
+      "venue": "arXiv:2305.13245",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "rwkv",
+      "title": "RWKV: Reinventing RNNs for the Transformer Era",
+      "authors": "Peng, et al.",
+      "year": "2023",
+      "venue": "arXiv:2305.13048",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "retnet",
+      "title": "Retentive Network: A Successor to Transformer for LLMs",
+      "authors": "Sun, et al. (Microsoft)",
+      "year": "2023",
+      "venue": "arXiv:2307.08621",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "jamba",
+      "title": "Jamba: A Hybrid Transformer-Mamba Language Model",
+      "authors": "Lieber, et al. (AI21)",
+      "year": "2024",
+      "venue": "arXiv:2403.19887",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "mamba2",
+      "title": "Transformers are SSMs: Mamba-2 and State Space Duality",
+      "authors": "Dao, Gu",
+      "year": "2024",
+      "venue": "arXiv:2405.21060",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "bitnet158",
+      "title": "The Era of 1-bit LLMs: BitNet b1.58",
+      "authors": "Ma, Wang, et al. (Microsoft)",
+      "year": "2024",
+      "venue": "arXiv:2402.17764",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "ring-attention",
+      "title": "Ring Attention with Blockwise Transformers for Near-Infinite Context",
+      "authors": "Liu, Zaharia, Abbeel",
+      "year": "2023",
+      "venue": "arXiv:2310.01889",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "streamingllm",
+      "title": "Efficient Streaming Language Models with Attention Sinks",
+      "authors": "Xiao, et al.",
+      "year": "2023",
+      "venue": "arXiv:2309.17453",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "vllm",
+      "title": "Efficient Memory Management for LLM Serving with PagedAttention",
+      "authors": "Kwon, et al. (vLLM)",
+      "year": "2023",
+      "venue": "arXiv:2309.06180",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "mixture-of-depths",
+      "title": "Mixture-of-Depths: Dynamically Allocating Compute in Transformers",
+      "authors": "Raposo, et al. (DeepMind)",
+      "year": "2024",
+      "venue": "arXiv:2404.02258",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "differential-transformer",
+      "title": "Differential Transformer",
+      "authors": "Ye, et al. (Microsoft)",
+      "year": "2024",
+      "venue": "arXiv:2410.05258",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "native-sparse-attention",
+      "title": "Native Sparse Attention: Hardware-Aligned, Natively Trainable Sparse Attention",
+      "authors": "Yuan, et al. (DeepSeek)",
+      "year": "2025",
+      "venue": "arXiv:2502.11089",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "medusa",
+      "title": "Medusa: Simple LLM Inference Acceleration with Multiple Decoding Heads",
+      "authors": "Cai, et al.",
+      "year": "2024",
+      "venue": "arXiv:2401.10774",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "yarn",
+      "title": "YaRN: Efficient Context Window Extension of Large Language Models",
+      "authors": "Peng, Quesnelle, Fan, Shippole",
+      "year": "2023",
+      "venue": "arXiv:2309.00071",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "tree-of-thoughts",
+      "title": "Tree of Thoughts: Deliberate Problem Solving with LLMs",
+      "authors": "Yao, et al.",
+      "year": "2023",
+      "venue": "arXiv:2305.10601",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "toolformer",
+      "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+      "authors": "Schick, et al. (Meta)",
+      "year": "2023",
+      "venue": "arXiv:2302.04761",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "reflexion",
+      "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+      "authors": "Shinn, et al.",
+      "year": "2023",
+      "venue": "arXiv:2303.11366",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "voyager",
+      "title": "Voyager: An Open-Ended Embodied Agent with LLMs",
+      "authors": "Wang, et al.",
+      "year": "2023",
+      "venue": "arXiv:2305.16291",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "generative-agents",
+      "title": "Generative Agents: Interactive Simulacra of Human Behavior",
+      "authors": "Park, et al. (Stanford)",
+      "year": "2023",
+      "venue": "arXiv:2304.03442",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "self-rag",
+      "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "authors": "Asai, et al.",
+      "year": "2023",
+      "venue": "arXiv:2310.11511",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "graphrag",
+      "title": "From Local to Global: A Graph RAG Approach to Query-Focused Summarization",
+      "authors": "Edge, et al. (Microsoft)",
+      "year": "2024",
+      "venue": "arXiv:2404.16130",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "raptor",
+      "title": "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval",
+      "authors": "Sarthi, et al. (Stanford)",
+      "year": "2024",
+      "venue": "arXiv:2401.18059",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "chain-of-verification",
+      "title": "Chain-of-Verification Reduces Hallucination in LLMs",
+      "authors": "Dhuliawala, et al. (Meta)",
+      "year": "2023",
+      "venue": "arXiv:2309.11495",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "deepseek-math-grpo",
+      "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning (GRPO)",
+      "authors": "Shao, et al. (DeepSeek)",
+      "year": "2024",
+      "venue": "arXiv:2402.03300",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "s1-test-time",
+      "title": "s1: Simple Test-Time Scaling",
+      "authors": "Muennighoff, et al. (Stanford)",
+      "year": "2025",
+      "venue": "arXiv:2501.19393",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "self-rewarding",
+      "title": "Self-Rewarding Language Models",
+      "authors": "Yuan, et al. (Meta)",
+      "year": "2024",
+      "venue": "arXiv:2401.10020",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "dpo",
+      "title": "Direct Preference Optimization: Your LM is Secretly a Reward Model",
+      "authors": "Rafailov, et al. (Stanford)",
+      "year": "2023",
+      "venue": "arXiv:2305.18290",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "rlaif",
+      "title": "RLAIF: Scaling RL from Human Feedback with AI Feedback",
+      "authors": "Lee, et al. (Google)",
+      "year": "2023",
+      "venue": "arXiv:2309.00267",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "orpo",
+      "title": "ORPO: Monolithic Preference Optimization without Reference Model",
+      "authors": "Hong, Lee, Thorne",
+      "year": "2024",
+      "venue": "arXiv:2403.07691",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "kto",
+      "title": "KTO: Model Alignment as Prospect Theoretic Optimization",
+      "authors": "Ethayarajh, et al.",
+      "year": "2024",
+      "venue": "arXiv:2402.01306",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "sam",
+      "title": "Segment Anything",
+      "authors": "Kirillov, et al. (Meta AI)",
+      "year": "2023",
+      "venue": "arXiv:2304.02643",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "llava",
+      "title": "Visual Instruction Tuning (LLaVA)",
+      "authors": "Liu, Li, Wu, Lee",
+      "year": "2023",
+      "venue": "arXiv:2304.08485",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "sdxl",
+      "title": "SDXL: Improving Latent Diffusion Models for High-Resolution Synthesis",
+      "authors": "Podell, et al. (Stability AI)",
+      "year": "2023",
+      "venue": "arXiv:2307.01952",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "consistency-models",
+      "title": "Consistency Models",
+      "authors": "Song, Dhariwal, Chen, Sutskever (OpenAI)",
+      "year": "2023",
+      "venue": "arXiv:2303.01469",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "controlnet",
+      "title": "Adding Conditional Control to Text-to-Image Diffusion Models (ControlNet)",
+      "authors": "Zhang, Rao, Agrawala",
+      "year": "2023",
+      "venue": "arXiv:2302.05543",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "sd3-rectified-flow",
+      "title": "Scaling Rectified Flow Transformers for High-Resolution Image Synthesis (SD3)",
+      "authors": "Esser, et al. (Stability AI)",
+      "year": "2024",
+      "venue": "arXiv:2403.03206",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "depth-anything",
+      "title": "Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data",
+      "authors": "Yang, et al.",
+      "year": "2024",
+      "venue": "arXiv:2401.10891",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "qwen2-vl",
+      "title": "Qwen2-VL: Enhancing Vision-Language Models' Perception at Any Resolution",
+      "authors": "Wang, et al. (Alibaba)",
+      "year": "2024",
+      "venue": "arXiv:2409.12191",
+      "category": "Vision, Multimodal & Diffusion"
+    },
+    {
+      "slug": "chinchilla",
+      "title": "Training Compute-Optimal Large Language Models (Chinchilla)",
+      "authors": "Hoffmann, et al. (DeepMind)",
+      "year": "2022",
+      "venue": "arXiv:2203.15556",
+      "category": "Modern LLMs (2023-2026)"
+    }
   ]
 }

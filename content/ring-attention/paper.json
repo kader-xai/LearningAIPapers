@@ -1,0 +1,324 @@
+{
+  "title": "Ring Attention with Blockwise Transformers for Near-Infinite Context",
+  "authors": "Liu, Zaharia, Abbeel",
+  "year": "2023",
+  "venue": "arXiv:2310.01889",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Context length is bottlenecked by one device's memory",
+          "subtitle": "What Ring Attention removes",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Transformers are the engine behind modern AI, but they have a stubborn ceiling: <b>how long a sequence can they read at once?</b> A book, a codebase, a year of a patient's medical history, an hour-long video — all of these are long. The reason models choke on them is not the math of attention itself; it is that <b>the activations needed to compute attention must fit in the memory of a single accelerator</b> (one GPU or TPU). Memory, not intelligence, is the wall."
+            },
+            {
+              "type": "p",
+              "html": "The naive picture is even worse than people assume. Self-attention famously needs memory that grows as $O(n^2)$ in sequence length $n$ because it forms an $n \\times n$ score matrix. Memory-efficient kernels like FlashAttention already fixed that part — they never materialize the full matrix. But the authors point out that even <i>after</i> that fix, a hidden linear-in-$n$ cost remains: every layer must store its output activations of size proportional to $n$, and that is what still pins the maximum context to one device's RAM."
+            },
+            {
+              "type": "p",
+              "html": "<b>The idea of Ring Attention.</b> Cut the sequence into blocks and hand one block to each device. Arrange the devices in a <i>ring</i>. While a device computes attention on the block it holds, it simultaneously passes key-value (KV) blocks to its neighbor and receives the next KV block from the other side. Because attention for a query block must eventually see <i>every</i> key block, the KV blocks travel all the way around the ring — and crucially, the communication is hidden underneath the attention computation that is happening anyway."
+            },
+            {
+              "type": "quote",
+              "html": "We propose Ring Attention with Blockwise Transformers (Ring Attention), which leverages blockwise computation of self-attention and feedforward to distribute long sequences across multiple devices while fully overlapping the communication of key-value blocks with the computation of blockwise attention."
+            },
+            {
+              "type": "p",
+              "html": "<b>The payoff.</b> Maximum context length now scales <b>linearly with the number of devices</b>, with effectively zero memory overhead from the attention computation and zero added communication cost (it is free, hidden behind compute). The paper reports training sequences of <b>over 100 million tokens</b> and context windows <b>more than 512x longer</b> than what a vanilla memory-efficient Transformer fits on the same hardware."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Problem: max context is capped by a single device's memory, even with FlashAttention-style kernels.",
+                "Mechanism: shard the sequence into blocks across a ring of devices; rotate KV blocks around the ring.",
+                "Trick: overlap KV communication with blockwise attention/feedforward compute so the transfer is hidden.",
+                "Result: context scales linearly in device count; >512x longer context than a memory-efficient baseline; sequences of 100M+ tokens become feasible."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Memory Wall",
+      "pages": [
+        {
+          "title": "Why one device caps your context length",
+          "subtitle": "The constraint Ring Attention is built to break",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before fixing a problem you have to name it precisely. <b>The question this page answers:</b> exactly how much memory does a Transformer layer need as a function of sequence length, and which part of that is unavoidable on a single device?"
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete picture.</b> Take a self-attention layer. A query block of $c$ tokens attends to keys and values. The classic implementation builds an $n \\times n$ attention-score matrix — for $n = 100{,}000$ tokens that is $10^{10}$ numbers per head, which no accelerator can hold. Memory-efficient attention (FlashAttention, and the blockwise method this paper builds on) avoids ever forming that matrix by streaming over key/value blocks and keeping only running statistics. So the $O(n^2)$ term is solved. But the layer still has to <i>store its own output</i> for the next layer, and that output is one vector per token."
+            },
+            {
+              "type": "p",
+              "html": "The authors write the per-layer memory cost of a vanilla Transformer (after the $n^2$ fix) as growing with the sequence it must hold:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Memory cost per layer} \\;\\propto\\; \\max\\!\\big(c^2,\\; 2bsh\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $c$ is the query <b>block size</b> (how many tokens you process at once), so $c^2$ is the working memory of the local block of attention scores; $b$ is the <b>batch size</b>; $s$ is the <b>sequence length</b>; $h$ is the <b>hidden dimension</b> of the model; the factor $2$ accounts for keeping both the query-block activations and the output activations. The term that grows without bound is $2bsh$ — <b>linear in sequence length $s$</b>. That linear term is what no single-device kernel can escape: longer sequence, more activations, until the device is full."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters.</b> Suppose your device fits a 32K-token context. Doubling to 64K is not a software setting — you physically run out of memory storing activations, regardless of how clever your attention kernel is. The only single-device escapes (gradient checkpointing, smaller batches) cost compute or hurt the model. Ring Attention's bet is different: <b>spread the $s$ across devices so no single device ever holds the whole sequence's activations.</b>"
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> This linear-memory wall is exactly why the field plateaued around a few thousand to tens of thousands of tokens for years. FlashAttention (Dao et al., 2022) removed the quadratic term and was a landmark; Ring Attention is the next step — it removes the device as the unit of measurement entirely, making the ceiling a property of your <i>cluster</i>, not your chip."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Blockwise Attention",
+      "pages": [
+        {
+          "title": "Computing attention block by block without the big matrix",
+          "subtitle": "The foundation Ring Attention sits on",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> if we are going to give each device only a slice of the sequence, attention must be computable one block at a time — a query block against key/value blocks that arrive one by one. How do you get the <i>exact same</i> softmax answer as if you had the whole row, while only ever seeing pieces of it?"
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy.</b> Imagine averaging a stream of numbers you cannot store all at once. You keep a running sum and a running count; each new number updates them; at the end you divide. Online softmax does the same for attention: it keeps a running maximum (for numerical stability) and a running weighted sum, and corrects them as each new key block arrives. The final result is identical to computing softmax over everything at once."
+            },
+            {
+              "type": "p",
+              "html": "Standard self-attention for a query block is:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Attention}(Q, K, V) = \\text{softmax}\\!\\left(\\frac{Q K^{\\top}}{\\sqrt{d}}\\right) V"
+            },
+            {
+              "type": "p",
+              "html": "Here $Q \\in \\mathbb{R}^{c \\times d}$ is the query block ($c$ tokens, each a $d$-dimensional vector); $K, V \\in \\mathbb{R}^{n \\times d}$ are the keys and values over the full sequence of length $n$; $Q K^{\\top}$ is the $c \\times n$ matrix of raw attention scores; $\\sqrt{d}$ is the scaling that keeps the scores from exploding as dimension grows; $\\text{softmax}$ normalizes each query's scores into weights that sum to 1; multiplying by $V$ produces the $c \\times d$ output block. The expensive object is the $c \\times n$ score matrix — Ring Attention will never build it whole."
+            },
+            {
+              "type": "p",
+              "html": "<b>Blockwise rewrite.</b> Split $K$ and $V$ into blocks $K_j, V_j$. Process the query block against one $K_j, V_j$ at a time, maintaining a running output. The blockwise update accumulates the unnormalized weighted values and tracks the running normalizer, rescaling previous partial results whenever a new block reveals a larger max:"
+            },
+            {
+              "type": "math",
+              "tex": "O \\;\\leftarrow\\; \\frac{m_{\\text{old}}}{m_{\\text{new}}}\\, O \\;+\\; \\text{softmax-partial}\\big(Q K_j^{\\top}\\big)\\, V_j"
+            },
+            {
+              "type": "p",
+              "html": "$O$ is the running $c \\times d$ output for the query block; $K_j, V_j$ are the current key/value block of size $c \\times d$; $m_{\\text{old}}$ and $m_{\\text{new}}$ are the running and updated row-wise maximum scores used to keep the exponentials numerically stable; the ratio $m_{\\text{old}}/m_{\\text{new}}$ rescales the accumulated output so it stays consistent when a later block contains a larger score. The point: you only ever hold one $K_j, V_j$ block at a time, so memory is set by the <b>block size, not the sequence length</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works / what breaks without it.</b> Without the running-max rescaling, the exponentials in softmax overflow for long sequences and the answer is garbage. The blockwise feedforward is fused in the same loop — the MLP is also applied block by block — so the whole layer, not just attention, runs in block-sized memory. This is the Blockwise Parallel Transformer (Liu &amp; Abbeel, 2023) the title refers to, itself a descendant of FlashAttention's online-softmax insight."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Ring",
+      "pages": [
+        {
+          "title": "Passing KV blocks around a ring of devices",
+          "subtitle": "Distributing the sequence so no device holds it all",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> blockwise attention lets one device process key/value blocks one at a time — but a single device still has to <i>store</i> all those blocks. What if instead each device stored only one block, and the blocks <b>traveled between devices</b> exactly when needed?"
+            },
+            {
+              "type": "p",
+              "html": "<b>The setup.</b> Put $N$ devices in a ring (device 1 → 2 → ... → $N$ → back to 1). Split the input sequence into $N$ blocks; device $i$ permanently owns query block $Q_i$ and starts holding key/value block $K_i, V_i$. For its query block to attend to the <i>whole</i> sequence, device $i$ must eventually see every other device's KV block. So at each step, every device computes attention against the KV block it currently holds, then passes that KV block to the next device and receives a new one from the previous device. After $N$ steps every KV block has visited every device — a full pass around the ring — and every query block has attended to the entire sequence."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete walkthrough with 4 devices.</b> Step 1: device 3 computes $Q_3$ against $K_3, V_3$ (its own). Step 2: it has received $K_2, V_2$ and computes $Q_3$ against those. Step 3: $K_1, V_1$. Step 4: $K_4, V_4$. By step 4 device 3's running output for $Q_3$ has incorporated all four KV blocks — exactly the blockwise accumulation from the previous page, but the blocks arrived over the network instead of from local memory."
+            },
+            {
+              "type": "p",
+              "html": "<b>The key insight — overlap.</b> Computing attention for a block takes time; sending a KV block over the interconnect also takes time. Ring Attention does both <b>at the same time</b>: while device $i$ is busy with the current attention block, the next KV block is already in flight to it. If compute takes longer than the transfer, the communication is <i>entirely hidden</i> and costs nothing in wall-clock time."
+            },
+            {
+              "type": "quote",
+              "html": "By coordinating the timing of the blockwise computation and communication, the transferring of key-value blocks is overlapped with the computation of blockwise attention, leaving no extra overhead."
+            },
+            {
+              "type": "p",
+              "html": "<b>The condition for free communication.</b> The paper derives exactly how big each block must be so the inner-loop attention compute lasts at least as long as one KV-block transfer. Letting $d$ be the hidden size, $F$ the FLOPs the device can do per second, and $B$ the interconnect bandwidth in bytes per second, the required block size $c$ satisfies:"
+            },
+            {
+              "type": "math",
+              "tex": "c \\;\\geq\\; \\frac{F}{B} \\cdot d"
+            },
+            {
+              "type": "p",
+              "html": "$c$ is the block size (tokens per block); $d$ is the model's hidden dimension; $F$ is the device's arithmetic throughput (FLOP/s); $B$ is the bandwidth between neighboring devices (bytes/s). The ratio $F/B$ is how compute-rich versus bandwidth-poor your hardware is — a higher ratio (fast chips, slow links) demands bigger blocks to keep compute busy long enough to hide the transfer. As long as $c$ meets this bound, <b>communication is fully overlapped and the ring adds zero time overhead.</b>"
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a ring and not all-to-all?</b> A ring sends each block to exactly one neighbor per step — nearest-neighbor traffic that maps cleanly onto torus/mesh interconnects (TPU pods, NVLink topologies). Broadcasting every block to every device would multiply traffic and is far harder to overlap. The ring is the minimal communication pattern that still lets every query meet every key."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Memory Scaling",
+      "pages": [
+        {
+          "title": "Why context now grows linearly with device count",
+          "subtitle": "The per-host memory requirement",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> we claimed context scales with the number of devices. What exactly does each device have to store, and why does adding devices buy you a proportionally longer sequence?"
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition.</b> Each device permanently holds one query block plus, at any moment, one KV block (the one currently passing through) plus a little scratch for the running attention output. None of that depends on the <i>total</i> sequence length — it depends only on the <b>block size</b>. So if you want a sequence twice as long, you do not need a bigger device; you add more devices, give each one a block, and the per-device memory stays flat."
+            },
+            {
+              "type": "p",
+              "html": "The paper expresses the per-device memory requirement in terms of the block size, not the full sequence:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Memory per device} \\;\\propto\\; \\max\\!\\big(c^2,\\; 2 c h\\big)"
+            },
+            {
+              "type": "p",
+              "html": "$c$ is the block size of tokens assigned to one device; $h$ is the model's hidden dimension; $c^2$ is the local attention working set (one query block against one key block); $2ch$ is the activation storage for that block's input and output. Compare this to the vanilla cost $\\max(c^2, 2bsh)$ from the Memory Wall page: the unbounded sequence term $s$ has been <b>replaced by the bounded block term $c$</b>. The full sequence length has vanished from the per-device requirement."
+            },
+            {
+              "type": "p",
+              "html": "<b>The scaling law that follows.</b> If each device handles a block of size $c$ and you have $N$ devices, the total context the cluster supports is:"
+            },
+            {
+              "type": "math",
+              "tex": "n_{\\max} \\;=\\; N \\cdot c"
+            },
+            {
+              "type": "p",
+              "html": "$n_{\\max}$ is the maximum sequence length the whole system can train on; $N$ is the number of devices in the ring; $c$ is the per-device block size (fixed by one device's memory). The maximum context is <b>linear in $N$</b>: double the devices, double the context, with no change to what any single device stores. This is the central promise of the title's phrase 'near-infinite context' — the ceiling is set by how many devices you can ring together, not by any one of them."
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks without the overlap.</b> The memory math alone is not enough — sharding a sequence across devices is an old idea (sequence parallelism). What made prior attempts slow is communication overhead that grew with sequence length. Ring Attention's contribution is that the per-device memory is flat <i>and</i> the communication to support it is hidden behind compute, so you get the linear-context scaling without paying for it in speed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Millions of tokens and linear scaling on real hardware",
+          "subtitle": "Headline numbers",
+          "pdfPages": [5, 6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> does the theory hold on actual TPU and GPU clusters — does context really scale with device count, and how much longer is it than what prior methods reach on the same chips?"
+            },
+            {
+              "type": "p",
+              "html": "<b>Headline result.</b> Ring Attention trains sequences of <b>over 100 million tokens</b>, and supports context windows <b>more than 512x longer</b> than a vanilla memory-efficient Transformer baseline on the same hardware. Maximum context grows linearly as devices are added — the curves in the paper are straight lines in the device count, exactly as the $n_{\\max} = N \\cdot c$ scaling predicts."
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "Max context (relative)", "Communication overhead"],
+              "rows": [
+                ["Vanilla Transformer", "1x (capped by O(n^2))", "n/a"],
+                ["Memory-efficient (FlashAttention-style)", "baseline 1x", "none, but single-device capped"],
+                ["Ring Attention", "up to 512x longer", "fully overlapped (zero net cost)"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Against prior memory-efficient and parallel methods.</b> The paper compares Ring Attention to memory-efficient attention/feedforward baselines and sequence-parallel approaches across model sizes (it studies 7B, 13B, 30B-scale configurations). The maximum supported sequence length improves by <b>up to 512x over vanilla</b> and by large multiples (reported up to several-fold and beyond) over the strongest prior memory-efficient baseline, because those baselines still keep the whole sequence on one device while Ring Attention spreads it across the ring."
+            },
+            {
+              "type": "p",
+              "html": "<b>Throughput is preserved.</b> The crucial claim is not just bigger context but bigger context <i>for free</i>. Because KV communication is hidden behind blockwise attention compute, Ring Attention matches the model-FLOPs-utilization (MFU) of the memory-efficient baseline — it does not trade speed for length. The longer context comes from the distributed memory, not from slowing the model down."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Context length scales linearly with the number of devices, confirming n_max = N x c.",
+                "Sequences exceeding 100 million tokens were trained, far past any single-device limit.",
+                ">512x longer context than a vanilla Transformer on identical hardware.",
+                "Compute throughput (MFU) is preserved because communication is overlapped, not added on top."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Caveat the paper is honest about.</b> The free-communication guarantee holds only when the block size meets the $c \\geq (F/B)\\, d$ bound. On hardware with very fast compute and slow interconnect (high $F/B$), you need larger blocks — and eventually a single device's memory caps the block size, which in turn caps how much of the transfer can be hidden. The method scales beautifully on well-connected clusters (TPU pods, NVLink/InfiniBand)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What near-infinite context unlocked",
+          "subtitle": "Impact and legacy",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Why this paper mattered.</b> Ring Attention reframed the long-context problem. Before it, 'how long a context can I use?' was a question about a single chip's RAM. After it, the answer became 'as long as I have devices to ring together.' That turned context length from a fixed hardware property into a <b>scalable cluster property</b> — the same conceptual move that data parallelism made for batch size and model parallelism made for parameter count."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it enabled downstream.</b> Whole-book reasoning, repository-scale code understanding, long video and audio, and multi-document retrieval-free reasoning all became tractable. The technique fed directly into the million-token context windows that appeared in frontier models shortly after — Ring Attention (and its 'blockwise + ring' lineage) is one of the core systems ideas behind production long-context LLMs."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in the family tree.</b> Online softmax (the numerically-stable streaming softmax) → FlashAttention (Dao et al., 2022, removes the $O(n^2)$ memory) → Blockwise Parallel Transformer (Liu &amp; Abbeel, 2023, fuses blockwise attention and feedforward) → <b>Ring Attention</b> (this paper, distributes those blocks across a ring with overlapped communication). Each step kept the <i>exact same attention output</i> while shrinking the memory footprint or spreading it wider."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Context length becomes a function of device count, not single-device memory.",
+                "Communication is provably free when block size meets c >= (F/B) d.",
+                "Exact attention — no approximation, no quality loss versus standard attention.",
+                "Composable with data/tensor/pipeline parallelism, so it slots into existing large-scale training stacks."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Trade-offs to remember.</b> Ring Attention does not reduce total FLOPs — attention is still $O(n^2)$ in compute, it just distributes the memory. For extremely long sequences the compute cost is real even if it fits. It also assumes a well-connected ring; on poorly-connected hardware the overlap guarantee weakens. Within those bounds, though, it is the cleanest known way to make context length a knob you turn by adding machines."
+            },
+            {
+              "type": "quote",
+              "html": "Our approach allows the context length to scale linearly with the number of devices while maintaining performance, without making approximations to attention and without incurring additional communication or computation overheads."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

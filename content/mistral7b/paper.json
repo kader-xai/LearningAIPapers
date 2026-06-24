@@ -1,0 +1,330 @@
+{
+  "title": "Mistral 7B",
+  "authors": "Jiang, Sablayrolles, et al. (Mistral AI)",
+  "year": "2023",
+  "venue": "arXiv:2310.06825",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A 7B model that punches above its weight",
+          "subtitle": "Same parameter budget, far more capability",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2023, the open-source recipe for a better language model was depressingly simple: <b>make it bigger</b>. Want more capability? Add parameters. But parameters are expensive twice over — they cost more GPU memory to hold, and more compute on every single token you generate. A 13-billion-parameter model is roughly twice as slow and twice as memory-hungry to run as a 7B one. Mistral 7B asks a sharper question: <i>can a 7B model match or beat a 13B model by being smarter about its architecture, not larger?</i>"
+            },
+            {
+              "type": "p",
+              "html": "The answer is yes. The headline claim is blunt: Mistral 7B <b>outperforms Llama 2 13B across all evaluated benchmarks</b>, and beats the much larger <b>Llama 1 34B</b> on reasoning, mathematics, and code generation. On code it approaches the performance of CodeLlama 7B (a model specialized for code) <i>without sacrificing</i> general English-language ability."
+            },
+            {
+              "type": "quote",
+              "html": "Mistral 7B outperforms Llama 2 13B across all evaluated benchmarks, and Llama 1 34B in reasoning, mathematics, and code generation. Our model leverages grouped-query attention (GQA) for faster inference, coupled with sliding window attention (SWA) to effectively handle sequences of arbitrary length with a reduced inference cost."
+            },
+            {
+              "type": "p",
+              "html": "Two architectural levers do the heavy lifting, and the rest of this lesson is mostly about them: <b>Grouped-Query Attention (GQA)</b> makes generation faster and shrinks the memory needed to remember past tokens, and <b>Sliding-Window Attention (SWA)</b> lets the model handle long sequences cheaply by having each layer look only at a fixed-size window of recent tokens."
+            },
+            {
+              "type": "p",
+              "html": "The model was released under the <b>Apache 2.0 license</b> — fully permissive, usable in any product without restriction — alongside a fine-tuned <code>Mistral 7B – Instruct</code> variant that surpasses Llama 2 13B – Chat on both human and automated benchmarks. This combination of strong results and a genuinely open license is a large part of why Mistral 7B became one of the most-downloaded and most-built-upon open models of its era."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context & trivia.</b> This was Mistral AI's debut model, from a company founded only months earlier by alumni of Meta's LLaMA team and Google DeepMind. The paper is short and almost defiantly practical — no scaling-law philosophy, just an architecture and the numbers to prove it works. It crystallized a thesis the field would chase for years: at a fixed quality target, <i>architecture and data efficiency can beat raw scale</i>."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Sliding-Window Attention",
+      "pages": [
+        {
+          "title": "Why long context is expensive",
+          "subtitle": "The quadratic wall of vanilla attention",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A Transformer's core operation is <b>attention</b>: to compute the representation of a token, the model lets it “look at” other tokens and blend in their information. In <b>vanilla (full) attention</b>, every token looks at every token that came before it. That is the source of the Transformer's power — and the source of its biggest cost."
+            },
+            {
+              "type": "p",
+              "html": "Here is the problem in one sentence: if your sequence has $n$ tokens, full attention does work proportional to $n^2$. Double the context and you quadruple the cost."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example.</b> Suppose you feed in a 16,000-token document. With full attention, token number 16,000 must compute an attention score against all 16,000 prior tokens. Across the whole sequence that is roughly $16{,}000^2 = 256$ million pairwise interactions <i>per layer</i>. Stack 32 layers and the memory and compute become the binding constraint long before the model's quality does. This $O(n^2)$ scaling is the wall that has limited Transformer context length since the original 2017 paper."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{cost}_{\\text{full attention}} \\;\\propto\\; n^2 \\cdot d"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: $n$ is the number of tokens in the sequence (the context length); $d$ is the model's hidden dimension, the size of each token's vector (for Mistral 7B, $d = 4096$). The $n^2$ factor is the killer — it counts every token-pair, and it grows quadratically. SWA's entire goal is to replace that $n^2$ with something linear in $n$."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition for the fix.</b> Do you really need token 16,000 to attend <i>directly</i> to token 1? In most text, the words that matter most for predicting the next token are the recent ones. So what if each token could only look at a fixed-size window of, say, the last 4,096 tokens — not the entire history? Cost would scale with $n \\times W$ (linear in $n$) instead of $n^2$. The worry, of course, is that you'd lose the ability to use information from far away. The next page shows why, surprisingly, you don't."
+            }
+          ]
+        },
+        {
+          "title": "Sliding windows that see further than they look",
+          "subtitle": "How stacked layers extend the effective receptive field",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Sliding-Window Attention (SWA)</b> imposes one rule: at each layer, a token can attend only to the $W$ tokens immediately before it (plus itself). In Mistral 7B, the window size is $W = 4096$. Naively this sounds like the model simply <i>forgets</i> anything older than 4,096 tokens. The beautiful trick is that stacking layers quietly extends the reach far beyond a single window."
+            },
+            {
+              "type": "p",
+              "html": "<b>The analogy.</b> Think of a chain of gossips, each of whom only talks to the four people standing nearest them. Round one (layer one): person 10 hears from persons 6–9. Round two (layer two): person 10 hears from person 6 — who, last round, already heard from person 2. So after two rounds, information from person 2 has reached person 10, even though no one ever spoke to someone more than four seats away. Each layer of attention is one round of gossip, and the reachable distance grows with every layer."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{effective receptive field} \\;\\approx\\; k \\times W"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $k$ is the number of stacked attention layers, $W$ is the per-layer window size (4096), and the product is how many tokens back the top layer can <i>indirectly</i> reach. With Mistral 7B's $k = 32$ layers and $W = 4096$, the theoretical attention span is about $32 \\times 4096 \\approx 131{,}000$ tokens — even though every individual layer only ever looks at 4,096."
+            },
+            {
+              "type": "quote",
+              "html": "At the last layer, using a window size of W = 4096, we have a theoretical attention span of approximately 131K tokens."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works.</b> SWA buys you the best of both worlds: each layer is cheap (cost linear in $n$, not quadratic), yet information can still propagate across the whole document through the layer stack — just hop by hop instead of in one jump. It also fixes attention costs to a constant per token regardless of how long the sequence is. In practice the authors report concrete speedups: using FlashAttention and xFormers tuned for the sliding-window pattern gives roughly a <b>2× speedup</b> over a vanilla attention baseline at a sequence length of 16k."
+            },
+            {
+              "type": "p",
+              "html": "<b>Lineage.</b> SWA is not invented here — windowed/local attention traces back to <i>Sparse Transformers</i> (Child et al., 2019) and <i>Longformer</i> (Beltagy et al., 2020). Mistral's contribution is showing that a clean, fixed window plus a deep stack is enough to make a frontier-quality 7B model handle long context cheaply, with no exotic global-attention tokens bolted on."
+            }
+          ]
+        },
+        {
+          "title": "The rolling buffer KV cache",
+          "subtitle": "Fixed memory no matter how long the text gets",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "SWA limits what each layer <i>looks at</i>. The <b>rolling buffer cache</b> limits what the model has to <i>store</i> — and it is the piece that makes long context practical in memory, not just in FLOPs."
+            },
+            {
+              "type": "p",
+              "html": "<b>Background: the KV cache.</b> When a Transformer generates text one token at a time, it would be wasteful to recompute the keys and values for all previous tokens at every step. So it caches them — the <b>KV cache</b>. The catch: in normal attention that cache grows with every token generated. Generate 30,000 tokens and you store 30,000 entries per layer. For long sequences the KV cache, not the weights, becomes the dominant memory cost."
+            },
+            {
+              "type": "p",
+              "html": "<b>The insight.</b> Under SWA, a token will <i>never</i> be attended to once it falls more than $W$ positions in the past. So why keep it? The rolling buffer cache is a fixed-size array of length $W$ that overwrites its oldest entry each step — a ring buffer. Memory stops growing the moment you've seen $W$ tokens."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{cache slot for token } i \\;=\\; i \\bmod W"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $i$ is the absolute position of the token in the sequence; $W$ is the window/buffer size (4096); $\\bmod$ is the modulo (remainder) operation, so position $i$ is physically stored at slot $i \\bmod W$. Token 4097 lands in slot 1, overwriting token 1 — which is fine, because token 1 is now outside every layer's window and can never be attended to again."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete numbers.</b> The paper reports that on a 32k-token sequence, the rolling buffer cuts cache memory by roughly <b>8×</b> compared to storing the full history, <i>with no quality loss</i> — because the discarded entries were unreachable anyway. The memory budget for the KV cache becomes a constant ($W$ entries), decoupled entirely from how long the prompt or generation is."
+            },
+            {
+              "type": "p",
+              "html": "<b>Pre-fill and chunking.</b> One more efficiency: when you already know the whole prompt up front, you don't generate it token-by-token — you <b>pre-fill</b> the cache with it in one pass. For very long prompts the authors split this into <b>chunks</b> the size of the window, processing one chunk at a time so the working attention matrix never exceeds $W \\times W$. Each chunk attends to the cache (recent past) plus itself, keeping peak memory bounded even during prompt ingestion."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Grouped-Query Attention",
+      "pages": [
+        {
+          "title": "Sharing keys and values to speed up generation",
+          "subtitle": "The other lever: GQA",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "SWA attacks the cost of <i>long</i> sequences. <b>Grouped-Query Attention (GQA)</b> attacks a different bottleneck: the cost of <i>generating each token</i>, dominated by how much memory bandwidth the KV cache eats during decoding. The two levers are independent and stack together."
+            },
+            {
+              "type": "p",
+              "html": "<b>The setup.</b> Standard <b>Multi-Head Attention (MHA)</b> gives every attention head its own separate set of queries, keys, and values. With 32 heads, that's 32 independent key sets and 32 independent value sets to store and stream from memory on every generation step. The opposite extreme, <b>Multi-Query Attention (MQA)</b>, forces all 32 heads to share a single key set and value set — fast and tiny, but it noticeably hurts quality. GQA is the deliberate middle ground."
+            },
+            {
+              "type": "p",
+              "html": "<b>The analogy.</b> Picture 32 analysts (the query heads) each needing to consult reference books (keys and values). MHA gives each analyst a private library — thorough but you must print 32 copies. MQA makes all 32 share one library — cheap but everyone queues at the same shelf and nuance is lost. GQA splits the analysts into a few <i>groups</i> and gives each group its own library: in Mistral 7B, 32 query heads are organized into <b>8 key/value groups</b>, so 4 query heads share each KV set."
+            },
+            {
+              "type": "table",
+              "headers": ["Scheme", "Query heads", "KV heads", "Trade-off"],
+              "rows": [
+                ["MHA", "32", "32", "Best quality, biggest cache"],
+                ["GQA (Mistral)", "32", "8", "Near-MHA quality, 4× smaller KV"],
+                ["MQA", "32", "1", "Smallest cache, quality drops"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why 8 and not 1.</b> Going from 32 KV heads to 8 shrinks the KV cache (and the memory traffic that bottlenecks decoding) by 4×, while keeping enough distinct key/value subspaces that quality is essentially indistinguishable from full MHA. Pushing all the way to MQA (1 KV head) would shrink it further but measurably degrade the model — the paper deliberately stops at the sweet spot. The net effect: <b>significantly faster inference</b> and a smaller memory footprint, which is exactly what you want when serving a model at scale."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> GQA was introduced by Ainslie et al. (2023) at Google and adopted almost immediately by the open-source community. Mistral 7B was among the first widely-used 7B models to ship it as a default, and the combination of GQA + SWA became a template later echoed in many efficient open models."
+            }
+          ]
+        },
+        {
+          "title": "The full architecture, by the numbers",
+          "subtitle": "Putting every hyperparameter in one place",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Mistral 7B is, at its skeleton, a standard decoder-only Transformer in the LLaMA family — RMSNorm, rotary position embeddings, SwiGLU feed-forward blocks. What makes it Mistral is the specific dimensions and the two efficiency levers (GQA, SWA) wired in. Here is the complete configuration the paper lists."
+            },
+            {
+              "type": "table",
+              "headers": ["Parameter", "Value"],
+              "rows": [
+                ["dim (model hidden size)", "4096"],
+                ["n_layers", "32"],
+                ["head_dim", "128"],
+                ["hidden_dim (FFN)", "14336"],
+                ["n_heads (query heads)", "32"],
+                ["n_kv_heads (GQA groups)", "8"],
+                ["window_size (SWA)", "4096"],
+                ["context_len", "8192"],
+                ["vocab_size", "32000"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading the key entries: <code>dim = 4096</code> is the width of every token vector; <code>n_layers = 32</code> is the depth of the stack (and the $k$ that multiplies the SWA window to ~131K span); <code>n_heads = 32</code> query heads each of <code>head_dim = 128</code> (note $32 \\times 128 = 4096 = $ dim); <code>n_kv_heads = 8</code> is the GQA grouping — 8 key/value heads shared across the 32 query heads, a 4-to-1 ratio. The feed-forward block expands to <code>hidden_dim = 14336</code> internally before projecting back to 4096."
+            },
+            {
+              "type": "p",
+              "html": "<b>Sanity check on the parameter count.</b> These dimensions — 32 layers of 4096-wide attention plus 14336-wide feed-forward, over a 32,000-token vocabulary — sum to roughly 7.3 billion parameters, hence “7B.” The window size of 4096 is exactly the per-layer SWA reach, and the 8 KV heads are the GQA grouping discussed on the previous page. Nothing here is exotic; the achievement is the <i>tuning</i> and <i>data</i> that make this modest configuration outperform models nearly twice its size."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters.</b> Every number here was chosen so the model fits comfortably on a single modern GPU and serves cheaply, while the GQA and SWA choices specifically target the two things that make serving expensive — per-token memory bandwidth and long-context memory growth. The model is engineered for deployment economics as much as for benchmark scores."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Beating models twice its size",
+          "subtitle": "Benchmarks against Llama 1 and Llama 2",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The architecture is only interesting if the numbers hold up. The authors evaluate Mistral 7B against the Llama family across a broad suite — commonsense reasoning, world knowledge, reading comprehension, math (GSM8K, MATH), and code (HumanEval, MBPP) — and the pattern is consistent: the 7B model matches or beats much larger ones."
+            },
+            {
+              "type": "p",
+              "html": "<b>The headline comparisons.</b> Mistral 7B outperforms <b>Llama 2 13B on every benchmark tested</b>, and outperforms <b>Llama 1 34B</b> — a model nearly five times its size — on reasoning, mathematics, and code generation. On code specifically it approaches CodeLlama 7B, a model trained largely on code, while retaining strong general-language performance that the code-specialized model lacks."
+            },
+            {
+              "type": "table",
+              "headers": ["Domain", "Notable result vs. Llama"],
+              "rows": [
+                ["All benchmarks", "Beats Llama 2 13B"],
+                ["Reasoning / Math / Code", "Beats Llama 1 34B"],
+                ["Code (HumanEval/MBPP)", "Approaches CodeLlama 7B"],
+                ["English language", "Retained (unlike code-only models)"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The most striking framing</b> — “equivalent model sizes.” The authors plot what size a Llama 2 model would have to be to match Mistral 7B's score on each benchmark family, and report that Mistral 7B is effectively equivalent to a Llama 2 model <b>more than 3× its size</b> on reasoning, and over 3× on comprehension."
+            },
+            {
+              "type": "quote",
+              "html": "Mistral 7B is equivalent to a Llama 2 that would be more than 3x its size on reasoning, comprehension, and STEM reasoning benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading that claim carefully.</b> “3× equivalent size” does not mean Mistral matched a 21B Llama (no such model exists); it means that if you extrapolate Llama 2's scaling curve, you would need roughly three times the parameters to reach Mistral 7B's accuracy. That is a direct measurement of the <i>efficiency gap</i> the architecture and training data buy you — and it is the quantitative core of the paper's thesis that you can substitute cleverness for scale."
+            }
+          ]
+        },
+        {
+          "title": "Mistral 7B – Instruct and safety",
+          "subtitle": "Fine-tuning, chat performance, and guardrails",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A strong base model is only half of a useful product — most people interact with a <i>chat</i> model that follows instructions. To show the base model fine-tunes well, the authors release <code>Mistral 7B – Instruct</code>, trained only on publicly available instruction datasets, with no proprietary data and no special tricks."
+            },
+            {
+              "type": "p",
+              "html": "<b>The result.</b> Despite this minimal recipe, Mistral 7B – Instruct <b>outperforms Llama 2 13B – Chat</b> on both human evaluation and the MT-Bench automated benchmark. On the crowd-sourced <b>Chatbot Arena</b> leaderboard, it ranked as the best 7B model and competitive with far larger 13B chat models — confirming that the base model's efficiency advantage carries through fine-tuning, it isn't an artifact of the pre-training benchmarks alone."
+            },
+            {
+              "type": "quote",
+              "html": "Mistral 7B – Instruct exhibits superior performance compared to Llama 2 13B – Chat model both on human and automated benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "<b>Guardrails for deployment.</b> The paper devotes a section to safe deployment. Using a <b>system prompt</b> that instructs the model to refuse harmful requests, Mistral 7B – Instruct can be made to decline unsafe queries while staying helpful on legitimate ones. They also demonstrate <b>self-reflection</b>: the model can act as its own content-moderation classifier, judging whether a piece of text is safe — a cheap built-in alternative to a separate moderation model."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveat.</b> The authors are explicit that adding a safety system prompt is a trade-off: it shifts the balance toward caution and can make the model refuse more, including some benign requests. They present guardrails as a tunable knob for the deployer, not a solved problem — a notably candid framing for a model-release paper."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this section matters.</b> By shipping a permissively-licensed (Apache 2.0) base model, an instruct variant, and a concrete safety recipe together, Mistral made the model immediately <i>usable</i> rather than merely benchmarkable — a big reason it became a default starting point for downstream fine-tunes across the open-source ecosystem."
+            }
+          ]
+        },
+        {
+          "title": "Why Mistral 7B mattered",
+          "subtitle": "Impact and significance",
+          "pdfPages": [1, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the equations and the lesson of Mistral 7B is strategic: <b>at a fixed quality bar, architecture and data efficiency can substitute for raw parameter count.</b> A 7B model that beats a 13B and rivals a 34B is not a curiosity — it changes the economics of who can run a capable model and where."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>GQA + SWA as a template.</b> The pairing — grouped-query attention for cheap decoding, sliding-window attention plus a rolling cache for cheap long context — became a standard recipe echoed in many efficient open models that followed.",
+                "<b>The 7B sweet spot.</b> Mistral 7B helped establish ~7B as the size where 'runs on one consumer-ish GPU' meets 'genuinely useful,' making it the default base for countless community fine-tunes.",
+                "<b>Apache 2.0, no strings.</b> A fully permissive license (unlike Llama 2's custom community license) let companies build commercial products on it freely, accelerating adoption.",
+                "<b>Efficiency over scale, proven.</b> The '3× equivalent size' result gave concrete ammunition to the argument that smarter models beat merely bigger ones — a thesis that shaped the small-but-strong model race that followed."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in history.</b> Mistral 7B arrived in late 2023, after Llama 2 had set the open-weights bar and before the wave of small, efficient models it helped inspire (Mixtral's sparse mixture-of-experts, Phi, Gemma, and others). It built directly on LLaMA's architecture, borrowed GQA from Google's 2023 work, and revived windowed attention from Sparse Transformers and Longformer — a synthesis of existing ideas executed cleanly enough to set a new efficiency frontier."
+            },
+            {
+              "type": "p",
+              "html": "<b>The takeaway to carry forward.</b> When you next see a model that is smaller yet stronger than its predecessors, the Mistral 7B playbook is usually somewhere underneath: target the real serving bottlenecks (memory bandwidth during decoding, KV-cache growth for long context), pick architectural levers that attack them directly (GQA, SWA, rolling cache), and let efficiency — not size — do the work."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,337 @@
+{
+  "title": "The Llama 3 Herd of Models",
+  "authors": "Dubey, Jauhri, et al. (Meta AI)",
+  "year": "2024",
+  "venue": "arXiv:2407.21783",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A herd, not a single model",
+          "subtitle": "What Llama 3 is and why the paper exists",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question this page answers:</b> by mid-2024 the best language models in the world were closed (GPT-4, Claude, Gemini). You could call their APIs but you could not see how they were built, study their weights, or run them privately. Meta's bet with Llama 3 was that an <b>openly released</b> family of models could close that gap, and that the recipe to build them was simple enough to write down honestly. This paper is that write-up: a 90-page engineering log of exactly what data, compute, and design choices produced a frontier model."
+            },
+            {
+              "type": "p",
+              "html": "The word <b>herd</b> is literal. Llama 3 is not one model but a family at three sizes, <b>8B</b>, <b>70B</b>, and the flagship <b>405B</b> parameters, all sharing one architecture and one training recipe so that lessons transfer cleanly across scales. Every model is a plain <b>dense Transformer</b>, not a mixture-of-experts, a deliberate choice for training stability."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy:</b> think of building a frontier model as three knobs you can turn, and the budget is fixed. Knob one is <i>data</i> (how much and how clean), knob two is <i>scale</i> (how many parameters and how much compute), knob three is <i>complexity</i> (fancy architectures vs. a boring stable one). The paper's thesis is that you win by turning the first two knobs hard and deliberately <i>not</i> turning the third. Quality data plus enormous scale on a simple architecture beats clever tricks on a messy pipeline."
+            },
+            {
+              "type": "quote",
+              "html": "Llama 3 is a herd of language models that natively support multilinguality, coding, reasoning, and tool usage. Our largest model is a dense Transformer with 405B parameters and a context window of up to 128K tokens."
+            },
+            {
+              "type": "p",
+              "html": "Three headline numbers anchor the whole effort. <b>405B</b> parameters in the flagship. <b>15.6 trillion tokens</b> of pretraining data, roughly 8x more than Llama 2 saw. And a <b>128K-token</b> context window, up from 8K in Llama 2, long enough to hold a small book in working memory. The paper's claim is that on a wide range of benchmarks the 405B model is <b>competitive with GPT-4</b>, the first time an openly released model reached that tier."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it mattered:</b> Llama 3 turned 'frontier-class LLM' from a trade secret into a documented procedure. Released with open weights, it became the default base model for a huge fraction of open research and fine-tuning that followed, and the paper itself is unusually candid about failures, data filtering, and the unglamorous infrastructure work (GPU failures, network tuning) that real frontier training actually requires."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Three Levers",
+      "pages": [
+        {
+          "title": "Data, scale, and the discipline of simplicity",
+          "subtitle": "The development philosophy behind every decision",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Intuition:</b> before any equation, the authors state the worldview that drives every later choice. A high-quality foundation model is the product of exactly three levers, and the art is knowing which to pull. They name them <b>data</b>, <b>scale</b>, and <b>managing complexity</b>."
+            },
+            {
+              "type": "h2",
+              "text": "Lever 1: Data"
+            },
+            {
+              "type": "p",
+              "html": "Compared to Llama 2, the team improved both the <i>quantity</i> and the <i>quality</i> of pretraining data: more careful pre-processing and curation pipelines for the text, and far more rigorous quality-assurance filtering. The result is the jump from roughly 1.8T tokens (Llama 2) to a corpus of about <b>15T multilingual tokens</b>. The lesson the paper repeats: a model can only be as good as the tokens it is fed, so cleaning data is not a chore around the real work, it <i>is</i> the real work."
+            },
+            {
+              "type": "h2",
+              "text": "Lever 2: Scale"
+            },
+            {
+              "type": "p",
+              "html": "The flagship is trained using <b>3.8 x 10^25 FLOPs</b>, almost <b>50x</b> the compute budget of the largest Llama 2 model. Scale here means two things together, more parameters and more compute, and the paper uses scaling laws (next page) to choose the exact split. The 8B and 70B models are deliberately trained on <i>far</i> more data than is compute-optimal for their size, so that they keep improving and are excellent to deploy, while the 405B is trained near its own compute-optimal point."
+            },
+            {
+              "type": "h2",
+              "text": "Lever 3: Managing complexity"
+            },
+            {
+              "type": "p",
+              "html": "This is the lever they choose <i>not</i> to pull. Design choices are made to <b>maximize the ability to scale stably</b>, not to chase the last fraction of a benchmark point. Concretely: a standard dense Transformer instead of mixture-of-experts (which would maximize stability over peak FLOP-efficiency), and a relatively simple <b>supervised finetuning (SFT) + rejection sampling + DPO</b> post-training recipe rather than the more complex and less stable reinforcement-learning algorithms in vogue at the time."
+            },
+            {
+              "type": "quote",
+              "html": "We opt for a standard dense Transformer model architecture with minor adaptations, rather than for a mixture-of-experts model to maximize training stability."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this works:</b> at the scale of 16,000 GPUs running for months, anything that makes a training run more likely to diverge or crash is enormously expensive. A fancy architecture that wins 1% on paper but destabilizes once is a net loss. So the paper trades theoretical peak efficiency for <b>predictability</b>, the most underrated property in large-scale training. This same instinct, simplicity in service of scale, is the direct intellectual heir of the original GPT scaling-law papers and of Chinchilla."
+            }
+          ]
+        },
+        {
+          "title": "Scaling laws: deciding the recipe before you spend the money",
+          "subtitle": "How a tiny compute budget predicts a huge model's behavior",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> you have a fixed compute budget for the big run, say <b>3.8 x 10^25 FLOPs</b>. How many parameters should the model have, and on how many tokens should you train it? Guess wrong and you waste months of GPU time. You cannot just try a 405B model a few times, each attempt costs a fortune. You need to <i>predict</i> the best configuration from cheap experiments. That is what scaling laws give you."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example of the method:</b> the team trains many <i>small</i> models across a grid of compute budgets ranging from about <b>6 x 10^18</b> to <b>10^22</b> FLOPs. For each budget they find the model size that minimizes validation loss. Plotting the optimal number of training tokens against the compute budget gives a clean straight line on a log-log plot, and they extrapolate that line out to their real budget to read off the answer."
+            },
+            {
+              "type": "math",
+              "tex": "N^{*}(C) = A\\, C^{\\alpha}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $N^{*}(C)$ is the <b>compute-optimal number of training tokens</b> (a count, in the trillions) for a given compute budget. $C$ is the <b>compute budget in FLOPs</b> (a scalar). $A$ and $\\alpha$ are <b>fitted constants</b> read off the small-model experiments; the paper finds $\\alpha \\approx 0.53$ and $A \\approx 0.29$. Because $\\alpha$ is close to $0.5$, optimal tokens grow roughly as the square root of compute, the same balanced 'grow data and parameters together' message as Chinchilla."
+            },
+            {
+              "type": "p",
+              "html": "Plugging the real budget of $3.8 \\times 10^{25}$ FLOPs into this relation yields a compute-optimal model of about <b>402 billion parameters trained on roughly 16.55 trillion tokens</b>, which is why the flagship is a 405B model. The recipe is chosen <i>before</i> the expensive run, from data that cost a tiny fraction of it."
+            },
+            {
+              "type": "h2",
+              "text": "From loss to what you actually care about"
+            },
+            {
+              "type": "p",
+              "html": "A subtlety the paper handles carefully: scaling laws predict <b>next-token loss</b>, but nobody ships a model because its loss is low, they ship it because it answers benchmark questions correctly. So the team builds a <b>two-step ladder</b>. Step one: a power law relating compute to loss. Step two: a relation mapping that loss to downstream benchmark accuracy, calibrated on Llama 2 models and earlier Llama 3 checkpoints. Chaining them lets the team forecast the 405B model's accuracy on a task like ARC-Challenge directly from a compute number, and the forecasts landed close to reality."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters:</b> scaling laws turn frontier training from gambling into engineering. They are the reason the team could commit tens of millions of dollars of compute to a single configuration with confidence. The approach descends directly from Kaplan et al. (2020) and Hoffmann et al. (2022, Chinchilla); Llama 3's contribution is extending the predictive chain all the way to <i>downstream task accuracy</i>, not just loss."
+            }
+          ]
+        },
+        {
+          "title": "Architecture and the long-context window",
+          "subtitle": "Boring on purpose, with two changes that earn their keep",
+          "pdfPages": [3, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Intuition:</b> if simplicity is the religion, the architecture should look almost identical to Llama 2. It does. Llama 3 is a standard decoder-only dense Transformer. But two changes are worth understanding because they directly enable the headline capabilities, big vocabulary and grouped-query attention, plus a careful long-context training schedule."
+            },
+            {
+              "type": "h2",
+              "text": "Grouped-query attention (GQA)"
+            },
+            {
+              "type": "p",
+              "html": "In standard multi-head attention every query head has its own key and value vectors. At inference you must cache all those keys and values (the KV cache); for long sequences this cache dominates memory. <b>GQA</b> lets several query heads <i>share</i> one set of key/value heads, shrinking the cache. Llama 3 uses <b>8 key/value heads</b>. The effect: long-context inference that would otherwise be memory-bound becomes practical."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{Attention}(Q, K, V) = \\text{softmax}\\!\\left(\\frac{Q K^{\\top}}{\\sqrt{d_k}}\\right) V"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $Q$ is the matrix of <b>query</b> vectors (shape $n \\times d_k$ for $n$ tokens), $K$ and $V$ are the <b>key</b> and <b>value</b> matrices. Under GQA, $K$ and $V$ are produced by only 8 heads and <i>broadcast</i> across the larger group of $Q$ heads, so they are physically smaller. $d_k$ is the per-head dimension, and dividing by $\\sqrt{d_k}$ keeps the dot products from growing with dimension so the softmax stays in a sensible range. The softmax turns scores into attention weights that mix the value vectors $V$."
+            },
+            {
+              "type": "h2",
+              "text": "A bigger vocabulary"
+            },
+            {
+              "type": "p",
+              "html": "Llama 3 uses a tokenizer with a <b>128K-token vocabulary</b> (up from 32K in Llama 2). More tokens means each token carries more meaning, so a sentence becomes fewer tokens, which improves compression of text and is especially valuable for multilingual and code data where Llama 2's smaller vocabulary was wasteful. Fewer tokens per document also means the same context window holds more actual content."
+            },
+            {
+              "type": "h2",
+              "text": "Growing the context to 128K in stages"
+            },
+            {
+              "type": "p",
+              "html": "The model is <b>not</b> pretrained at 128K from the start, that would be ruinously expensive because attention cost grows with sequence length. Instead the team pretrains at a shorter length and then increases the supported context <b>in six stages</b>, from 8K up to the final 128K, only advancing a stage once the model both recovers its short-context quality and solves long-context retrieval ('needle-in-a-haystack') tasks. This staged schedule is the cheap, stable way to earn a long memory."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this design:</b> none of these are flashy research novelties, and that is the point. GQA and the long-context schedule are well-understood techniques that make the model <i>deployable</i> at long context without destabilizing training. The complexity budget is spent on data and scale, not architecture."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Building It For Real",
+      "pages": [
+        {
+          "title": "16,000 GPUs and the unglamorous engineering",
+          "subtitle": "Why infrastructure is a first-class part of the science",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem nobody puts on a slide:</b> training a 405B model on 15T tokens is not a math problem, it is a distributed-systems problem at the edge of what hardware can do. The flagship is trained on up to <b>16,000 NVIDIA H100 GPUs</b>. The paper devotes real space to the plumbing because, at this scale, the plumbing is where runs live or die."
+            },
+            {
+              "type": "h2",
+              "text": "4D parallelism"
+            },
+            {
+              "type": "p",
+              "html": "A 405B model does not fit on one GPU, not even close. The team combines <b>four</b> kinds of parallelism at once: <b>tensor</b> parallelism (split each weight matrix across GPUs), <b>pipeline</b> parallelism (put different layers on different GPUs), <b>context</b> parallelism (split a long sequence across GPUs, essential for 128K context), and <b>data</b> parallelism (replicate the model and split the batch). Stacking all four is what lets a model far larger than any single device's memory train at all."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete picture:</b> imagine the model as a giant assembly line. Pipeline parallelism gives each GPU a few stations (layers); tensor parallelism has several workers share the heavy lifting <i>within</i> a station; context parallelism splits an extra-long product (a 128K sequence) across workers; and data parallelism runs many copies of the whole line in parallel on different inputs. Coordinating these without idle GPUs is the core systems challenge."
+            },
+            {
+              "type": "h2",
+              "text": "Reliability at scale"
+            },
+            {
+              "type": "p",
+              "html": "With tens of thousands of GPUs running for months, hardware failures are not rare events, they are the steady state. The paper is candid that <b>over 400 interruptions</b> occurred during a 54-day pretraining snapshot, the large majority from hardware faults (GPU failures, network issues). Engineering for fast checkpointing and automatic recovery so a single failed GPU does not waste hours of a 16,000-GPU run is therefore a central, not peripheral, concern."
+            },
+            {
+              "type": "quote",
+              "html": "We develop training infrastructure... and make several optimizations to improve the efficiency and reliability of the training process."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why include all this:</b> earlier model papers often hid the operational reality behind clean loss curves. Llama 3's transparency about GPU failures, network tuning, and storage is part of its scientific contribution, it tells the rest of the field what frontier training <i>actually</i> costs in engineering effort, not just FLOPs. The lesson: at frontier scale, systems work and modeling work are inseparable."
+            }
+          ]
+        },
+        {
+          "title": "Post-training: turning a predictor into an assistant",
+          "subtitle": "The deliberately simple alignment recipe",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> a freshly pretrained model is a brilliant autocomplete engine, it predicts plausible next tokens, but it does not reliably <i>follow instructions</i>, refuse harmful requests, or use tools. Post-training is the stage that converts the raw predictor into a helpful, safe chat assistant. True to the complexity philosophy, Llama 3 uses about the simplest recipe that works."
+            },
+            {
+              "type": "h2",
+              "text": "The three-step loop"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Supervised finetuning (SFT): train on curated prompt-and-ideal-response pairs so the model learns the format and behavior of a helpful assistant.",
+                "Rejection sampling: for a prompt, sample many candidate answers from the current model, keep the best ones (judged by a reward model and filters), and feed those back as new high-quality SFT data.",
+                "Direct Preference Optimization (DPO): given pairs of a preferred and a rejected answer, nudge the model toward the preferred one directly, without training a separate reward model or running a full reinforcement-learning loop."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why DPO over RLHF/PPO:</b> the dominant alignment method at the time was reinforcement learning from human feedback with PPO, which is powerful but notoriously fiddly and unstable to tune. <b>DPO</b> reaches similar quality by optimizing a simple classification-style objective on preference pairs, so it is far more stable. This is the same trade as the architecture choice, give up a little theoretical peak for a lot of predictability. The loop (sample, filter, prefer) is run over multiple rounds, each round's improved model generating better data for the next."
+            },
+            {
+              "type": "h2",
+              "text": "Multilingual, coding, reasoning, and tools"
+            },
+            {
+              "type": "p",
+              "html": "The same post-training machinery is where Llama 3 acquires its headline <i>capabilities</i>. Specialized data mixes and expert pipelines teach it to code, to reason step by step, to operate in many languages, and to <b>use tools</b> (for example calling a search engine, a Python interpreter, or other functions). These are not separate models bolted on, they are behaviors instilled into the single dense base model through targeted finetuning data."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> the simplicity of this recipe was itself an argument. By showing that SFT + rejection sampling + DPO, with great data, reaches GPT-4-class alignment, Llama 3 made the case that you do not need exotic RL machinery to align a frontier model, you need clean preference data and a stable, repeatable loop."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & Impact",
+      "pages": [
+        {
+          "title": "How good is it, in real numbers",
+          "subtitle": "Benchmarks where the herd lands",
+          "pdfPages": [3, 1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The claim to verify:</b> is an openly released model really competitive with the closed frontier? The paper evaluates all three sizes against the strongest available models on standard benchmarks, and the answer is broadly yes, with the 405B model trading blows with GPT-4, GPT-4o, and Claude 3.5 Sonnet."
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark (what it tests)", "Llama 3 405B"],
+              "rows": [
+                ["MMLU (broad knowledge, 5-shot)", "~87.3"],
+                ["MMLU-Pro (harder knowledge)", "~73.3"],
+                ["HumanEval (Python coding)", "~89.0"],
+                ["GSM8K (grade-school math)", "~96.8"],
+                ["MATH (competition math)", "~73.8"],
+                ["ARC-Challenge (reasoning)", "~96.9"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "These are accuracy percentages from the paper's evaluation tables; treat them as the reported ballpark for the instruction-tuned flagship. The pattern that matters: scores in the high 80s and 90s on knowledge, coding, and math are exactly the territory previously occupied only by the best closed models. The 405B is the first openly released model to sit there convincingly."
+            },
+            {
+              "type": "p",
+              "html": "<b>The smaller models are arguably the bigger story.</b> Because the 8B and 70B were trained on <i>far</i> more data than compute-optimal, they punch well above their size and became default workhorses for fine-tuning and on-device-ish deployment. The 70B is competitive with much larger contemporaries; the 8B beats prior models in its class by a wide margin. Pulling the 'scale of data' lever hard on small models is what made them so useful."
+            },
+            {
+              "type": "quote",
+              "html": "Our experiments suggest that our flagship model performs on par with leading language models such as GPT-4 across a variety of tasks, and is close to matching the state of the art."
+            },
+            {
+              "type": "p",
+              "html": "<b>Honest framing:</b> the paper does not claim to be best at everything. It claims <i>competitiveness</i> with the frontier across a broad spread of tasks while being open. Given that closed labs spent comparable resources, matching them with a documented, reproducible recipe is the real result."
+            }
+          ]
+        },
+        {
+          "title": "Why Llama 3 mattered",
+          "subtitle": "Open weights, an honest recipe, and what it set in motion",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The lasting contribution</b> is not a single trick, it is a complete, openly published proof that frontier-class models come from a small number of well-understood levers pulled hard: clean data at trillions of tokens, scale guided by scaling laws, and a stubborn refusal to add complexity that does not buy stability. No secret ingredient, just disciplined execution."
+            },
+            {
+              "type": "p",
+              "html": "<b>Open weights changed the ecosystem.</b> By releasing the 8B, 70B, and 405B models for the community to download, run privately, study, and fine-tune, Meta made a GPT-4-class base model a public good. A large share of the open-source LLM work that followed, domain finetunes, distillations, research probes, was built directly on Llama 3, much as the broader field had earlier been built on BERT and GPT-2."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Scaling laws extended all the way to predicting downstream task accuracy, not just loss, so the expensive run could be designed up front.",
+                "A demonstration that a simple SFT + rejection-sampling + DPO recipe reaches frontier-level alignment, denting the assumption that complex RLHF was required.",
+                "Unusual transparency about the operational reality of 16K-GPU training, including 400-plus interruptions, making frontier training legible to outsiders.",
+                "Native multilinguality, coding, reasoning, and tool use folded into one dense base model rather than a patchwork of specialized systems."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Connections to the lineage:</b> Llama 3 sits squarely in the line from Kaplan et al.'s scaling laws and the Chinchilla compute-optimal result, inheriting their 'grow data and parameters together' lesson. Its dense-over-MoE and DPO-over-PPO choices are deliberate counterpoints to the era's flashier directions. And its open release continued the tradition, from word2vec to BERT to GPT-2, of a single accessible artifact reshaping what the whole research community could build."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one sentence to remember:</b> Llama 3 showed that frontier AI is an <i>engineering discipline</i>, data, scale, and restraint, not a bag of secrets, and then handed the community the weights to prove it."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

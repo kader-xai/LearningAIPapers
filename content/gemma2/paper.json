@@ -1,0 +1,243 @@
+{
+  "title": "Gemma 2: Improving Open Language Models at a Practical Size",
+  "authors": "Gemma Team, Google DeepMind",
+  "year": "2024",
+  "venue": "arXiv:2408.00118",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Small models, taught by big ones",
+          "subtitle": "What Gemma 2 is and the one idea that powers it",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question this page answers:</b> the open-model world had a problem of shape. The strongest open models were either tiny (cheap to run, but weak) or enormous (strong, but you needed a cluster to serve them). What was missing was a model at a <i>practical size</i>, something you can run on a single GPU or a laptop, that still punches far above its weight. Gemma 2 is Google DeepMind's answer: a family at <b>2.6B</b>, <b>9B</b>, and <b>27B</b> parameters built specifically to be the best models you can actually deploy."
+            },
+            {
+              "type": "p",
+              "html": "The headline trick is one most readers will find surprising. Normally you make a small model by training it from scratch on raw text and accepting that it will be mediocre. Gemma 2 instead <b>distills knowledge from a much larger teacher model</b> into the small students. Rather than learning only from the hard fact 'the next word is <i>cat</i>', each small model learns from the teacher's full probability distribution over the whole vocabulary, 'it's probably <i>cat</i> (70%), maybe <i>dog</i> (12%), possibly <i>kitten</i> (5%)...'. That richer signal is the central reason a 2.6B model can behave like one several times its size."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy:</b> imagine teaching a student arithmetic. The cheap way hands them an answer key, just the final number for each problem. The expensive teacher instead works each problem on the whiteboard, showing which wrong answers were <i>almost</i> right and why. The student who sees the full reasoning surface learns far faster from the same number of problems. Distillation gives the small model that whiteboard, the teacher's soft probabilities, for every single training token."
+            },
+            {
+              "type": "quote",
+              "html": "In this work, we introduce Gemma 2, a new addition to the Gemma family of lightweight, open models, ranging in scale from 2 billion to 27 billion parameters. ... we propose several known technical modifications to the Transformer architecture, such as interleaving local-global attentions (Beltagy et al., 2020a) and group-query attention (Ainslie et al., 2023). We also train the 2B and 9B models with knowledge distillation (Hinton et al., 2015) instead of next token prediction."
+            },
+            {
+              "type": "p",
+              "html": "Three architectural ideas carry the paper, and we will spend a page on each: (1) <b>interleaving local and global attention</b> so the model gets long-range reach without paying full quadratic cost on every layer; (2) <b>logit soft-capping</b>, a gentle ceiling on attention and output scores that keeps training stable; and (3) <b>knowledge distillation</b>, the teacher-student training that is the family's signature. Together they let the 27B model rival things roughly 2-3x larger, and the 9B model beat all open models in its class at release."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it mattered:</b> Gemma 2 made 'distill a big model into a small one' a mainstream pretraining recipe rather than a niche compression step done after the fact. The 27B model landed competitively with much larger open models on the LMSYS Chatbot Arena, and the whole family was released with open weights, becoming a default base for on-device and single-GPU applications."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "Interleaving local and global attention",
+          "subtitle": "Long reach without quadratic cost on every layer",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> self-attention lets every token look at every other token, which is exactly what makes Transformers powerful, but the cost grows with the <i>square</i> of the sequence length. Double the context and you quadruple the attention work and memory. For a model meant to run on modest hardware with an 8192-token context, paying that full quadratic price on all 46 layers (in the 27B) is wasteful, because most layers do not actually need to see the whole sequence at once."
+            },
+            {
+              "type": "p",
+              "html": "<b>The fix, in one sentence:</b> alternate two kinds of attention layer. A <b>local sliding-window</b> layer only lets each token attend to a nearby window of the last 4096 tokens, cheap and enough for local syntax and short-range structure. A <b>global</b> layer lets each token attend to the full 8192-token context, expensive but rare. Gemma 2 interleaves them 1-to-1, so half the layers are local and half are global."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example:</b> consider a 28-layer model. Instead of 28 expensive global layers, you use 14 local layers (window 4096) and 14 global layers (span 8192), alternating. A local layer over a 4096-window touches at most 4096 keys per query; a global layer over 8192 touches up to 8192. Averaged across the stack you do roughly the work of a much shorter-context model, yet information still propagates across the entire 8192-token sequence because every other layer is global, and stacking them composes the reach."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{sliding window} = 4096, \\qquad \\text{global span} = 8192"
+            },
+            {
+              "type": "p",
+              "html": "Reading the two numbers: <b>4096</b> is the local window size, the maximum distance back a token can attend in a sliding-window (local) layer; tokens farther than 4096 positions away are simply masked out in those layers. <b>8192</b> is the global span, the full context length the model is trained on, which the global layers can see in one shot. The ratio of local to global layers is <b>1:1</b>, every local layer is followed by a global one."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works:</b> language is mostly local. Agreement, word order, and most syntax resolve within a few hundred tokens, so forcing every layer to scan thousands of tokens is mostly wasted compute. The rare global layers are enough to route the genuinely long-range signals (a name introduced 5000 tokens ago, a question whose answer is at the top of the document). The paper reports an ablation finding the design is <i>robust</i>, sliding windows of 4096 vs 1024, or a 1:1 vs 1:3 local-to-global ratio, barely move perplexity, so you get the speedup almost for free."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context &amp; lineage:</b> sliding-window attention comes from <i>Longformer</i> (Beltagy et al., 2020) and was popularized for production LLMs by <i>Mistral 7B</i>. Gemma 2's contribution is not the window itself but <b>interleaving</b> it with global layers in a fixed alternating pattern, getting most of the global model's quality at a fraction of the attention cost."
+            }
+          ]
+        },
+        {
+          "title": "GQA, soft-capping, and the norm sandwich",
+          "subtitle": "The smaller architectural choices that keep training stable",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> two practical headaches at this scale are (1) attention is memory-hungry at inference because every attention head needs its own cache of keys and values, and (2) training can blow up when a few logits grow huge and dominate the softmax. Gemma 2 borrows three small, well-tested fixes."
+            },
+            {
+              "type": "h2",
+              "text": "Grouped-query attention (GQA)"
+            },
+            {
+              "type": "p",
+              "html": "In standard multi-head attention, each of the H query heads has its own key and value head, so you cache H separate key/value tensors. <b>Grouped-query attention</b> lets several query heads <i>share</i> one key/value head. Gemma 2 uses <b>2 key-value groups</b>: the query heads are split into 2 groups, and each group shares a single K/V projection. You keep most of the expressiveness of many query heads but shrink the KV cache, which is the main memory bottleneck when serving long contexts."
+            },
+            {
+              "type": "h2",
+              "text": "Logit soft-capping"
+            },
+            {
+              "type": "p",
+              "html": "Instead of letting a logit run off to any value, Gemma 2 squashes it through a scaled <code>tanh</code>, which smoothly caps its magnitude. It is applied in two places: attention logits and the final output logits."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{logits} \\leftarrow \\text{soft\\_cap} \\cdot \\tanh\\!\\left( \\frac{\\text{logits}}{\\text{soft\\_cap}} \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: <code>logits</code> is the raw score tensor (attention scores, or the final vocabulary scores) before the softmax. <code>soft_cap</code> is a fixed positive scalar that sets the ceiling, <b>50.0</b> for the attention logits and <b>30.0</b> for the final output logits. Dividing by <code>soft_cap</code> rescales into the region where <code>tanh</code> is roughly linear; <code>tanh</code> then bends values back toward the range (-1, 1); multiplying by <code>soft_cap</code> rescales out so that <i>small</i> logits pass through almost unchanged while <i>large</i> ones are smoothly pulled toward ±<code>soft_cap</code> instead of exploding. Unlike a hard clip, it stays differentiable everywhere."
+            },
+            {
+              "type": "h2",
+              "text": "Pre-norm and post-norm (the RMSNorm sandwich)"
+            },
+            {
+              "type": "p",
+              "html": "Most Transformers normalize the input to each sublayer (<i>pre-norm</i>). Gemma 2 normalizes <b>both</b> the input and the output of every attention and feed-forward sublayer, using <b>RMSNorm</b>. Wrapping each block in a norm on both sides keeps activation magnitudes from drifting as signals pass through dozens of layers, which the authors found stabilizes training at these depths. Together GQA, soft-capping, and the norm sandwich are the unglamorous plumbing that makes the headline distillation recipe trainable without divergence."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Distillation",
+      "pages": [
+        {
+          "title": "Training small models from a teacher",
+          "subtitle": "The signature recipe: learn the distribution, not just the label",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> small models are data-starved in a subtle way. Standard next-token training gives one bit of feedback per token, the single correct next word, and treats every wrong word as equally wrong. A 2.6B model trained this way needs enormous amounts of data to extract enough signal, and even then it plateaus well below a large model. There simply is not enough information in a one-hot label to teach a small network everything a big one knows."
+            },
+            {
+              "type": "p",
+              "html": "<b>The idea:</b> replace the one-hot target with the <b>full probability distribution produced by a large teacher model</b>. For each position, the teacher (a much bigger Gemma model) is run forward and emits a soft distribution over the entire vocabulary. The student is trained to match that distribution. The teacher's relative probabilities, 'cat is likely, dog is plausible, banana is absurd', carry far more information per token than a single correct word, so the student learns more from the same text."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example:</b> for the prompt <i>'The cat sat on the ___'</i>, a one-hot label says only <code>mat = 1</code>, everything else 0. The teacher instead says <code>mat ≈ 0.5, rug ≈ 0.2, floor ≈ 0.15, sofa ≈ 0.1, ...</code>. The student now learns that <i>rug</i> and <i>floor</i> are nearly as good as <i>mat</i>, and that <i>banana</i> is essentially impossible, structure a one-hot label can never convey. It is the difference between being told the answer and being shown the whole answer landscape."
+            },
+            {
+              "type": "math",
+              "tex": "\\min_{P_S} \\; \\sum_{x} -P_T\\!\\left(x \\mid x_c\\right)\\, \\log P_S\\!\\left(x \\mid x_c\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading the loss term by term: $x_c$ is the context (the tokens seen so far); the sum $\\sum_{x}$ runs over <b>every token $x$ in the vocabulary</b>. $P_T(x \\mid x_c)$ is the <b>teacher's</b> probability for token $x$ given that context, a fixed soft target. $P_S(x \\mid x_c)$ is the <b>student's</b> predicted probability, the thing we optimize. The expression is the cross-entropy between teacher and student: it is minimized exactly when the student's distribution matches the teacher's. Note that if $P_T$ were one-hot, this collapses back to ordinary next-token training, so distillation strictly generalizes the standard objective."
+            },
+            {
+              "type": "p",
+              "html": "<b>Scale of training:</b> the soft targets let the authors train far past the usual data-to-parameters rules of thumb. The <b>2.6B</b> model is trained on <b>2 trillion</b> tokens, the <b>9B</b> on <b>8 trillion</b>, and the <b>27B</b> (trained from scratch with standard next-token prediction, since no larger teacher was available) on <b>13 trillion</b> tokens of primarily English data over web, code, and science. The 2B and 9B students are the ones distilled from a larger teacher."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works / the key insight:</b> distillation effectively <i>multiplies your data</i>. The paper frames it as simulating training beyond the compute-optimal token budget: a small model normally saturates, but the dense teacher signal keeps feeding it useful gradient long after one-hot labels would have stopped helping. The ablation shows distillation beats from-scratch training at the same size, the small distilled models are simply better than identically-sized models trained the normal way."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context &amp; trivia:</b> knowledge distillation is from Hinton, Vinyals &amp; Dean (2015), originally a post-hoc compression trick to shrink an already-trained model. Gemma 2's move was to use it as the <i>primary pretraining objective</i> for the small models, not a finishing step. This reframing, distill during pretraining at trillions of tokens, is one of the paper's most influential contributions and was widely adopted in later small-model families."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Punching above their weight",
+          "subtitle": "Benchmark and human-preference numbers at release",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> did the recipe actually deliver a model that is small <i>and</i> strong? The paper evaluates on standard academic benchmarks (MMLU, GSM8K, ARC, HellaSwag, and more) and, crucially, on <b>human preference</b> via the LMSYS Chatbot Arena, where anonymous users vote on head-to-head chat responses, the closest thing to a real-world quality signal."
+            },
+            {
+              "type": "p",
+              "html": "<b>The headline:</b> the <b>27B</b> model is competitive with open models <b>roughly 2-3x its size</b>, including LLaMA-3 70B and Qwen1.5 32B on many tasks, despite being trained on far fewer tokens. The <b>9B</b> distilled model is the strongest open model in its size class at release, and the <b>2.6B</b> model outperforms all prior models of similar size, validating the distillation bet directly."
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "Gemma 2 9B", "Gemma 2 27B"],
+              "rows": [
+                ["MMLU (5-shot)", "71.3", "75.2"],
+                ["GSM8K (5-shot)", "68.6", "74.0"],
+                ["ARC-c (25-shot)", "68.4", "71.4"],
+                ["HellaSwag (10-shot)", "81.9", "86.4"],
+                ["HumanEval (pass@1)", "40.2", "51.8"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading the table: each cell is accuracy (or pass@1 for code) in percent on a held-out benchmark, with the shot count noting how many worked examples the model saw in-context. <b>MMLU</b> probes broad knowledge across 57 subjects; the 27B's <b>75.2</b> is in the territory of much larger contemporaries. <b>GSM8K</b> is grade-school math word problems; <b>HumanEval</b> is Python code generation. The 9B column is what makes the distillation story land: a sub-10B model posting these numbers was not normal in 2024."
+            },
+            {
+              "type": "p",
+              "html": "<b>Human preference, the real test:</b> on the LMSYS Chatbot Arena the instruction-tuned <b>27B</b> model ranked among the top open models and ahead of several substantially larger ones, confirming that the benchmark gains translate into responses people actually prefer, not just test-set overfitting. The paper also reports safety and responsibility evaluations alongside the capability numbers."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the punchline:</b> the whole paper is an argument that <i>practical size</i> need not mean <i>weak</i>. Interleaved attention buys efficiency, soft-capping and the norm sandwich buy stability, and distillation buys quality-per-parameter. The result is a family where the 9B and 27B models beat the size-vs-quality curve everyone assumed was fixed."
+            }
+          ]
+        },
+        {
+          "title": "Why Gemma 2 mattered",
+          "subtitle": "Impact, influence, and what it changed",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The shift it caused:</b> before Gemma 2, the standard story for a strong small model was 'train it on as many tokens as you can afford and hope'. Gemma 2 showed a better default exists: <b>distill from a larger teacher during pretraining</b>. That reframing, treating distillation as a first-class training objective rather than a post-hoc compression trick, became a template that later open small-model families followed."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Established practical-size open models (2.6B / 9B / 27B) as a sweet spot for single-GPU and on-device deployment, not an afterthought.",
+                "Made knowledge distillation from a large teacher a mainstream pretraining recipe for small models, not just a compression step.",
+                "Popularized interleaved local/global attention as a cheap way to keep long-context reach without full quadratic cost on every layer.",
+                "Demonstrated logit soft-capping and a pre-norm/post-norm RMSNorm sandwich as practical stability tools at depth.",
+                "Released with open weights, becoming a widely used base for fine-tuning and on-device applications."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>How it connects to the landscape:</b> Gemma 2 sits in the lineage that runs from the original <i>Gemma</i> and Google's Gemini work, borrows sliding-window attention from <i>Longformer</i> and <i>Mistral</i>, grouped-query attention from Ainslie et al. (2023), and distillation from Hinton et al. (2015). Its own contribution is the <i>combination</i>, packaging these into a recipe tuned specifically for the practical size range, and proving the package with the distilled 9B and 27B models."
+            },
+            {
+              "type": "p",
+              "html": "<b>The lasting lesson:</b> capability is not purely a function of parameter count. With the right teacher signal and the right efficiency choices, a 9B model can do what people assumed required 30B+, and a 27B model can rival 70B. Gemma 2's enduring message is that for the models most people will ever actually run, <i>how you train</i> matters as much as <i>how big you build</i>."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

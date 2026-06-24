@@ -1,0 +1,291 @@
+{
+  "title": "Direct Preference Optimization: Your LM is Secretly a Reward Model",
+  "authors": "Rafailov, et al. (Stanford)",
+  "year": "2023",
+  "venue": "arXiv:2305.18290",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Skip the reward model. Skip the RL.",
+          "subtitle": "What DPO claims and why it mattered",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Suppose you have a pretrained language model that can write fluent English, and you want it to write <i>helpful, harmless</i> English. The model has no idea what humans prefer. The standard 2022-era recipe for teaching it was <b>RLHF</b> (Reinforcement Learning from Human Feedback), the method behind InstructGPT and ChatGPT. It works, but it is a beast: you train a separate <b>reward model</b> on human preference comparisons, then run a full reinforcement-learning loop (PPO) that samples from the policy, scores samples, and updates with policy gradients. That loop is unstable, needs careful tuning, holds multiple large models in memory at once, and is hard to reproduce."
+            },
+            {
+              "type": "p",
+              "html": "DPO's claim is almost cheeky: you do not need any of that. The authors show that the reward model and the optimal policy are two sides of the same coin, and that you can <b>rearrange the math</b> so the reward model disappears entirely. What is left is a single loss function over your preference data that looks like ordinary supervised classification. No reward model, no sampling, no RL, no reward hacking."
+            },
+            {
+              "type": "quote",
+              "html": "Our key insight is to leverage an analytical mapping from reward functions to optimal policies, which enables us to transform a loss function over reward functions into a loss function over policies. ... the resulting fine-tuning procedure ... is stable, performant, and computationally lightweight, obviating the need for fitting a reward model, sampling from the LM during fine-tuning, or performing significant hyperparameter tuning."
+            },
+            {
+              "type": "p",
+              "html": "The phrase in the title — <i>your language model is secretly a reward model</i> — is the whole idea in one line. After DPO training, the log-probabilities your model assigns to text <i>implicitly define</i> a reward function. You were training a reward model all along; you just never had to build it as a separate network."
+            },
+            {
+              "type": "p",
+              "html": "Why this paper became a landmark: within roughly a year, DPO and its descendants largely replaced PPO as the default alignment method for open-weight models (Llama, Mistral, Zephyr, and countless fine-tunes). It turned alignment from a research-engineering project into a few lines of training code that any lab with a preference dataset could run. The paper won an Outstanding Paper award at NeurIPS 2023."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Why RLHF was a beast",
+          "subtitle": "The three-stage pipeline DPO wants to collapse",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To understand what DPO simplifies, you have to see what it replaces. Classic RLHF is three stages stacked on top of each other, and each stage adds fragility."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Stage 1 — SFT (supervised fine-tuning).</b> Fine-tune the pretrained model on high-quality demonstrations to get a reasonable starting policy, called $\\pi^{\\text{SFT}}$.",
+                "<b>Stage 2 — Reward modeling.</b> Show humans pairs of responses to the same prompt and ask which they prefer. Train a separate neural network $r_\\phi(x,y)$ to predict those preferences.",
+                "<b>Stage 3 — RL optimization.</b> Use PPO to update the policy so it produces responses the reward model scores highly, while a KL penalty stops it from drifting too far from $\\pi^{\\text{SFT}}$."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Stage 2 rests on the <b>Bradley-Terry model</b>, a 1952 model of pairwise comparisons (think chess rankings). It says the probability that a human prefers response $y_1$ over $y_2$ is a logistic function of the difference of their underlying “strengths”, where strength is the reward."
+            },
+            {
+              "type": "math",
+              "tex": "p^*(y_1 \\succ y_2 \\mid x) = \\frac{\\exp\\big(r^*(x, y_1)\\big)}{\\exp\\big(r^*(x, y_1)\\big) + \\exp\\big(r^*(x, y_2)\\big)}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x$ is the prompt; $y_1, y_2$ are two candidate responses (strings of tokens); $r^*(x,y)$ is the <b>true</b> (unknown) reward, a scalar; $y_1 \\succ y_2$ means “$y_1$ is preferred to $y_2$”; and $p^*$ is the probability a human picks $y_1$. The right side is just the softmax over two rewards — equivalently $\\sigma\\big(r^*(x,y_1) - r^*(x,y_2)\\big)$ where $\\sigma$ is the logistic sigmoid. Only the <i>difference</i> in rewards matters, which is why reward is only defined up to a constant."
+            },
+            {
+              "type": "p",
+              "html": "Stage 3 is the painful one. PPO must repeatedly <b>sample</b> fresh text from the current policy (slow), score it with the reward model (another large model in memory), and apply policy-gradient updates (high variance). It is notoriously sensitive to hyperparameters, and because the reward model is an imperfect proxy, the policy can <b>reward-hack</b>: find weird outputs that score high but are not actually good. DPO's question: can we get the result of Stage 3 without ever running it?"
+            }
+          ]
+        },
+        {
+          "title": "The RLHF objective, written down",
+          "subtitle": "The optimization everyone was trying to solve",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before deriving the trick, fix the exact problem RLHF Stage 3 solves. We want a policy that earns high reward but stays close to the SFT model so it does not degenerate or game the reward. “Close” is measured by KL divergence."
+            },
+            {
+              "type": "math",
+              "tex": "\\max_{\\pi_\\theta}\\ \\mathbb{E}_{x \\sim \\mathcal{D},\\, y \\sim \\pi_\\theta(y \\mid x)}\\big[ r_\\phi(x, y) \\big] - \\beta\\, \\mathbb{D}_{\\text{KL}}\\big[ \\pi_\\theta(y \\mid x) \\,\\|\\, \\pi_{\\text{ref}}(y \\mid x) \\big]"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\pi_\\theta(y \\mid x)$ is the policy we are training (parameters $\\theta$); $\\mathcal{D}$ is the distribution of prompts $x$; for each prompt we sample a response $y$ from the policy and collect its reward $r_\\phi(x,y)$. The first term says “maximize expected reward.” The second term, $\\mathbb{D}_{\\text{KL}}[\\pi_\\theta \\,\\|\\, \\pi_{\\text{ref}}]$, is the KL divergence between our policy and the frozen reference policy $\\pi_{\\text{ref}}$ (usually $\\pi^{\\text{SFT}}$), penalizing drift. $\\beta > 0$ controls the trade-off: large $\\beta$ keeps you glued to the reference, small $\\beta$ lets you chase reward harder."
+            },
+            {
+              "type": "p",
+              "html": "<b>A concrete intuition.</b> Imagine a slider. At $\\beta = \\infty$ the policy can never move — you just keep the SFT model. At $\\beta = 0$ the policy chases reward with no leash and collapses onto whatever the reward model loves (often gibberish that happens to score high). RLHF lives somewhere in between, and PPO is the machinery that finds that balance through trial-and-error sampling."
+            },
+            {
+              "type": "p",
+              "html": "Here is the crucial fact the authors lean on: this particular objective has a <b>known closed-form optimal solution</b>. It is a classic result — the KL-regularized reward-maximization problem is solved by an exponential tilting of the reference policy. That solution is the doorway DPO walks through on the next page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Trick",
+      "pages": [
+        {
+          "title": "The optimal policy, in closed form",
+          "subtitle": "From reward to policy — and then backwards",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole paper turns on one substitution. The KL-regularized objective from the last page has an exact optimal policy for <i>any</i> reward function $r$. You do not need RL to know its form — it is a textbook result."
+            },
+            {
+              "type": "math",
+              "tex": "\\pi_r(y \\mid x) = \\frac{1}{Z(x)}\\, \\pi_{\\text{ref}}(y \\mid x)\\, \\exp\\!\\left( \\frac{1}{\\beta}\\, r(x, y) \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: the optimal policy $\\pi_r$ takes the reference policy $\\pi_{\\text{ref}}(y \\mid x)$ and <b>re-weights</b> every response by $\\exp(r(x,y)/\\beta)$ — responses with higher reward get boosted, scaled by $1/\\beta$. The term $Z(x) = \\sum_y \\pi_{\\text{ref}}(y \\mid x)\\exp(r(x,y)/\\beta)$ is the <b>partition function</b>: a normalizer that sums over <i>all possible responses</i> so the probabilities add to 1. This formula is exact — but useless to compute directly, because $Z(x)$ requires summing over every possible string, which is intractable."
+            },
+            {
+              "type": "p",
+              "html": "<b>The pivot.</b> Most people read that equation left-to-right: given a reward, here is the policy. The authors read it <b>right-to-left</b>. Solve it for $r$ instead. Take logs and rearrange:"
+            },
+            {
+              "type": "math",
+              "tex": "r(x, y) = \\beta \\log \\frac{\\pi_r(y \\mid x)}{\\pi_{\\text{ref}}(y \\mid x)} + \\beta \\log Z(x)"
+            },
+            {
+              "type": "p",
+              "html": "This says: <i>any</i> reward function can be written in terms of its own optimal policy. The reward of a response is $\\beta$ times the log-ratio of how much more (or less) likely the optimal policy makes it versus the reference, plus a term $\\beta \\log Z(x)$ that depends only on the prompt $x$, not on the response $y$. <b>This is the secret reward model from the title:</b> the policy's own log-probabilities, relative to the reference, <i>are</i> a reward."
+            },
+            {
+              "type": "p",
+              "html": "The intractable $Z(x)$ is still there — but watch what happens next. Bradley-Terry only ever looks at <i>differences</i> of rewards for the same prompt, and $\\beta \\log Z(x)$ is identical for both responses to that prompt. It cancels. That cancellation is the entire magic trick."
+            }
+          ]
+        },
+        {
+          "title": "The DPO loss",
+          "subtitle": "A reward model in disguise, trained by classification",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now substitute the “reward = log-ratio” expression into the Bradley-Terry preference probability. For a preferred response $y_w$ (“winner”) and a rejected one $y_l$ (“loser”), plug $r(x,y) = \\beta \\log \\frac{\\pi(y\\mid x)}{\\pi_{\\text{ref}}(y\\mid x)} + \\beta\\log Z(x)$ into $\\sigma(r(x,y_w) - r(x,y_l))$. The two $\\beta\\log Z(x)$ terms cancel, and you are left with a probability written entirely in terms of policies:"
+            },
+            {
+              "type": "math",
+              "tex": "p(y_w \\succ y_l \\mid x) = \\sigma\\!\\left( \\beta \\log \\frac{\\pi_\\theta(y_w \\mid x)}{\\pi_{\\text{ref}}(y_w \\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l \\mid x)}{\\pi_{\\text{ref}}(y_l \\mid x)} \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Train this by maximum likelihood on your preference dataset $\\mathcal{D} = \\{(x, y_w, y_l)\\}$ — i.e. minimize the negative log-likelihood. That gives the <b>DPO loss</b>:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{DPO}}(\\pi_\\theta; \\pi_{\\text{ref}}) = -\\,\\mathbb{E}_{(x, y_w, y_l) \\sim \\mathcal{D}}\\left[ \\log \\sigma\\!\\left( \\beta \\log \\frac{\\pi_\\theta(y_w \\mid x)}{\\pi_{\\text{ref}}(y_w \\mid x)} - \\beta \\log \\frac{\\pi_\\theta(y_l \\mid x)}{\\pi_{\\text{ref}}(y_l \\mid x)} \\right) \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Symbol by symbol: $(x, y_w, y_l)$ is a training triple — a prompt, a human-preferred response, and a human-rejected response. $\\pi_\\theta(y \\mid x)$ is the probability the model assigns the full response (the product of token probabilities), and $\\pi_{\\text{ref}}$ is the same for the frozen reference. $\\beta$ is the same KL-strength knob as before. $\\sigma$ is the logistic sigmoid and $\\log\\sigma(\\cdot)$ is the standard log-likelihood of a binary classifier. <b>That is the whole method.</b> No reward network, no sampling, no RL — just compute four log-probabilities per triple and do gradient descent."
+            },
+            {
+              "type": "p",
+              "html": "<b>What each forward pass costs.</b> For one triple you run the trained policy on $y_w$ and $y_l$ (2 passes) and the frozen reference on $y_w$ and $y_l$ (2 passes, cacheable). Compare that to PPO's loop of sampling, reward-model scoring, value-model estimation, and policy updates. DPO is one supervised loss over data you already have."
+            }
+          ]
+        },
+        {
+          "title": "What the gradient is really doing",
+          "subtitle": "Why the loss can't just inflate every probability",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A natural worry: if the loss rewards making $y_w$ more likely, why doesn't the model cheat by inflating <i>everything</i>, or by crushing $y_l$ to zero so hard it forgets how to write? The gradient answers this. Differentiating the DPO loss gives a clean, interpretable form."
+            },
+            {
+              "type": "math",
+              "tex": "\\nabla_\\theta \\mathcal{L}_{\\text{DPO}} = -\\beta\\, \\mathbb{E}_{(x,y_w,y_l)}\\Big[ \\underbrace{\\sigma\\big(\\hat r_\\theta(x,y_l) - \\hat r_\\theta(x,y_w)\\big)}_{\\text{weight: how wrong the model is}} \\big( \\underbrace{\\nabla_\\theta \\log \\pi_\\theta(y_w \\mid x)}_{\\text{push up } y_w} - \\underbrace{\\nabla_\\theta \\log \\pi_\\theta(y_l \\mid x)}_{\\text{push down } y_l} \\big) \\Big]"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\hat r_\\theta(x,y) = \\beta \\log \\frac{\\pi_\\theta(y\\mid x)}{\\pi_{\\text{ref}}(y\\mid x)}$ is the <b>implicit reward</b> the policy currently assigns — the secret reward model. The gradient does two things: it increases the likelihood of the winner $y_w$ and decreases the likelihood of the loser $y_l$. The genius is the scalar weight out front: $\\sigma\\big(\\hat r_\\theta(x,y_l) - \\hat r_\\theta(x,y_w)\\big)$. When the model already ranks the pair correctly (winner's implicit reward higher), this weight shrinks toward 0 and the update nearly vanishes. When the model has the pair <b>backwards</b> (it rates the loser higher), the weight is large and the update is strong."
+            },
+            {
+              "type": "p",
+              "html": "So DPO automatically spends its effort on examples it currently gets wrong — like a teacher who only corrects mistakes. The authors note that without this implicit weighting, a naive version of the loss degenerates: the model can drift or collapse. The $\\pi_{\\text{ref}}$ in the denominator is the leash; it ties every probability change back to the reference, which is exactly the KL constraint reappearing for free."
+            },
+            {
+              "type": "p",
+              "html": "<b>Reward-model interpretation.</b> The paper proves DPO is not a weaker approximation of RLHF — under the Bradley-Terry assumption it optimizes the <i>same</i> objective. Their reparameterization spans the same class of reward functions as the explicit approach, so DPO fits an implicit reward and recovers the corresponding optimal policy exactly, in one stage."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Does it actually match (or beat) PPO?",
+          "subtitle": "Sentiment, summarization, and dialogue",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A clever derivation means nothing if the method underperforms. The authors test DPO on three tasks of increasing difficulty and compare it head-to-head with PPO-based RLHF and other baselines."
+            },
+            {
+              "type": "h2",
+              "text": "Controlled sentiment (IMDb)"
+            },
+            {
+              "type": "p",
+              "html": "Here the “reward” (positive sentiment of generated movie reviews) is known exactly, so they can plot the true <b>reward vs. KL-divergence frontier</b> — how much reward you buy per unit of drift from the reference. DPO sits on a <b>strictly better frontier than PPO</b>: at every level of KL, DPO achieves higher reward. It even beats <i>PPO-GT</i>, a version of PPO given access to the ground-truth reward instead of a learned one. The closed-form method is not just cheaper; on this task it is more efficient at trading off reward against drift."
+            },
+            {
+              "type": "h2",
+              "text": "Summarization (Reddit TL;DR) and dialogue (Anthropic-HH)"
+            },
+            {
+              "type": "p",
+              "html": "On the harder open-ended tasks, quality is judged by <b>GPT-4 win rate</b> against a baseline (the human reference summary, or a chosen response). On TL;DR summarization, DPO reaches roughly a <b>61% win rate</b> against human reference summaries at sampling temperature 0, versus about <b>57% for PPO</b> — and DPO holds up far better as temperature rises, where PPO's win rate collapses."
+            },
+            {
+              "type": "table",
+              "headers": ["Task / setting", "DPO", "PPO (RLHF)"],
+              "rows": [
+                ["TL;DR summarization win rate vs. human ref (temp 0)", "~61%", "~57%"],
+                ["Sentiment reward-vs-KL frontier", "dominates PPO and PPO-GT", "baseline"],
+                ["Anthropic-HH dialogue", "only method beating chosen completions", "trails DPO"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "On Anthropic Helpful-Harmless dialogue, DPO is the <b>only method in the comparison that improves over the dataset's preferred (“chosen”) completions</b>, and it matches or exceeds a well-tuned PPO baseline while being far simpler to train. The authors also verify DPO converges quickly and is robust to the sampling temperature used at evaluation."
+            },
+            {
+              "type": "p",
+              "html": "<b>Robustness checks.</b> They confirm GPT-4 judgments correlate well with human judgments (so the win rates are trustworthy), and that DPO trained on one distribution generalizes to a shifted test distribution (CNN/DailyMail news articles) as well as or better than PPO — evidence it is not just memorizing the preference set."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why DPO took over",
+          "subtitle": "What it changed, and what came after",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "DPO's significance is less about the win-rate numbers and more about <b>who can now do alignment</b>. RLHF with PPO required RL expertise, careful reward-model curation, and a fragile sampling loop holding three or four models in memory. DPO collapses that into a supervised loss you can drop into any fine-tuning script. The barrier to entry for preference alignment dropped from “research team” to “one training run.”"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Stable.</b> No RL, no on-policy sampling — just gradient descent on a fixed dataset, so runs are reproducible.",
+                "<b>Lightweight.</b> No separate reward model and no value model to host; mostly forward passes you can cache.",
+                "<b>No reward hacking the usual way.</b> The policy is the reward model, so there is no separate proxy to game during a sampling loop.",
+                "<b>Faithful.</b> Under Bradley-Terry it optimizes the same KL-constrained objective as RLHF, not a heuristic approximation."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The practical fallout was immediate. Within a year, open-weight model releases (the Zephyr 7B line, many Llama and Mistral fine-tunes, and instruction-tuned community models) adopted DPO as their default preference-optimization step, and it became a first-class method in libraries like Hugging Face TRL. For most teams, DPO simply replaced PPO."
+            },
+            {
+              "type": "p",
+              "html": "It also kicked off a whole family of “direct” alignment methods that tweak the loss: <b>IPO</b> (addresses overfitting when preferences are near-deterministic), <b>KTO</b> (learns from single thumbs-up/down labels instead of pairs), <b>ORPO</b> (folds alignment into SFT with no reference model), and many more. All of them trace back to this paper's core move: rearrange the RLHF objective until the reward model and the RL loop fall out."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one-line legacy.</b> DPO showed that the reward model in RLHF was never a separate thing you had to build — it was hiding inside the policy's own log-probabilities the whole time. Reading the optimal-policy equation backwards turned a fragile reinforcement-learning pipeline into a single line of classification loss, and that is why most of the field stopped reaching for PPO first."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

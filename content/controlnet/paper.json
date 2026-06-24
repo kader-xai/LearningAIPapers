@@ -1,0 +1,322 @@
+{
+  "title": "Adding Conditional Control to Text-to-Image Diffusion Models (ControlNet)",
+  "authors": "Zhang, Rao, Agrawala",
+  "year": "2023",
+  "venue": "arXiv:2302.05543",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Text is not enough: the steering-wheel problem",
+          "subtitle": "What ControlNet adds and why it matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you have Stable Diffusion, a model that turns a sentence into a beautiful image. You type <i>\"a deer standing in a forest\"</i> and you get a deer. But you cannot say <b>where</b> the deer stands, which way its head turns, or that it should match the exact pose in a photo you have. Text is a megaphone, not a steering wheel. The instant you need precise <b>spatial</b> layout (an edge map, a human skeleton, a depth field), prompts fall apart, because no English sentence pins down the position of every limb."
+            },
+            {
+              "type": "p",
+              "html": "This is the problem ControlNet solves. It is a neural-network architecture that bolts <b>spatial conditioning</b> onto a <i>frozen</i> production diffusion model. You feed it an extra image, a Canny edge map, an OpenPose stickman, a depth map, a scribble, and the generated image obeys that spatial structure while the text prompt still controls style and content. The deer now stands exactly where your edge map says, facing exactly the way your sketch shows."
+            },
+            {
+              "type": "quote",
+              "html": "We present ControlNet, a neural network architecture to add spatial conditioning controls to large, pretrained text-to-image diffusion models. ControlNet locks the production-ready large diffusion models, and reuses their deep and robust encoding layers pretrained with billions of images as a strong backbone to learn a diverse set of conditional controls."
+            },
+            {
+              "type": "p",
+              "html": "The clever part is what ControlNet does <b>not</b> do. It does not retrain Stable Diffusion. It does not risk forgetting the billions of images the base model learned. Instead it makes a <b>trainable copy</b> of the model's encoder, leaves the original frozen, and joins the two with a special trick called <b>zero convolutions</b> so that on step one the add-on does literally nothing, and learning starts from a perfectly preserved model."
+            },
+            {
+              "type": "p",
+              "html": "The authors test this on Stable Diffusion with conditions including Canny edges, Hough lines, HED soft edges, sketches, human pose, depth, normal maps, and semantic segmentation. The headline claim: it works robustly with datasets as small as ~50k images, and it even trains on a single laptop GPU, while remaining stable enough to scale to millions of examples."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> The paper is Lvmin Zhang, Anyi Rao, and Maneesh Agrawala (Stanford, 2023). It became one of the most influential applied-ML papers of the decade almost overnight: ControlNet is now the default way artists steer Stable Diffusion, and it won the ICCV 2023 Marr Prize (best paper). The reason it spread so fast is the next idea, a fine-tuning recipe that is nearly impossible to break."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Core Idea",
+      "pages": [
+        {
+          "title": "The locked copy and the trainable copy",
+          "subtitle": "Why freeze the original and clone it",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question this page answers:</b> if you want to teach a giant pretrained model a new skill on a small dataset, how do you avoid wrecking what it already knows? Fine-tuning all the weights on 50k edge maps would let the model <i>overfit</i> and <i>forget</i>, like making a master chef re-learn cooking from a 10-recipe pamphlet. They would get worse at everything else."
+            },
+            {
+              "type": "p",
+              "html": "ControlNet's answer is a split-brain design. Take a <b>network block</b> (a set of layers, e.g. a resnet block or a transformer block) that maps an input feature map to an output. The original block stays <b>locked</b>, every weight frozen, preserving the production-quality model trained on billions of images. Then you make a <b>trainable copy</b> of that same block and train only the copy on your new condition. The copy gets to learn the new control; the original never degrades."
+            },
+            {
+              "type": "h2",
+              "text": "The base block, formally"
+            },
+            {
+              "type": "math",
+              "tex": "\\boldsymbol{y} = \\mathcal{F}(\\boldsymbol{x}; \\Theta)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $\\mathcal{F}(\\cdot\\,;\\Theta)$ is the original neural block (a function), with frozen parameters $\\Theta$. The input $\\boldsymbol{x}$ is a feature map (in practice a 2D tensor in $\\mathbb{R}^{h \\times w \\times c}$ where $h, w, c$ are height, width, and channel count). The output $\\boldsymbol{y}$ is the transformed feature map. This is just \"a layer in the network does its usual thing.\" ControlNet leaves this exactly as-is."
+            },
+            {
+              "type": "p",
+              "html": "<b>The mini-example.</b> Picture the block as a photo filter you have already perfectly tuned. Rather than re-tune the filter for a new task (and risk ruining it), you photocopy it, tape the copy next to the original, and only ever adjust the copy. If the copy's adjustments turn out useless, you can ignore it and still have the pristine original. ControlNet makes that \"ignore it safely\" guarantee literal, using zero convolutions, the subject of the next page."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a copy and not new random layers?</b> The trainable copy is initialized from the pretrained weights, so it already speaks the model's internal language. The authors note this reuse of \"the large-scale pretrained model to establish a deep, robust, and strong backbone\" is what lets training succeed even on tiny datasets, where a freshly-initialized branch would have to learn good features from scratch and fail."
+            }
+          ]
+        },
+        {
+          "title": "Zero convolutions: starting from \"do nothing\"",
+          "subtitle": "The trick that makes fine-tuning unbreakable",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> when you attach a brand-new trainable branch to a finished model, its random initial weights inject <b>noise</b> into the carefully-balanced hidden states. On the first few training steps the model's outputs get scrambled, gradients go haywire, and the pristine backbone you wanted to protect gets damaged before learning even begins. How do you connect the new branch so that, at step zero, it has <i>zero</i> effect?"
+            },
+            {
+              "type": "p",
+              "html": "<b>The trick:</b> connect it with a <b>zero convolution</b>, written $\\mathcal{Z}(\\cdot\\,;\\cdot)$. It is just a $1\\times 1$ convolution layer whose weight <b>and</b> bias are both initialized to <b>zero</b>. A layer of all zeros outputs all zeros, no matter the input. So at the very first step the entire add-on contributes nothing, and the model is bit-for-bit identical to the original Stable Diffusion."
+            },
+            {
+              "type": "h2",
+              "text": "Putting the block together"
+            },
+            {
+              "type": "math",
+              "tex": "\\boldsymbol{y}_c = \\mathcal{F}(\\boldsymbol{x}; \\Theta) + \\mathcal{Z}\\big(\\mathcal{F}(\\boldsymbol{x} + \\mathcal{Z}(\\boldsymbol{c}; \\Theta_{z1}); \\Theta_c); \\Theta_{z2}\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\boldsymbol{y}_c$ is the new conditioned output. $\\mathcal{F}(\\boldsymbol{x};\\Theta)$ is the <b>frozen original block</b> (untouched). $\\boldsymbol{c}$ is the conditioning feature map (e.g. the encoded edge map). $\\mathcal{Z}(\\cdot;\\Theta_{z1})$ and $\\mathcal{Z}(\\cdot;\\Theta_{z2})$ are the two zero-convolution layers with their own parameters $\\Theta_{z1}, \\Theta_{z2}$. $\\Theta_c$ are the parameters of the <b>trainable copy</b> of the block. Read it as: add the condition to the input through the first zero-conv, run it through the trainable copy, push it through the second zero-conv, and <i>add</i> the result back onto the frozen block's output."
+            },
+            {
+              "type": "p",
+              "html": "Plug in step zero: both $\\mathcal{Z}$ layers are all zeros, so the whole second term is $0$, giving $\\boldsymbol{y}_c = \\mathcal{F}(\\boldsymbol{x};\\Theta) = \\boldsymbol{y}$. The conditioned model exactly equals the original. As the authors put it:"
+            },
+            {
+              "type": "quote",
+              "html": "Since both the input and output of the first training step are zero, all entries in the zero convolution layers are initialized to zeros, the harmful noise cannot influence the hidden states of the neural network layers in the trainable copy when the training starts."
+            },
+            {
+              "type": "p",
+              "html": "<b>But wait, if it outputs zero, can it ever learn?</b> A reasonable fear: a zero-weight layer has zero gradient, so it should be stuck forever. It is not. Because the <i>input</i> to the zero-conv is non-zero, the gradient with respect to its <b>weights</b> is non-zero on the first step, so the weights move off zero immediately; only the gradient flowing back through the (initially zero) weights to earlier layers is blocked on step one. The result: the branch wakes up gradually, on the model's own terms, never injecting a shock."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design rationale.</b> This is a kind of safe residual fine-tuning. Compare to alternatives: random-init adapters can destabilize the backbone; full fine-tuning forgets; LoRA needs a learning-rate schedule to behave. Zero-init means the optimizer always starts at the identity (the unmodified model) and only ever <i>adds</i> control, so it cannot do worse than the pristine baseline. This idea echoes earlier zero-init tricks (e.g. zero-initialized residual branches and FixUp), but ControlNet made it the load-bearing element of a practical recipe."
+            }
+          ]
+        },
+        {
+          "title": "Wiring it into Stable Diffusion's U-Net",
+          "subtitle": "Where the copies attach, and how the condition is encoded",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> Stable Diffusion is not one block, it is a U-Net with an encoder, a middle block, and a skip-connected decoder. Where exactly do we graft the ControlNet branches? The answer also has to respect that Stable Diffusion works in a compressed <b>latent</b> space, not on raw pixels, so the input condition image has to be shrunk to match."
+            },
+            {
+              "type": "p",
+              "html": "Stable Diffusion's U-Net has 25 blocks total: 12 in the encoder, 1 middle, 12 in the decoder, with 8 of the 25 doing down/up-sampling. ControlNet makes trainable copies of the <b>12 encoder blocks and the 1 middle block</b>. The 13 outputs are then added, via zero convolutions, into the <b>12 skip-connections and the middle block</b> of the locked decoder. The decoder itself stays frozen."
+            },
+            {
+              "type": "quote",
+              "html": "We connect ControlNet to such an SD model with the following steps. We first convert each input conditioning image (e.g., edge, pose, depth, etc.) from an input size of 512 x 512 into a 64 x 64 feature space vector that matches the size of Stable Diffusion."
+            },
+            {
+              "type": "h2",
+              "text": "Encoding the condition image"
+            },
+            {
+              "type": "math",
+              "tex": "\\boldsymbol{c}_f = \\mathcal{E}(\\boldsymbol{c}_i)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\boldsymbol{c}_i$ is the raw condition image at $512\\times 512$ (e.g. a Canny edge map). $\\mathcal{E}(\\cdot)$ is a tiny encoder network, four conv layers with $4\\times 4$ kernels, $2\\times 2$ strides, ReLU activations, channel counts 16, 32, 64, 128, initialized with Gaussian weights and trained jointly. $\\boldsymbol{c}_f$ is the resulting $64\\times 64$ <b>condition feature map</b>, now the right size to feed into the latent-space U-Net. This small encoder is what bridges full-resolution control images into Stable Diffusion's compressed working space."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why copy only the encoder, not the whole U-Net?</b> The authors call this \"computationally efficient.\" Because the locked decoder's gradients are not needed during training, they avoid GPU memory and time for half the model. The reported saving: training Stable Diffusion with ControlNet uses only about <b>23% more GPU memory and 34% more time</b> per iteration than fine-tuning Stable Diffusion alone, despite adding a whole trainable encoder."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trade-off considered.</b> Copying the encoder (rather than inserting thin adapters inside it) keeps the branch's representational capacity high, the same depth and width as the pretrained encoder, which is why it can absorb complex conditions like full-body pose. A thinner design exists (\"ControlNet-lite\"), and the results pages show it underperforms, confirming that the full-capacity copy matters."
+            }
+          ]
+        },
+        {
+          "title": "Training, sudden convergence, and CFG",
+          "subtitle": "The objective and the practical tricks that make it sing",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> ControlNet is still a diffusion model, so what does it actually minimize during training? And what surprising behaviors show up when you train this safe-by-construction architecture?"
+            },
+            {
+              "type": "h2",
+              "text": "The diffusion objective"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L} = \\mathbb{E}_{\\boldsymbol{z}_0, \\boldsymbol{t}, \\boldsymbol{c}_t, \\boldsymbol{c}_f, \\epsilon \\sim \\mathcal{N}(0,1)}\\Big[\\,\\lVert \\epsilon - \\epsilon_\\theta(\\boldsymbol{z}_t, \\boldsymbol{t}, \\boldsymbol{c}_t, \\boldsymbol{c}_f) \\rVert_2^2 \\,\\Big]"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\boldsymbol{z}_0$ is the clean image latent; $\\boldsymbol{t}$ is a randomly chosen diffusion timestep; $\\boldsymbol{z}_t$ is $\\boldsymbol{z}_0$ with $t$ steps of Gaussian noise added; $\\epsilon$ is the noise that was actually added, sampled from a standard normal $\\mathcal{N}(0,1)$; $\\boldsymbol{c}_t$ is the text-prompt conditioning; $\\boldsymbol{c}_f$ is the ControlNet spatial conditioning from the previous page; $\\epsilon_\\theta$ is the network predicting the noise; and $\\lVert\\cdot\\rVert_2^2$ is the squared error. In words: <b>predict the noise you added</b>, given the noisy latent, the timestep, the text, and the spatial control. It is the standard latent-diffusion loss, with $\\boldsymbol{c}_f$ as the only new ingredient."
+            },
+            {
+              "type": "p",
+              "html": "<b>One training detail with outsized effect.</b> During training they randomly replace 50% of text prompts with the empty string. This forces ControlNet to read semantics directly from the <i>spatial</i> condition (edges, pose) instead of leaning on the text, so it learns to honor the control even when the prompt is vague or absent."
+            },
+            {
+              "type": "h2",
+              "text": "The sudden convergence phenomenon"
+            },
+            {
+              "type": "p",
+              "html": "Because the model starts as the exact unmodified Stable Diffusion, early training does not gradually improve, the model simply ignores the condition until, abruptly, it \"gets it.\" The authors observe the control kicks in as a sudden jump, often within about 10k optimization steps."
+            },
+            {
+              "type": "quote",
+              "html": "Because the zero convolutions do not add noise to the network, the model should always be able to predict high-quality images. We observe that the model does not gradually learn the control conditions but abruptly succeeds in following the input conditioning image; usually in less than 10K optimization steps. As shown in Figure 4, we call this the \"sudden convergence phenomenon.\""
+            },
+            {
+              "type": "p",
+              "html": "<b>Classifier-Free Guidance, fixed.</b> Naively applying CFG to a ControlNet can wash out or over-saturate the result. Their fix, <b>CFG Resolution Weighting</b>, adds the conditioning only to the conditional branch and scales each skip-connection's contribution by a weight $w_i = 64/h_i$, where $h_i$ is the spatial size of the $i$-th block (so $h_1=8, h_2=16, \\dots, h_{13}=64$). Coarser, deeper layers get the strongest control, fine layers the lightest, balancing fidelity against prompt-following."
+            },
+            {
+              "type": "p",
+              "html": "<b>Composing controls.</b> To use several conditions at once (say Canny edges <i>and</i> pose), you just add the outputs of the corresponding ControlNets to the U-Net, no extra weighting or interpolation needed. This compositionality is a direct consequence of the additive zero-conv design."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Does it actually work? Numbers and ablations",
+          "subtitle": "User studies, segmentation IoU, FID/CLIP, and what breaks",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question:</b> a safe architecture is nice, but does the controlled output genuinely match the condition, and does image quality survive? The authors evaluate with a human user study, a segmentation round-trip metric, and standard FID/CLIP scores."
+            },
+            {
+              "type": "h2",
+              "text": "User study (sketch-conditioned)"
+            },
+            {
+              "type": "p",
+              "html": "20 participants ranked the outputs of 5 methods on hand-drawn sketches, scored as an Average Human Ranking (AUR) from 1 (worst) to 5 (best), on both result quality and condition fidelity. ControlNet wins clearly:"
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "Result Quality ↑", "Condition Fidelity ↑"],
+              "rows": [
+                ["PITI (sketch)", "1.10 ± 0.05", "1.02 ± 0.01"],
+                ["Sketch-Guided (β=1.6)", "3.21 ± 0.62", "2.31 ± 0.57"],
+                ["Sketch-Guided (β=3.2)", "2.52 ± 0.44", "3.28 ± 0.72"],
+                ["ControlNet-lite", "3.93 ± 0.59", "4.09 ± 0.46"],
+                ["ControlNet", "4.22 ± 0.43", "4.28 ± 0.45"]
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Segmentation round-trip (ADE20K)"
+            },
+            {
+              "type": "p",
+              "html": "To measure spatial fidelity objectively, they condition on a segmentation map, generate an image, re-segment it, and check the Intersection-over-Union (IoU) against the input map. Higher means the generated image truly respected the requested layout. ControlNet reaches <b>IoU 0.35</b>, far above prior conditional methods (PITI 0.18, LDM-seg 0.17, VPGAN-seg 0.18) and above its own lite variant (0.26). The ground-truth ceiling is 0.58."
+            },
+            {
+              "type": "h2",
+              "text": "Image quality (FID / CLIP on ADE20K)"
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "FID ↓", "CLIP-score ↑", "CLIP-aes. ↑"],
+              "rows": [
+                ["Stable Diffusion (no condition)", "6.09", "0.26", "6.32"],
+                ["VPGAN-seg", "26.28", "0.17", "5.14"],
+                ["LDM-seg", "25.35", "0.18", "5.15"],
+                ["PITI-seg", "19.74", "0.20", "5.77"],
+                ["ControlNet-lite", "17.92", "0.26", "6.30"],
+                ["ControlNet", "15.27", "0.26", "6.31"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Among methods that <i>add</i> a condition, ControlNet has the best FID (15.27 vs PITI 19.74 and far below the GANs near 25–26), and its CLIP text-image score (0.26) and aesthetic score (6.31) match unconditional Stable Diffusion, meaning the added spatial control costs essentially nothing in prompt-alignment or perceived quality."
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks (ablations).</b> Two failure modes confirm the design choices. (1) Replace the zero convolutions with standard Gaussian-initialized convolutions and ControlNet's quality \"is roughly the same as ControlNet,\" but the safe convergence guarantee, the ability to start from the pristine model, is lost. (2) Use the lightweight ControlNet-lite (a single thin conv layer instead of the full trainable copy) and it fails to read complex conditions, exactly as the tables above show. The full-capacity copy plus zero-init is what carries the method."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why ControlNet changed image generation",
+          "subtitle": "Impact, lineage, and what it influenced",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The big picture.</b> Before ControlNet, steering a diffusion model meant either retraining it (expensive, risks forgetting) or fighting it with ever-longer prompts (imprecise). ControlNet gave a third path: freeze the giant model, clone a piece of it, and connect with zero convolutions so fine-tuning starts from a guaranteed-safe identity. That recipe is small-data-friendly, single-GPU-trainable, and almost impossible to destabilize."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the zero-conv idea generalizes.</b> The principle, \"attach new trainable capacity to a frozen model in a way that initially does nothing, then let it grow,\" is the same instinct behind residual learning and adapter tuning, but ControlNet showed it could carry a heavy new modality (dense spatial structure) onto a production model without harm. It sits in the lineage of Stable Diffusion / Latent Diffusion (the frozen backbone it controls), classifier-free guidance (which it had to repair for spatial control), and the broader parameter-efficient fine-tuning family alongside LoRA and adapters."
+            },
+            {
+              "type": "p",
+              "html": "<b>Practical breadth.</b> The same architecture, retrained per condition, handles Canny edges, Hough/M-LSD lines, HED soft edges, user scribbles, human pose (OpenPose), depth, surface normals, and semantic segmentation, each a separate ControlNet you can swap in or stack. Because composition is just addition of branch outputs, users mix several controls (pose + depth + edges) freely."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Freeze the production model, never risk forgetting billions of training images.",
+                "Train only a copy of the encoder + middle block (about 23% extra memory, 34% extra time).",
+                "Zero convolutions guarantee training begins at the unmodified model and only adds control.",
+                "Robust from ~50k images on a laptop GPU up to millions of images at scale.",
+                "Spatial fidelity (ADE20K IoU 0.35) and quality (FID 15.27) lead prior conditional methods while matching unconditional Stable Diffusion on CLIP/aesthetic scores."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Trivia and legacy.</b> ControlNet won the Marr Prize (best paper) at ICCV 2023. It was adopted almost immediately by the open-source community and shipped into nearly every Stable Diffusion interface; \"add a ControlNet\" became standard vocabulary for artists and tool builders. Its zero-initialized-branch idea has since reappeared across controllable image, video, and 3D generation, making it one of the most-copied architectural patterns in modern generative modeling."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one-sentence takeaway.</b> ControlNet adds precise spatial control to a frozen text-to-image diffusion model by training a copy of its encoder and joining it back with zero-initialized convolutions, so the fine-tune starts from the perfect original and can only get better, never worse."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

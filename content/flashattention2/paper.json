@@ -1,0 +1,311 @@
+{
+  "title": "FlashAttention-2: Faster Attention with Better Parallelism",
+  "authors": "Tri Dao",
+  "year": "2023",
+  "venue": "arXiv:2307.08691",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The 2x that was left on the table",
+          "subtitle": "Same exact math, twice the speed",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you bought a sports car that can hit 200 mph, but no matter how hard you press the pedal you can only reach 50 mph. That was the situation with attention on a GPU. The original <b>FlashAttention</b> (2022) already made attention fast by being clever about memory, yet it still ran at only <b>25-40% of the GPU's theoretical peak speed</b>. The car was capable of far more. <b>FlashAttention-2</b> is the answer to one question: <i>why are we leaving half the engine idle, and how do we use it?</i>"
+            },
+            {
+              "type": "p",
+              "html": "The headline result: FlashAttention-2 is about <b>2x faster</b> than FlashAttention-1, reaching <b>up to 230 TFLOPs/s on A100 GPUs, which is 73% of the theoretical peak</b>. When you plug it into end-to-end GPT-style training, you train at <b>up to 225 TFLOPs/s per A100, which is 72% model-FLOPs-utilization (MFU)</b>. Crucially, this is <b>exact attention</b>: no approximation, no sparsity, no quality loss. The output is bit-for-bit the same attention you would compute the slow way."
+            },
+            {
+              "type": "quote",
+              "html": "We propose FlashAttention-2, with better work partitioning to address these issues. In particular, we (1) tweak the algorithm to reduce the number of non-matmul FLOPs (2) parallelize the attention computation, even for a single head, across different thread blocks to increase occupancy and (3) within each thread block, distribute the work between warps to reduce communication through shared memory."
+            },
+            {
+              "type": "p",
+              "html": "To feel why this matters: attention is the central operation in every Transformer (GPT, BERT, ViT, Llama). Its cost grows with the <i>square</i> of the sequence length. Halving the wall-clock time of attention means you can train on <b>twice the context length for the same money</b>, or finish the same run in half the time. When models like GPT-3 cost millions of dollars in compute, a 2x speedup on the dominant operation is not a micro-optimization; it is a budget line."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> This paper is by <b>Tri Dao</b>, the same author who led the original FlashAttention. FlashAttention-1 answered <i>'how do we stop wasting memory bandwidth?'</i> FlashAttention-2 answers <i>'now that memory is handled, how do we stop wasting the compute units?'</i> The two papers together are why modern long-context LLMs (32k, 100k+ tokens) are even practical. The kernels became default in PyTorch, Hugging Face, and nearly every LLM training stack."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "Two speeds inside one GPU",
+          "subtitle": "Why attention was bottlenecked in the first place",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before we can speed attention up, we need to know what was slow. A GPU has two very different kinds of resources, and a kernel can be starved by either one. Picture a giant warehouse (slow, huge memory called <b>HBM</b>, ~40-80 GB on an A100) and a tiny workbench right next to the worker (fast, tiny memory called <b>SRAM</b>, ~192 KB per streaming multiprocessor). Fetching from the warehouse is ~10x slower than the workbench. Separately, the GPU has specialized <b>Tensor Cores</b> that do matrix multiplies (matmuls) absurdly fast, and ordinary compute units that do everything else (exp, division, max) far more slowly."
+            },
+            {
+              "type": "p",
+              "html": "An A100 does matmuls at <b>312 TFLOPs/s</b> in FP16, but non-matmul FP32 work runs at only <b>19.5 TFLOPs/s</b>. That is a <b>16x gap</b>. So a single <code>exp()</code> costs as much GPU time as 16 multiply-adds. This single fact drives the whole FlashAttention-2 redesign: <i>every non-matmul operation you can remove is worth 16 matmul operations.</i>"
+            },
+            {
+              "type": "h2",
+              "text": "Standard attention, and why it thrashed memory"
+            },
+            {
+              "type": "p",
+              "html": "Given queries, keys, and values, standard attention computes:"
+            },
+            {
+              "type": "math",
+              "tex": "S = QK^\\top \\in \\mathbb{R}^{N \\times N}, \\quad P = \\mathrm{softmax}(S) \\in \\mathbb{R}^{N \\times N}, \\quad O = PV \\in \\mathbb{R}^{N \\times d}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: <code>Q</code>, <code>K</code>, <code>V</code> are the query, key, value matrices, each of shape <code>N x d</code>, where <code>N</code> is the sequence length (number of tokens) and <code>d</code> is the head dimension (e.g. 64 or 128). <code>S</code> is the <code>N x N</code> matrix of raw attention scores (every token against every other token). The <code>softmax</code> turns each row into a probability distribution, giving <code>P</code>, also <code>N x N</code>. Finally <code>O = PV</code> mixes the values according to those weights, giving the output of shape <code>N x d</code>. The killer is the <code>N x N</code> matrices: for N = 8192 that is 67 million entries <i>per head</i>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it was slow.</b> The naive method writes the full <code>N x N</code> matrices <code>S</code> and <code>P</code> out to the slow warehouse (HBM) and reads them back. That memory traffic, not the math, dominated the runtime. FlashAttention-1's insight was to <i>never materialize</i> <code>S</code> and <code>P</code> in HBM: tile the computation so each block fits on the workbench (SRAM), and use the <b>online softmax</b> trick to combine blocks on the fly. That fixed the memory problem. What it did not fully fix was keeping the Tensor Cores busy, which is exactly what FlashAttention-2 attacks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Online softmax: never store the big matrix",
+          "subtitle": "The tiling trick FlashAttention-2 inherits and refines",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole game is computing a softmax over a row that is too long to hold all at once. Normally softmax needs the whole row first (to find the max, for numerical stability, and the sum of exponentials). FlashAttention processes the row in <b>blocks</b> and corrects its running answer as each new block arrives, like keeping a running average that you adjust every time a new batch of numbers shows up. This is the <b>online softmax</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete mini-example.</b> Suppose a row of scores is <code>[1, 3, 2, 5]</code> and we see it two values at a time. After block <code>[1, 3]</code> the running max is 3. When block <code>[2, 5]</code> arrives, the max jumps to 5, so every exponential we already accumulated was computed against the wrong max and must be rescaled by <code>exp(3 - 5)</code>. FlashAttention-2 does exactly this rescaling, but arranges it so the expensive rescaling happens as rarely as possible."
+            },
+            {
+              "type": "h2",
+              "text": "The per-block update equations"
+            },
+            {
+              "type": "p",
+              "html": "For each new key/value block <code>j</code>, the algorithm maintains a running max <code>m</code>, a running normalizer <code>ell</code>, and an unnormalized output accumulator <code>O</code>. The score block and its exponentials are:"
+            },
+            {
+              "type": "math",
+              "tex": "S^{(j)} = Q\\,K_j^\\top, \\qquad m^{(j)} = \\max\\!\\left(m^{(j-1)},\\ \\mathrm{rowmax}(S^{(j)})\\right), \\qquad \\tilde{P}^{(j)} = \\exp\\!\\left(S^{(j)} - m^{(j)}\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Here <code>S^(j)</code> is the score block of shape <code>B_r x B_c</code> (rows times key-block columns), <code>m^(j)</code> is the per-row running maximum after block j, <code>rowmax</code> takes the largest entry in each row, and <code>P-tilde^(j)</code> are the stabilized exponentials. Subtracting <code>m^(j)</code> before <code>exp</code> keeps numbers from overflowing."
+            },
+            {
+              "type": "math",
+              "tex": "\\ell^{(j)} = e^{m^{(j-1)} - m^{(j)}}\\,\\ell^{(j-1)} + \\mathrm{rowsum}\\!\\left(\\tilde{P}^{(j)}\\right), \\qquad O^{(j)} = \\mathrm{diag}\\!\\left(e^{m^{(j-1)} - m^{(j)}}\\right) O^{(j-1)} + \\tilde{P}^{(j)} V_j"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: <code>ell^(j)</code> is the running sum of exponentials (the softmax denominator-in-progress); the factor <code>e^(m^(j-1) - m^(j))</code> rescales the old sum to the new max. <code>O^(j)</code> is the running unnormalized output of shape <code>B_r x d</code>; the same <code>diag(...)</code> factor rescales the old output, then we add this block's contribution <code>P-tilde^(j) V_j</code>. <code>V_j</code> is the value block of shape <code>B_c x d</code>. Only at the very end do we divide once by <code>ell</code> to normalize."
+            },
+            {
+              "type": "p",
+              "html": "<b>The key FlashAttention-2 tweak (rationale).</b> FlashAttention-1 rescaled the output accumulator by <code>diag(ell)^(-1)</code> on <i>every</i> block, paying many divisions. FlashAttention-2 keeps the output <b>unnormalized</b> throughout and divides by <code>ell</code> only <b>once at the end</b>. It also stores only <code>logsumexp</code> (a single number per row, <code>L = m + log(ell)</code>) instead of both <code>m</code> and <code>ell</code> separately. Because non-matmul ops cost 16x a matmul op, shaving these divisions and exponentials off the inner loop is where a large chunk of the 2x comes from."
+            }
+          ]
+        },
+        {
+          "title": "Improvement 1: stop wasting non-matmul FLOPs",
+          "subtitle": "Cut the expensive 16x-cost operations out of the hot loop",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Recall the brutal asymmetry: on an A100, a matmul FLOP is <b>16x cheaper</b> than a non-matmul FLOP (312 vs 19.5 TFLOPs/s). Attention is mostly two matmuls (<code>QK^T</code> and <code>PV</code>), but the softmax in the middle is all non-matmul: exponentials, maxes, divisions. Even though softmax is a tiny fraction of the FLOP count, at a 16x penalty it eats a big fraction of the <i>time</i>. So the first lever is purely: do fewer non-matmul operations."
+            },
+            {
+              "type": "p",
+              "html": "<b>Two concrete changes.</b>"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Defer the rescaling: don't divide the output accumulator by the running sum on every inner iteration. Carry the unnormalized output and divide once at the very end. If a query row sees 64 key-blocks, that turns 64 rounds of division into 1.",
+                "Avoid even the per-block rescale of the output where possible: instead of multiplying the output by exp(m_old - m_new) each step, the bookkeeping is restructured so the rescale touches only the small running statistics, not the full O accumulator, when it can be deferred."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Worked sense of scale.</b> Suppose a query block attends over a sequence of N = 8192 with key-blocks of width 256, so 32 inner iterations. FlashAttention-1 did a vector division of the <code>B_r x d</code> output block on each of those 32 steps. FlashAttention-2 does <b>zero</b> of those, plus one final normalization. At 16x cost per non-matmul op, removing 31 of 32 division passes is a real fraction of total runtime, not a rounding error."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it still gives exact attention.</b> Division is associative with the rest of the accumulation here: scaling each contribution by <code>1/ell</code> as you go versus scaling the final sum by <code>1/ell</code> at the end gives the identical number (up to floating-point, which is the same order as before). So this is a pure scheduling change, not an approximation. The output matches standard attention bit-comparably to FlashAttention-1."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design tension.</b> You might ask: why not remove the online max entirely and skip stabilization? Because then <code>exp</code> of large scores overflows to infinity and the attention silently produces NaNs. The max-subtraction is non-negotiable for numerical stability. FlashAttention-2's contribution is removing the <i>redundant</i> non-matmul work (the repeated divisions), not the necessary work."
+            }
+          ]
+        },
+        {
+          "title": "Improvement 2: parallelize over sequence length",
+          "subtitle": "Keep all 108 SMs busy even when the batch is tiny",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A GPU is only fast if all its workers have something to do. An A100 has <b>108 streaming multiprocessors (SMs)</b>. FlashAttention-1 launched one <i>thread block</i> per (batch, head) pair and parallelized only over those. That is fine when <code>batch x heads</code> is large (say 64 x 16 = 1024 blocks, plenty to fill 108 SMs). But long-context training pushes the sequence length up and the batch size <i>down</i> to fit in memory. With batch 1 and 8 heads you have only 8 thread blocks for 108 SMs, and the GPU sits <b>93% idle</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>The fix:</b> also parallelize across the <b>sequence-length dimension</b>. In the forward pass, FlashAttention-2 assigns different blocks of query rows to different thread blocks, which run independently because each query block computes its own output without needing other query blocks. Now even at batch 1, head 1, a 8192-token sequence split into blocks of 128 gives 64 independent thread blocks, comfortably filling the machine."
+            },
+            {
+              "type": "quote",
+              "html": "We parallelize the attention computation, even for a single head, across different thread blocks to increase occupancy (utilization of GPU resources) when the batch size and number of heads are small."
+            },
+            {
+              "type": "h2",
+              "text": "Forward vs. backward: who owns the loop"
+            },
+            {
+              "type": "p",
+              "html": "An important detail is which loop is on the outside. In the <b>forward pass</b>, the outer loop is over query blocks and the inner loop over key/value blocks (Figure 1 in the paper, the swap from FlashAttention-1). This means a whole row block of the output is finished by one thread block, with no cross-block communication. In the <b>backward pass</b>, the natural parallelism is over key/value blocks (each <code>dK</code>, <code>dV</code> accumulates contributions from all queries), so the outer loop is over key/value blocks instead. Choosing the right loop order per pass is what makes each one embarrassingly parallel."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this was not done before (rationale).</b> Parallelizing over sequence length means multiple thread blocks may need to combine partial results for overlapping work, especially in the causal-mask and backward cases, which requires careful use of <b>atomic adds</b> and a clean split so blocks stay independent. FlashAttention-1 took the simpler route of one block per head. As long-context models became the priority, the small-batch regime became the common case, making this parallelization essential rather than optional."
+            },
+            {
+              "type": "p",
+              "html": "<b>Causal-mask bonus.</b> With a causal mask, a query only attends to earlier keys, so roughly half the score blocks are fully masked out. FlashAttention-2 <b>skips</b> those blocks entirely instead of computing-then-masking, giving close to the expected ~1.7x speedup on causal attention versus the non-causal cost."
+            }
+          ]
+        },
+        {
+          "title": "Improvement 3: split work across warps, not across memory",
+          "subtitle": "The 'split-K vs split-Q' choice inside a thread block",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Zoom in one more level. A thread block is made of <b>warps</b> (groups of 32 threads that march in lockstep); a typical block has 4 or 8 warps. How you divide the attention work among those warps decides how much they have to talk to each other through shared memory, and shared-memory round-trips are slow. This is the third lever."
+            },
+            {
+              "type": "p",
+              "html": "<b>The two options, by analogy.</b> Imagine 4 cooks (warps) preparing one big dish (one output block). FlashAttention-1 used a <b>'split-K'</b> scheme: each cook handles a slice of the <i>keys/values</i> (the K dimension). The problem is that every cook ends up with a partial answer for the <i>same</i> output rows, so they must pool their partial sums in shared memory and synchronize, a lot of back-and-forth. FlashAttention-2 uses <b>'split-Q'</b> instead: each cook owns a slice of the <i>query</i> rows and computes those rows fully on its own. No cook needs another cook's partial result."
+            },
+            {
+              "type": "quote",
+              "html": "We divide the warps to avoid the 'split-K' scheme. While FlashAttention splits K and V across 4 warps while keeping Q accessible by all warps... in FlashAttention-2 we instead split Q across 4 warps while keeping K and V accessible by all warps. After each warp performs matrix multiply to get a slice of QK^T, they just need to multiply with their shared slice of V to get their corresponding slice of the output. There is no need to communicate between warps."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{split-K: } O_{\\text{rows}} = \\sum_{w=1}^{W} (P_{:,w}\\, V_w) \\;\\Rightarrow\\; \\text{must reduce across warps}; \\qquad \\text{split-Q: } O_w = P_w\\, V \\;\\Rightarrow\\; \\text{independent per warp}"
+            },
+            {
+              "type": "p",
+              "html": "Reading this: in <b>split-K</b>, warp <code>w</code> computes a partial product <code>P_{:,w} V_w</code> over its slice of the key dimension, and all <code>W</code> warps must <b>sum</b> their partials to form the output rows, which forces a shared-memory reduction and synchronization. In <b>split-Q</b>, warp <code>w</code> owns query slice <code>P_w</code>, multiplies by the full (shared) <code>V</code>, and directly produces output rows <code>O_w</code> that belong only to it. The sum across warps disappears, and so does the shared-memory traffic and the sync."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why split-Q wins here (and the trade-off).</b> The reason FlashAttention-1 used split-K at all is that for a plain matmul, splitting the contraction dimension balances work nicely. But in attention the softmax couples a full row of scores, so a warp that owns only part of the keys cannot finish a row alone, hence the reduction. Splitting Q sidesteps that because each query row's softmax is self-contained once that warp has scanned all keys. The cost is each warp re-reads the shared <code>K</code> and <code>V</code> tiles, but those are already in fast shared memory, so the re-read is cheap compared with the reduction it eliminates."
+            },
+            {
+              "type": "p",
+              "html": "<b>The three levers together.</b> Fewer non-matmul ops (lever 1) + parallel over sequence length to fill all SMs (lever 2) + split-Q to kill warp communication (lever 3) compound into roughly 2x, lifting attention from ~35% of peak to ~73% of peak on the A100."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "The numbers: ~2x faster, 73% of peak",
+          "subtitle": "Microbenchmarks and end-to-end training",
+          "pdfPages": [9, 10, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The promise was 'use the engine we already paid for.' Here is the speedometer. On attention microbenchmarks on an A100 (80GB SXM4, FP16/BF16), FlashAttention-2 reaches <b>up to 230 TFLOPs/s, which is 73% of the 312 TFLOPs/s theoretical peak</b>. Against FlashAttention-1 it is about <b>2x faster</b>, and against a standard PyTorch attention baseline it is up to <b>~9x faster</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["Comparison", "Speedup / Throughput"],
+              "rows": [
+                ["FlashAttention-2 vs FlashAttention-1", "~2x faster"],
+                ["FlashAttention-2 vs standard PyTorch attention", "up to ~9x faster"],
+                ["Attention forward+backward, A100", "up to 230 TFLOPs/s (73% of peak)"],
+                ["End-to-end GPT training, per A100", "up to 225 TFLOPs/s (72% MFU)"],
+                ["vs Megatron-style optimized GPT", "up to 1.3x end-to-end"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the end-to-end number is the one that matters.</b> A fast kernel that only helps in a microbenchmark is a parlor trick. The paper measures full GPT-style training and reports <b>up to 225 TFLOPs/s per A100, 72% model-FLOPs-utilization</b>. MFU is the fraction of the GPU's peak FLOPs that turn into useful model math; 72% is excellent for real training (many production runs live around 40-50%). It also beats a well-tuned Megatron-LM baseline by up to <b>1.3x end-to-end</b>, because attention is a large enough slice of a Transformer that halving it moves the whole training step."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where the gains are largest.</b> The speedup is biggest exactly where lever 2 (sequence-length parallelism) bites: <b>long sequences with small batch</b>, and the <b>causal</b> setting where ~half the blocks are skipped. The paper sweeps head dimensions of 64 and 128 and shows the advantage holds across them, with the head-dim-128 causal case among the strongest. On an H100 the same kernels reach even higher absolute throughput, though the paper's headline tuning is reported on A100."
+            },
+            {
+              "type": "p",
+              "html": "<b>A note on what is NOT traded away.</b> Throughout, the output is <b>exact attention</b>. There is no sparsity, no low-rank approximation, no quantization in the math. A practitioner can swap FlashAttention-2 in under the model and expect identical results to within floating-point noise, which is why adoption was nearly frictionless: it is a drop-in faster implementation of the same function."
+            },
+            {
+              "type": "p",
+              "html": "<b>Honest limitation the paper states.</b> Even at 73% of peak there is headroom; the remaining gap is partly compilation/scheduling overhead and partly that some shapes (very small head dims, odd sequence lengths) do not tile perfectly. FlashAttention-2's kernels are also hand-tuned for specific GPU generations (Ampere/Hopper), so each new architecture needs re-tuning rather than getting the speedup for free."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why this paper is load-bearing for modern LLMs",
+          "subtitle": "From a kernel trick to the default everywhere",
+          "pdfPages": [1, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the warps and TFLOPs. The real story is an arc of three questions. FlashAttention-1 asked <i>'why are we wasting memory bandwidth?'</i> and made attention IO-aware by tiling in SRAM. FlashAttention-2 asks <i>'why are we wasting the compute units?'</i> and fixes work partitioning across thread blocks and warps. Each paper roughly doubled something; together they took attention from a memory-bound, ~10%-utilization operation to a compute-bound, ~70%-utilization one."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete downstream impact.</b> Because attention's cost scales with the square of sequence length, halving its constant factor is what made <b>long-context models economically sane</b>. The 16k, 32k, and 100k+ token context windows that arrived in 2023-2024 ride directly on these kernels. A 2x cheaper attention is also a 2x longer trainable context at fixed budget, a 2x bigger batch, or a finished run in half the wall-clock time."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Became the default attention kernel in PyTorch (scaled_dot_product_attention backends), Hugging Face Transformers, and most LLM training/inference stacks.",
+                "Underpins efficient training and serving of GPT-, Llama-, and Mistral-class models, where attention is a dominant cost.",
+                "Set the template for 'IO-aware, partition-aware' kernel design that later work (FlashAttention-3 on Hopper, FlashDecoding for inference) built on directly."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The transferable lesson.</b> The biggest wins in deep learning systems often come not from new math but from <b>respecting the hardware</b>: know your two memory speeds (HBM vs SRAM), know your two compute speeds (matmul vs non-matmul), and schedule the algorithm so the fast resources stay busy and the slow ones stay quiet. FlashAttention-2 changed <i>zero</i> of the attention mathematics and still doubled the speed, purely by partitioning work to match the GPU. That mindset, more than any single equation, is the paper's lasting contribution."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trivia.</b> Author <b>Tri Dao</b> went on to co-create the Mamba state-space model and FlashAttention-3. FlashAttention-2's design choices, parallelize over sequence length, prefer split-Q, defer normalization, are now considered standard 'first moves' when writing any custom attention-like CUDA kernel. The paper is short and almost entirely about scheduling, a reminder that a well-placed engineering insight can be as influential as a new architecture."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

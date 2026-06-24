@@ -1,0 +1,153 @@
+{
+  "title": "Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data",
+  "authors": "Yang, et al.",
+  "year": "2024",
+  "venue": "arXiv:2401.10891",
+  "sections": [
+    {
+      "title": "Abstract & Motivation",
+      "pages": [
+        {
+          "title": "A foundation model for depth from a single photo",
+          "subtitle": "What the paper builds and why",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem.</b> <i>Monocular depth estimation</i> (MDE) asks: given a single ordinary photo, how far is every pixel from the camera? Humans do this effortlessly from one eye, but it is geometrically ambiguous, a small near object and a large far object can project to the same image. Fields like robotics, autonomous driving, and AR need a model that produces sensible depth for <b>any</b> image, indoor or outdoor, foggy or dark, close-up or ultra-remote. The catch: training such a model normally needs depth labels, and those come from expensive LiDAR, stereo rigs, or structure-from-motion, so datasets have stayed small." },
+            { "type": "p", "html": "<b>The idea in one line.</b> Stop fighting to label more data. Instead, harvest <b>62 million unlabeled internet photos</b>, have a teacher model guess their depth (a <i>pseudo-label</i>), and train a student on the giant pseudo-labeled pile plus a small set of 1.5M real labels. Coverage, not cleverness, is what makes a foundation model generalize." },
+            { "type": "quote", "html": "Without pursuing novel technical modules, we aim to build a simple yet powerful foundation model dealing with any images under any circumstances. To this end, we scale up the dataset by designing a data engine to collect and automatically annotate large-scale unlabeled data (~62M), which significantly enlarges the data coverage and thus is able to reduce the generalization error." },
+            { "type": "p", "html": "<b>Concrete analogy.</b> Think of a teacher who has read 1.5M carefully graded essays. Rather than wait years for more graded essays, the teacher grades 62M random essays off the internet and hands those graded copies to a student. The grades are imperfect, but the sheer <i>variety</i> of topics the student now sees, fog, neon, deserts, crowds, teaches it to handle situations no curated dataset ever contained." },
+            { "type": "p", "html": "<b>Why two extra tricks are needed.</b> Naively dumping pseudo-labels in did <b>not</b> help, because the student just copied the teacher. So the authors (1) make the student's job <i>harder</i> than the teacher's by hitting unlabeled images with strong distortions, forcing it to learn robust features, and (2) keep the student's features semantically rich by aligning them to a frozen <b>DINOv2</b> encoder. Those two design choices are the heart of the paper." },
+            { "type": "p", "html": "<b>The payoff.</b> The resulting model beats the strong MiDaS v3.1 baseline on six zero-shot benchmarks, and when fine-tuned with metric labels it sets new state-of-the-art on NYUv2 ($\\delta_1$ 0.984) and KITTI ($\\delta_1$ 0.982). The same encoder even transfers to semantic segmentation. The released models became one of the most-used open depth backbones of 2024." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Data Engine",
+      "pages": [
+        {
+          "title": "Why unlabeled monocular images are the secret weapon",
+          "subtitle": "1.5M labeled + 62M pseudo-labeled",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "<b>The question this page answers.</b> Depth labels are scarce and costly. Where do you get tens of millions of training images cheaply, and why would unlabeled ones help at all when you already have decent labeled data?" },
+            { "type": "p", "html": "<b>Three advantages of raw monocular photos.</b> The paper argues plain single images beat sensor-labeled or stereo data on three axes: they are <b>cheap</b> (no special hardware, they exist everywhere), <b>diverse</b> (they cover far more scene types, which is exactly what generalization needs), and <b>easy to annotate</b> (a pre-trained MDE model labels one in a single forward pass, producing <i>denser</i> maps than LiDAR and skipping costly stereo matching)." },
+            { "type": "p", "html": "<b>Concrete scale.</b> The labeled set is 1.5M images from 6 datasets (BlendedMVS, DIML, HRWSI, IRS, MegaDepth, TartanAir). The unlabeled set is ~62M images from 8 huge public datasets, the biggest contributors being ImageNet-21K (13.1M), SA-1B (11.1M), LSUN (9.8M), and BDD100K (8.2M). None of their labels are used, only the raw pixels." },
+            { "type": "table", "headers": ["Role", "Source datasets", "Approx. images"], "rows": [
+              ["Labeled (train teacher)", "BlendedMVS, DIML, HRWSI, IRS, MegaDepth, TartanAir", "1.5M"],
+              ["Unlabeled (pseudo-labeled)", "SA-1B, ImageNet-21K, LSUN, BDD100K, Open Images V7, Places365, Google Landmarks, Objects365", "62M"]
+            ]},
+            { "type": "p", "html": "<b>The pipeline (Figure 2).</b> Three steps. (1) Train a <i>teacher</i> $T$ on the labeled set $D_l$. (2) Run $T$ over every unlabeled image to make a pseudo-labeled set $\\hat{D}_u$. (3) Train a fresh <i>student</i> $S$ on $D_l \\cup \\hat{D}_u$. Formally the sets are $D_l = \\{(x_i, d_i)\\}_{i=1}^{M}$ and $D_u = \\{u_i\\}_{i=1}^{N}$, and the pseudo-labeled set is built directly from the teacher's predictions." },
+            { "type": "math", "tex": "\\hat{D}_u = \\{(u_i,\\, T(u_i)) \\mid u_i \\in D_u\\}_{i=1}^{N}" },
+            { "type": "p", "html": "<b>Reading it term by term.</b> $u_i$ is the $i$-th raw unlabeled image (an $H\\times W\\times 3$ RGB tensor); $T(u_i)$ is the teacher's predicted depth map for it ($H\\times W$, a per-pixel disparity); the pair $(u_i, T(u_i))$ is one self-generated training example; $N \\approx 62$M is the number of unlabeled images. The teacher sees <b>clean</b> images here, the distortions described next are applied only to the student's input." },
+            { "type": "p", "html": "<b>Design detail.</b> The teacher's encoder is initialized from <b>DINOv2</b> pre-trained weights for a stronger starting point, and a separate semantic-segmentation model detects sky pixels and pins their disparity to 0 (infinitely far), a small fix that prevents the classic 'sky looks close' failure." }
+          ]
+        },
+        {
+          "title": "Learning labeled images: the affine-invariant loss",
+          "subtitle": "How to train on many datasets at once",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "<b>The problem this page answers.</b> Different depth datasets are recorded in incompatible units and ranges, one in meters from LiDAR, another as unitless stereo disparity, each with its own zero point and scale. If you train one model to match all their <i>absolute</i> numbers, the conflicting scales tear it apart. <b>The intuition:</b> give up on matching absolute depth and match <i>relative</i> depth instead. Before comparing prediction to ground truth, re-center and re-scale both so they sit on a common footing, zero median and unit average deviation. This is the <i>affine-invariant</i> trick MiDaS pioneered: the loss ignores any global shift and scale, so a meters dataset and a disparity dataset can train the same network in harmony. Concretely, depth is first converted to disparity space via $d = 1/t$ (near objects get large values) and normalized to $0\\sim1$ per image. Then the per-image labeled loss is a mean over pixels:" },
+            { "type": "math", "tex": "\\mathcal{L}_l = \\frac{1}{HW} \\sum_{i=1}^{HW} \\rho\\!\\left(d_i^{*},\\, d_i\\right)" },
+            { "type": "p", "html": "<b>Term by term.</b> $H,W$ are image height and width, so $HW$ is the pixel count; the sum runs over every pixel $i$; $d_i^{*}$ is the model's predicted disparity at pixel $i$ and $d_i$ is the ground-truth disparity; $\\rho(\\cdot,\\cdot)$ is the affine-invariant per-pixel error defined next. Dividing by $HW$ makes the loss independent of image size." },
+            { "type": "math", "tex": "\\rho(d_i^{*}, d_i) = \\left| \\hat{d}_i^{*} - \\hat{d}_i \\right|, \\qquad \\hat{d}_i = \\frac{d_i - t(d)}{s(d)}" },
+            { "type": "p", "html": "<b>Term by term.</b> $\\hat{d}_i$ is the <i>normalized</i> disparity, prediction and ground truth are each normalized the same way then compared with absolute error. The hat $\\hat{(\\cdot)}$ always means 'after alignment'. The shift $t(d)$ and scale $s(d)$ are computed per image directly from the values, defined next, so the comparison is invariant to any global affine change." },
+            { "type": "math", "tex": "t(d) = \\mathrm{median}(d), \\qquad s(d) = \\frac{1}{HW} \\sum_{i=1}^{HW} \\left| d_i - t(d) \\right|" },
+            { "type": "p", "html": "<b>Term by term.</b> $t(d)$ is the <i>median</i> of all disparities in the map, a robust center that ignores outliers, used as the shift. $s(d)$ is the mean absolute deviation from that median, used as the scale. Subtracting $t(d)$ forces zero translation; dividing by $s(d)$ forces unit scale. After this, two maps that differ only by 'everything twice as far' become identical, so the loss never penalizes that." },
+            { "type": "p", "html": "<b>Why this design.</b> Using median + mean-absolute-deviation (rather than mean + standard deviation) makes alignment robust to a few wildly wrong pixels, common at object edges and in the sky. The trade-off: the model only ever learns <i>relative</i> depth, not metric meters. The paper accepts this, MiDaS and ZoeDepth both show a strong relative model fine-tunes into an excellent metric one (exactly what Tables 3-5 later demonstrate). The labeled set is built from 6 datasets (1.5M images), fewer than MiDaS v3.1's 12, deliberately excluding NYUv2 and KITTI so they stay valid zero-shot test sets." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Unleashing Unlabeled Data",
+      "pages": [
+        {
+          "title": "Challenge the student with a harder target",
+          "subtitle": "Why naive self-training fails, and CutMix fixes it",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "<b>The puzzle this page answers.</b> The authors added 62M pseudo-labeled images and... it did <b>nothing</b>. The student matched the labeled-only baseline. Why would more data not help, and how do you force it to?" },
+            { "type": "quote", "html": "We conjecture that, with already sufficient labeled images in our case, the extra knowledge acquired from additional unlabeled images is rather limited. Especially considering the teacher and student share the same pre-training and architecture, they tend to make similar correct or false predictions on the unlabeled set." },
+            { "type": "p", "html": "<b>The diagnosis.</b> Teacher and student start from the same DINOv2 weights and same architecture, so on a clean unlabeled image they predict almost the same depth. The student is being 'taught' things it already agrees with, no new signal. <b>The fix:</b> make the student's job <i>strictly harder</i> than the teacher's. The teacher labels the clean image; the student must reproduce that label from a <b>heavily distorted</b> version. Now it cannot just copy, it must learn distortion-invariant, robust features." },
+            { "type": "p", "html": "<b>Two kinds of distortion.</b> (1) <i>Strong color distortion</i>, color jittering plus Gaussian blur, so the model can't rely on exact hues. (2) <i>Strong spatial distortion</i>, <b>CutMix</b>, which pastes a rectangle from one image onto another. CutMix was invented for image classification and is rarely used for depth; here it is the key spatial perturbation." },
+            { "type": "p", "html": "<b>The result.</b> With these perturbations, the 62M images finally pay off, generalization improves significantly (ablation Table 9: AbsRel on KITTI drops from 0.085 to 0.081 just from adding $S$). Without the harder target, the same unlabeled images are inert. This is the paper's central empirical lesson: <i>distribution coverage helps only if the student is forced to actually learn from it.</i>" }
+          ]
+        },
+        {
+          "title": "The CutMix unlabeled loss",
+          "subtitle": "Splicing two images so the student can't copy",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "<b>The question this page answers.</b> The previous page said the spatial perturbation is <b>CutMix</b>, but CutMix splices two different images together, so which teacher label applies to which pixel, and how is the loss computed across the seam? <b>Concretely:</b> take two unlabeled images $u_a$ and $u_b$, build a binary mask $M$ that is 1 inside a random rectangle and 0 outside, then splice them:" },
+            { "type": "math", "tex": "u_{ab} = u_a \\odot M + u_b \\odot (1 - M)" },
+            { "type": "p", "html": "<b>Term by term.</b> $u_a, u_b$ are two raw unlabeled images ($H\\times W\\times 3$); $M$ is a binary mask ($H\\times W$) with a rectangular region set to 1; $\\odot$ is element-wise (per-pixel) multiplication; $1-M$ is the complementary region. So $u_{ab}$ shows $u_a$ inside the rectangle and $u_b$ everywhere else, a Frankenstein image the teacher never sees." },
+            { "type": "p", "html": "<b>The unlabeled loss.</b> The teacher labels $u_a$ and $u_b$ <i>separately</i> on their clean versions; the student must predict the right depth in each region of the spliced image. Two region losses are computed and then averaged by area:" },
+            { "type": "math", "tex": "\\mathcal{L}_u^{M} = \\rho\\!\\left(S(u_{ab}) \\odot M,\\ T(u_a) \\odot M\\right), \\qquad \\mathcal{L}_u^{1-M} = \\rho\\!\\left(S(u_{ab}) \\odot (1-M),\\ T(u_b) \\odot (1-M)\\right)" },
+            { "type": "math", "tex": "\\mathcal{L}_u = \\frac{\\sum M}{HW}\\, \\mathcal{L}_u^{M} + \\frac{\\sum (1-M)}{HW}\\, \\mathcal{L}_u^{1-M}" },
+            { "type": "p", "html": "<b>Term by term.</b> $S(u_{ab})$ is the student's depth on the spliced image; $T(u_a), T(u_b)$ are the teacher's clean pseudo-labels for the two source images; $\\rho$ is the same affine-invariant error from the labeled loss; masking by $M$ restricts a loss to the rectangle and by $1-M$ to the rest. The weights $\\frac{\\sum M}{HW}$ and $\\frac{\\sum(1-M)}{HW}$ are the fraction of pixels in each region, so the final $\\mathcal{L}_u$ is an area-weighted average, no region dominates just because it's bigger. CutMix is applied with 50% probability." },
+            { "type": "p", "html": "<b>Why the teacher stays clean.</b> The asymmetry is deliberate: the student processes the <i>distorted</i> spliced image $u_{ab}$, but the teacher labels the <i>clean</i> originals $u_a, u_b$. That gap is the whole point, it gives the student a target it cannot reach by simply mirroring the teacher, forcing genuinely new, perturbation-robust knowledge. Feed the teacher distorted inputs too and the gap, and the benefit, vanishes. The CutMix idea itself came from image classification (Yun et al., 2019), here repurposed as the spatial half of the harder optimization target." }
+          ]
+        },
+        {
+          "title": "Semantic-assisted perception with DINOv2",
+          "subtitle": "Inherit semantics by feature alignment, not segmentation",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "<b>The question this page answers.</b> A good depth model should also <i>understand</i> scenes, know a car is a car, a wall is a wall, since that high-level knowledge helps disambiguate depth and combats noise in the pseudo-labels. The classic way is an auxiliary semantic-segmentation head, and the authors tried exactly that: they auto-labeled the unlabeled images with a RAM + GroundingDINO + HQ-SAM pipeline (a 4000-class space) and trained a joint depth+segmentation model. No gain. Their explanation: collapsing a rich image into a handful of discrete class IDs <i>throws away</i> most of the semantic information, leaving too little signal to help an already-strong depth model." },
+            { "type": "quote", "html": "Considering the excellent performance of DINOv2 in semantic-related tasks, we propose to maintain the rich semantic priors from it with a simple feature alignment loss. This not only enhances the MDE performance, but also yields a multi-task encoder." },
+            { "type": "p", "html": "<b>The better idea.</b> Skip discrete labels entirely. DINOv2 is a self-supervised vision transformer whose internal <i>feature vectors</i> are famously semantically rich (it can do retrieval and segmentation with frozen weights). So instead of predicting class IDs, just pull the depth model's features toward DINOv2's continuous features. A high-dimensional feature carries far more meaning than a single class index." },
+            { "type": "math", "tex": "\\mathcal{L}_{feat} = 1 - \\frac{1}{HW} \\sum_{i=1}^{HW} \\cos\\!\\left(f_i,\\, f_i'\\right)" },
+            { "type": "p", "html": "<b>Term by term.</b> The sum is over all $HW$ pixels (really, spatial token positions); $f_i$ is the feature vector the depth model $S$ produces at position $i$; $f_i'$ is the feature at the same position from a <b>frozen</b> DINOv2 encoder; $\\cos(f_i, f_i')$ is cosine similarity (1 when the vectors point the same way, 0 when orthogonal). Subtracting the average similarity from 1 turns 'be similar' into a loss to minimize. There is no learned projector between $f$ and $f'$, the authors found a randomly-initialized projector makes the loss explode and dominate early training." },
+            { "type": "p", "html": "<b>The crucial tolerance margin.</b> Naively forcing $f_i = f_i'$ everywhere would be wrong: DINOv2 gives a car's front and rear <i>nearly identical</i> features (same object), yet those parts are at <i>different depths</i>. So they add a margin $\\alpha$, if $\\cos(f_i, f_i')$ already exceeds $\\alpha$, that pixel is dropped from $\\mathcal{L}_{feat}$. The model gets DINOv2's semantic awareness <i>and</i> keeps the fine part-level distinctions depth needs. <b>The overall objective</b> is then simply the average of the three pieces:" },
+            { "type": "math", "tex": "\\mathcal{L} = \\tfrac{1}{3}\\left(\\mathcal{L}_l + \\mathcal{L}_u + \\mathcal{L}_{feat}\\right)" },
+            { "type": "p", "html": "<b>Term by term.</b> $\\mathcal{L}_l$ is the supervised affine-invariant loss on labeled images, $\\mathcal{L}_u$ is the perturbed pseudo-label loss on unlabeled images (with CutMix), and $\\mathcal{L}_{feat}$ is the DINOv2 feature-alignment loss, equal weighting, no tuned coefficients, fitting the paper's 'simple yet effective' ethos. <b>Bonus:</b> because the encoder is pulled toward DINOv2 semantics, it doubles as a strong segmentation backbone (why the same encoder later tops Cityscapes and ADE20K). The architecture itself is deliberately plain: a <b>DINOv2</b> encoder (ViT-S/B/L) plus a <b>DPT</b> decoder, the same recipe MiDaS used." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Zero-shot depth: beating MiDaS everywhere",
+          "subtitle": "Six benchmarks, never seen in training",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "<b>What zero-shot means here.</b> The model is trained, then tested on six datasets it never saw, KITTI, NYUv2, Sintel, DDAD, ETH3D, DIODE. This is the real test of a foundation model: does the coverage from 62M images actually transfer to unseen domains?" },
+            { "type": "p", "html": "<b>The two metrics.</b> <i>AbsRel</i> (absolute relative error) is the average of $|d^{*}-d|/d$ over pixels, lower is better. $\\delta_1$ is the fraction of pixels whose predicted depth is within a 1.25x ratio of the truth, higher is better. So you want AbsRel down and $\\delta_1$ up." },
+            { "type": "table", "headers": ["Method", "KITTI AbsRel / $\\delta_1$", "NYUv2 AbsRel / $\\delta_1$", "Sintel AbsRel / $\\delta_1$"], "rows": [
+              ["MiDaS v3.1 (ViT-L)", "0.127 / 0.850", "0.048 / 0.980", "0.587 / 0.699"],
+              ["Depth Anything (ViT-S)", "0.080 / 0.936", "0.053 / 0.972", "0.464 / 0.739"],
+              ["Depth Anything (ViT-B)", "0.080 / 0.939", "0.046 / 0.979", "0.432 / 0.756"],
+              ["Depth Anything (ViT-L)", "0.076 / 0.947", "0.043 / 0.981", "0.458 / 0.760"]
+            ]},
+            { "type": "p", "html": "<b>The headline.</b> The striking comparison is KITTI: MiDaS scores 0.127 AbsRel / 0.850 $\\delta_1$, Depth Anything ViT-L scores <b>0.076 / 0.947</b>, and it does so <i>without training on a single KITTI image</i>, whereas MiDaS actually uses KITTI training images (so it isn't even truly zero-shot there). The authors win on the strict setting and the opponent's home turf at once." },
+            { "type": "p", "html": "<b>Even the small model wins.</b> Depth Anything ViT-S has 24.8M parameters versus MiDaS ViT-L's 335.3M, yet ViT-S already beats MiDaS on KITTI, Sintel, DDAD, and ETH3D. The data engine matters more than model size, a foundation-model theme. Three scales are released: ViT-S (24.8M), ViT-B (97.5M), ViT-L (335.3M)." },
+            { "type": "p", "html": "<b>The ablation that proves the thesis (Table 9).</b> Starting from labeled-only (KITTI AbsRel 0.085): adding raw unlabeled images barely moves it (0.085), adding the strong-perturbation target $S$ drops it to 0.081, and adding the semantic loss $\\mathcal{L}_{feat}$ reaches <b>0.076</b>. Each of the two tricks contributes; neither alone, nor the raw data alone, is enough." }
+          ]
+        },
+        {
+          "title": "Fine-tuning, transfer, and impact",
+          "subtitle": "Metric depth SOTA, segmentation, and ControlNet",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            { "type": "p", "html": "<b>The question this page answers.</b> A relative-depth model is useful, but can the pre-trained encoder be <i>fine-tuned</i> into a state-of-the-art metric model, and does its semantic richness transfer to entirely different tasks? Both, yes." },
+            { "type": "p", "html": "<b>In-domain metric depth (Tables 3-4).</b> Fine-tuned with metric labels inside the ZoeDepth framework, Depth Anything sets new SOTA. On NYUv2 it pushes $\\delta_1$ from the prior best 0.964 (VPD) to <b>0.984</b> and AbsRel from 0.069 to <b>0.056</b>. On KITTI it improves $\\delta_1$ to <b>0.982</b> and AbsRel to <b>0.046</b>, beating a field of specialized architectures with a relatively basic depth head." },
+            { "type": "table", "headers": ["NYUv2", "$\\delta_1 \\uparrow$", "AbsRel $\\downarrow$"], "rows": [
+              ["VPD (prev. best)", "0.964", "0.069"],
+              ["ZoeDepth", "0.951", "0.077"],
+              ["Depth Anything", "0.984", "0.056"]
+            ]},
+            { "type": "p", "html": "<b>Zero-shot metric depth (Table 5).</b> Following ZoeDepth, they swap only the MiDaS encoder for the Depth Anything encoder and re-test on unseen domains. On SUN RGB-D, $\\delta_1$ jumps 0.545 -> <b>0.660</b>; on Virtual KITTI 2, AbsRel improves 0.106 -> <b>0.085</b>. A better backbone, nothing else changed, gives a better generalizable metric model." },
+            { "type": "p", "html": "<b>Semantic segmentation transfer (Tables 7-8).</b> Because the encoder inherited DINOv2 semantics, it fine-tunes into a top segmentation backbone. On Cityscapes it hits <b>86.2 mIoU</b>, beating ImageNet-21K-pretrained Swin-L (84.3) and ConvNeXt-XL (84.6). On ADE20K it lifts the prior best from 58.3 to <b>59.4</b>. One encoder, depth and semantics both, the multi-task backbone the authors promised." },
+            { "type": "p", "html": "<b>Encoder head-to-head (Tables 10-11).</b> The trained encoder beats both its parents in downstream fine-tuning: vs MiDaS, NYUv2 $\\delta_1$ 0.951 -> 0.984 and ADE20K mIoU 52.4 -> 59.4; and it even improves on its own DINOv2 initialization (NYUv2 AbsRel 0.066 -> 0.056). Large-scale MDE training enhances an already-strong self-supervised encoder." },
+            { "type": "p", "html": "<b>Downstream applications.</b> Better depth means better depth-conditioned generation, the authors re-train a <b>ControlNet</b> on Depth Anything maps for higher-quality image synthesis and video editing (Figure 4)." },
+            { "type": "p", "html": "<b>Context and legacy.</b> Depth Anything is a direct intellectual descendant of <b>MiDaS</b> (affine-invariant multi-dataset training), <b>DINOv2</b> (the semantic backbone), and the <i>Segment Anything</i> philosophy of scaling data over architecture, the name is an explicit homage. Its core lesson, that pseudo-labeling 62M images works only when the student is challenged with a harder target and anchored to rich semantic priors, made it a default open depth model and seeded the even larger <b>Depth Anything V2</b> follow-up." }
+          ]
+        }
+      ]
+    }
+  ]
+}

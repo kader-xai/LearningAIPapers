@@ -1,0 +1,290 @@
+{
+  "title": "Textbooks Are All You Need (phi-1)",
+  "authors": "Gunasekar, Zhang, et al. (Microsoft)",
+  "year": "2023",
+  "venue": "arXiv:2306.11644",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A 1.3B model that punches far above its weight",
+          "subtitle": "The central claim: data quality beats data quantity",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By 2023, the recipe for a strong code model was settled: scrape as much of GitHub as you can, build the biggest model your GPUs can hold, and train on hundreds of billions of tokens. <b>phi-1</b> asks a heretical question: what if most of that scraped code is <i>bad teaching material</i>? Real-world code is full of boilerplate, dead snippets, files with no context, configuration noise, and undocumented one-liners. A human learning to program from a random sample of GitHub would learn slowly. The paper's bet is that a model is no different, and that a small, carefully curated <b>\"textbook-quality\"</b> dataset can teach Python far more efficiently than a giant noisy one."
+            },
+            {
+              "type": "p",
+              "html": "Concretely: <b>phi-1</b> is a 1.3-billion-parameter Transformer trained on only about <b>7 billion tokens</b> of data, using <b>8 A100 GPUs for roughly 4 days</b>. It then reaches <b>50.6% pass@1 on HumanEval</b> and <b>55.5% pass@1 on MBPP</b>. For comparison, models with 10x the parameters trained on 100x the data were scoring lower on the same benchmarks at the time. The headline is the title itself, a riff on \"Attention Is All You Need\": the bottleneck was never compute or parameters, it was the quality of what the model reads."
+            },
+            {
+              "type": "quote",
+              "html": "\"We follow the 'textbooks are all you need' approach... our phi-1 model attains pass@1 accuracy 50.6% on HumanEval and 55.5% on MBPP, despite being an order of magnitude smaller than competing models, both in terms of dataset and model size.\""
+            },
+            {
+              "type": "p",
+              "html": "The data has three pieces, and the whole paper is really about how each was built: (1) a <b>filtered code dataset</b>, roughly 6B tokens of GitHub Python selected by a quality classifier; (2) a <b>synthetic textbook dataset</b>, under 1B tokens of GPT-3.5-generated Python textbooks; and (3) <b>CodeExercises</b>, a small ~180M-token set of synthetic exercise/solution pairs used only for fine-tuning. The base model trained on (1)+(2) is called <b>phi-1-base</b>; fine-tuning it on (3) gives <b>phi-1</b>."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>phi-1</b> — 1.3B params, fine-tuned, 50.6% HumanEval pass@1",
+                "<b>phi-1-base</b> — 1.3B params, pretrain only (no CodeExercises), 29% HumanEval",
+                "<b>phi-1-small</b> — 350M params, same recipe, still ~45% HumanEval",
+                "Training cost — 8 A100s, ~4 days, ~7B total training tokens seen over 8 epochs"
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why this mattered: it launched the <b>phi</b> series (phi-1.5, phi-2, phi-3) and made \"data quality over scale\" a mainstream research direction. It also raised the question the rest of the paper circles back to: where does the surprising jump in capability after fine-tuning come from? We will see that a tiny exercise dataset triggers emergent skills the base model never explicitly saw."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Idea: Quality Over Quantity",
+      "pages": [
+        {
+          "title": "Why textbook-quality data changes the scaling math",
+          "subtitle": "What a noisy token costs you, in plain terms",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Scaling laws (Kaplan et al., Chinchilla) tell you how loss falls as you add parameters <i>N</i> and tokens <i>D</i>. They quietly assume every token is equally informative. phi-1's thesis is that this assumption is false for code: a large fraction of GitHub is, from a learning standpoint, almost worthless. The paper's claim is that fixing the <b>data</b> shifts the entire scaling curve, so a 1.3B model on great data beats a 10B+ model on average data."
+            },
+            {
+              "type": "h2",
+              "text": "An analogy: two students, two libraries"
+            },
+            {
+              "type": "p",
+              "html": "Imagine teaching a student Python. Student A reads a curated stack of well-written textbooks: each concept introduced, illustrated with a clean example, then practiced. Student B reads a random 100x-larger pile of source files scraped from the internet, half of which are config blobs, auto-generated stubs, code with no comments, or snippets that only make sense inside a project they never see. Student A will be the better programmer after a fraction of the reading. phi-1 is Student A; a GitHub-scrape model is Student B."
+            },
+            {
+              "type": "p",
+              "html": "The paper is blunt about why raw web code is poor teaching material. The authors observe that standard code datasets are <i>not</i> good for learning the logic of coding:"
+            },
+            {
+              "type": "quote",
+              "html": "\"Many samples are not self-contained, meaning that they depend on other modules or files that are external to the snippet, making them hard to understand without additional context.\""
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Not self-contained</b> — a function relies on modules or files the model never sees, so it cannot learn the full reasoning.",
+                "<b>Trivial or no computation</b> — boilerplate, config, dead code: the example teaches almost nothing.",
+                "<b>Skewed toward complexity/noise</b> — useful algorithmic logic is buried in framework glue and edge-case handling.",
+                "<b>Poorly documented / inconsistent</b> — bad style and missing explanation give the model the wrong signal about what good code looks like."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "So the design goal becomes precise: build data where each example is <b>self-contained, instructive, well-balanced in difficulty, and clearly explained</b> — exactly the qualities a good textbook has. The rest of the method is three concrete ways to manufacture such data. The payoff, shown in the paper's Figure 2, is that the <b>quality</b> of the data (filtered vs. unfiltered) dominates both model size and training compute in determining HumanEval performance: the curves for filtered data sit far above unfiltered, at every scale."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Method",
+      "pages": [
+        {
+          "title": "Dataset 1 — filtering GitHub with a quality classifier",
+          "subtitle": "Letting GPT-4 judge what is worth learning from",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The first ingredient is <b>filtered code</b>: take a large deduplicated slice of Python from <b>The Stack</b> and StackOverflow, and keep only the files with high <i>educational value</i>. The problem is scale, you cannot have a human read millions of files. The trick is to have a strong model (GPT-4) annotate a small sample for educational value, then train a cheap classifier to imitate that judgement on the whole corpus."
+            },
+            {
+              "type": "h2",
+              "text": "The recipe, step by step"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Start from ~35M Python files (The Stack + StackOverflow), deduplicated.",
+                "Sample ~100k files and ask <b>GPT-4</b> to label each: \"determine its educational value for a student whose goal is to learn basic coding concepts.\"",
+                "Train a <b>random-forest classifier</b> on those labels, using output embeddings of the code as features (cheap to run on all 35M files).",
+                "Keep the files the classifier scores as high educational value → ~<b>6B tokens</b> of filtered code, the bulk of pretraining."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why use GPT-4 to label but not to filter everything? Cost. Labeling 35M files with GPT-4 would be prohibitively expensive, so GPT-4 only annotates a 100k seed set; the random forest is the workhorse. This is a form of <b>weak-to-strong distillation of judgement</b>: a powerful model's taste is compressed into a fast filter."
+            },
+            {
+              "type": "p",
+              "html": "Figure 3 in the paper makes the contrast vivid. A <b>high educational value</b> snippet is a small, self-contained function with a clear purpose, like computing a numerical result with an actual algorithm. A <b>low educational value</b> snippet is something like importing a library and configuring constants with no real computation, or code so context-dependent it teaches nothing. The classifier learns to prefer the former."
+            },
+            {
+              "type": "p",
+              "html": "The effect is dramatic. The paper reports that a model trained on the <b>filtered</b> ~6B-token subset substantially outperforms a model trained on the full <b>unfiltered</b> ~35B-token corpus, even though the latter has roughly 6x more data. More data was actively <i>worse</i> than less, better data. This single comparison is the empirical heart of the \"quality over quantity\" claim."
+            },
+            {
+              "type": "p",
+              "html": "<b>Caveat the authors raise:</b> using GPT-4/GPT-3.5 to build data risks <b>contamination</b> (the teacher leaking benchmark answers) and the filter learning idiosyncratic preferences. The paper addresses this later with an n-gram decontamination study against HumanEval, finding the gains are not explained by leakage."
+            }
+          ]
+        },
+        {
+          "title": "Dataset 2 — generating synthetic textbooks with GPT-3.5",
+          "subtitle": "Manufacturing diversity on purpose",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Filtering finds good existing code, but even good GitHub is repetitive and uneven in coverage. The second ingredient <b>creates</b> ideal teaching material from scratch: the <b>CodeTextbook</b> dataset, under <b>1B tokens</b> of Python textbook-style content written by <b>GPT-3.5</b>. Each piece interleaves natural-language explanation with relevant code snippets, exactly like a real Python textbook page."
+            },
+            {
+              "type": "h2",
+              "text": "The hard part is diversity, not fluency"
+            },
+            {
+              "type": "p",
+              "html": "If you just ask GPT-3.5 \"write a Python textbook\" thousands of times, you get thousands of near-identical introductions to <code>for</code> loops. A model trained on that learns a narrow slice and overfits. The authors' key move is to <b>inject randomness into the prompt</b>: constrain each generation by a randomly chosen topic and audience so the outputs spread across the space of programming concepts. The paper notes:"
+            },
+            {
+              "type": "quote",
+              "html": "\"The main challenge in creating a high quality dataset that is naturally diverse is somehow injecting diversity into the prompts... we generate prompts that constrain the content of the textbook to be about a particular topic, audience, or function name.\""
+            },
+            {
+              "type": "p",
+              "html": "A concrete illustration: rather than one generic prompt, you template thousands of variants like <code>\"Write a textbook section explaining {topic} for a {audience}, including a worked example using {function_name}.\"</code> and fill the slots from random vocabularies. The combinatorial explosion of (topic x audience x function) forces breadth, so the model sees many concepts explained many ways."
+            },
+            {
+              "type": "p",
+              "html": "So the pretraining corpus, named <b>CodeTextbook</b>, is the union of two pieces: the ~6B filtered-code tokens (Dataset 1) plus the &lt;1B synthetic-textbook tokens (Dataset 2). Training the 1.3B Transformer on this combination for 8 epochs (~7B tokens of effective optimization) produces <b>phi-1-base</b>. At this stage the model already reaches roughly <b>29% pass@1 on HumanEval</b>, strong for its size, but the big jump is still to come."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why synthetic over more scraping?</b> Synthetic data lets you control coverage and explanation quality directly, you are no longer at the mercy of what humans happened to upload. The risk is mode collapse and factual errors from the generator; the diversity-injection trick is the primary defense, and the strong downstream results suggest it largely worked."
+            }
+          ]
+        },
+        {
+          "title": "Dataset 3 — CodeExercises and the fine-tuning surprise",
+          "subtitle": "180M tokens that unlock emergent skills",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The third ingredient is small but pivotal: <b>CodeExercises</b>, roughly <b>180M tokens</b> of synthetic exercises, each a Python <b>docstring describing a task</b> followed by a <b>correct function body</b> that solves it. This format mirrors HumanEval (complete the function given its docstring), so it teaches the model to do exactly the thing the benchmark measures. Fine-tuning <b>phi-1-base</b> on CodeExercises produces <b>phi-1</b>."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{phi-1} = \\text{Finetune}\\big(\\underbrace{\\text{phi-1-base}}_{\\text{trained on CodeTextbook, } \\sim 7\\text{B tok}},\\ \\underbrace{\\text{CodeExercises}}_{\\sim 180\\text{M tok}}\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: <b>phi-1-base</b> is the 1.3B-parameter Transformer after pretraining on CodeTextbook (the ~6B filtered + &lt;1B synthetic tokens). <b>CodeExercises</b> is the ~180M-token set of (docstring, solution) pairs, an order of magnitude smaller than pretraining. <b>Finetune</b> is ordinary supervised next-token training continued on this set. The output <b>phi-1</b> is the final 1.3B model. Note nothing here changes the architecture or size, only the data the same weights are exposed to."
+            },
+            {
+              "type": "p",
+              "html": "The surprise is the size of the jump. Fine-tuning on this tiny set lifts HumanEval pass@1 from <b>~29% (phi-1-base) to 50.6% (phi-1)</b>, nearly doubling accuracy with under 3% as much data as pretraining. More striking, the paper documents that fine-tuning unlocks abilities the exercises never directly taught:"
+            },
+            {
+              "type": "quote",
+              "html": "\"Surprisingly, the model after finetuning also exhibits a substantial improvement in executing tasks that are not featured in the finetuning dataset.\""
+            },
+            {
+              "type": "p",
+              "html": "The paper's worked example (Figure 2.1 in the text) shows phi-1-base struggling to use an external library it barely saw during pretraining, while phi-1, after fine-tuning only on simple exercises, can suddenly invoke that library correctly. The exercises did not contain that library, so the fine-tuning did not <i>teach</i> the skill, it <b>consolidated and made accessible</b> latent knowledge already in the base model. The reading: pretraining builds a messy reservoir of competence; a small, clean, task-shaped fine-tune acts like a key that reorganizes those weights into usable behavior."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Improved use of external libraries not present in CodeExercises.",
+                "Better handling of longer, multi-step task descriptions.",
+                "More reliable adherence to the docstring's intent.",
+                "Emergent skills suggest fine-tuning <i>elicits</i> rather than <i>installs</i> capability."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Beating the giants on HumanEval and MBPP",
+          "subtitle": "The numbers, and the size of the contradiction they create",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The benchmark is <b>pass@1</b>: generate one program per problem, run the hidden unit tests, and report the fraction that pass. <b>HumanEval</b> (164 hand-written Python problems) and <b>MBPP</b> (Mostly Basic Python Problems) are the standard tests. phi-1 posts <b>50.6% on HumanEval</b> and <b>55.5% on MBPP</b>, with 1.3B parameters and ~7B training tokens."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Params", "Train tokens", "HumanEval pass@1"],
+              "rows": [
+                ["phi-1", "1.3B", "~7B", "50.6%"],
+                ["phi-1-base (no finetune)", "1.3B", "~7B", "~29%"],
+                ["phi-1-small", "350M", "~7B", "~45%"],
+                ["CodeGen-Mono 16B", "16B", "~577B", "29.3%"],
+                ["StarCoder", "15.5B", "~1T", "33.6%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the table as a contradiction of the scaling-law worldview. phi-1 has roughly <b>1/12 the parameters of StarCoder and ~1/100 the training tokens</b>, yet outscores it by ~17 points on HumanEval. The variable that moved was not <i>N</i> or <i>D</i>, it was data quality. Even <b>phi-1-small</b>, at 350M parameters, lands around <b>45%</b>, still beating models 40x its size, which shows the result is about the recipe and not a single lucky configuration."
+            },
+            {
+              "type": "p",
+              "html": "<b>The obvious objection:</b> the data was made by GPT-3.5/GPT-4, did the benchmark answers leak in? The authors run an <b>n-gram overlap decontamination</b> against HumanEval, prune any suspiciously similar CodeExercises problems, retrain, and find phi-1 still dominates. They argue further that the model solves problems whose <i>structure</i> never appears in training, which contamination cannot explain. The capability is real, not memorized."
+            },
+            {
+              "type": "p",
+              "html": "They also stress-test with an independent evaluation: because HumanEval itself could be gamed, they have GPT-4 grade phi-1's outputs on a fresh set of unseen problems, and the ranking holds. The consistency across HumanEval, MBPP, and a held-out GPT-4-graded set is what makes the \"quality over scale\" claim credible rather than a benchmark artifact."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact & Significance",
+      "pages": [
+        {
+          "title": "What phi-1 changed about how we think about data",
+          "subtitle": "From the phi series to the modern data-curation era",
+          "pdfPages": [1, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "phi-1's lasting contribution is a <b>shift in priorities</b>. Before it, the implicit recipe for a better model was \"more parameters, more tokens, more GPUs.\" phi-1 showed a third axis, <b>data quality</b>, that can dominate the other two for a fixed task. It reframed dataset construction from a janitorial preprocessing step into a first-class research problem with its own techniques: classifier-based filtering, synthetic generation, and diversity injection."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Launched the phi series</b> — phi-1.5 extended the recipe to commonsense reasoning, phi-2 and phi-3 scaled it to general small-but-strong LLMs.",
+                "<b>Popularized synthetic + filtered data</b> — \"textbook-quality\" data and LLM-as-judge filtering became standard tools across the field.",
+                "<b>Made small models respectable</b> — fueled the on-device / edge-LLM push where 1-3B models must be genuinely capable.",
+                "<b>Reframed scaling laws</b> — empirical evidence that the data distribution, not just N and D, sets the curve."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "It connects directly to its lineage. The title nods to <b>\"Attention Is All You Need\"</b> (Vaswani et al., 2017); the GPT-4-as-labeler filter is a cousin of <b>RLHF</b> and <b>Constitutional AI</b>'s use of model judgement; and the synthetic-data approach echoes self-instruct and distillation lines like <b>Alpaca</b>. phi-1 fused these into one tight demonstration on code."
+            },
+            {
+              "type": "p",
+              "html": "The most cited scientific takeaway is the <b>fine-tuning emergence</b> result: a 180M-token exercise set roughly doubled HumanEval accuracy and surfaced skills the exercises never contained. This is strong evidence that fine-tuning often <i>elicits</i> latent capability rather than installing new knowledge, a finding that shaped how the field thinks about instruction tuning and the value of small, clean, task-aligned datasets."
+            },
+            {
+              "type": "p",
+              "html": "<b>Honest limitations, stated by the authors:</b> phi-1 is specialized to Python and to the function-completion format; it is weaker on prompts far from its training distribution, and synthetic data inherits the generator's blind spots and potential errors. The contribution is not a universal model but a <b>proof of concept</b>, that with the right data, far less of everything else is needed. As the title insists: textbooks are all you need."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

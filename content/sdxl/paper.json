@@ -1,0 +1,355 @@
+{
+  "title": "SDXL: Improving Latent Diffusion Models for High-Resolution Synthesis",
+  "authors": "Podell, et al. (Stability AI)",
+  "year": "2023",
+  "venue": "arXiv:2307.01952",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "What SDXL is and why it exists",
+          "subtitle": "A 3x bigger latent diffusion model that finally makes 1024px text-to-image look good",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By mid-2023, Stable Diffusion was the open-source workhorse for text-to-image generation, but its output had a recognizable look: faces went strange, hands fell apart, text was gibberish, and anything at 1024x1024 tended to repeat objects or smear. Meanwhile closed models like Midjourney and DALL-E 2 produced images people actually wanted to keep. <b>SDXL</b> is Stability AI's answer: keep the same efficient <i>latent diffusion</i> recipe, but scale the network, fix several quiet bugs in how training data was used, and add a second-stage <i>refiner</i> for final polish."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: in a side-by-side human preference study, users picked SDXL over the previous Stable Diffusion 1.5 and 2.1 by a wide margin, with no extra prompt engineering. It does this while staying a <i>latent</i> model that runs on a single consumer-grade GPU, which is why it became the default open base model for an entire ecosystem of fine-tunes, LoRAs, and ControlNets."
+            },
+            {
+              "type": "quote",
+              "html": "We present SDXL, a latent diffusion model for text-to-image synthesis. Compared to previous versions of Stable Diffusion, SDXL leverages a three times larger UNet backbone."
+            },
+            {
+              "type": "h2",
+              "text": "The four ingredients"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>A 3x larger UNet</b> (~2.6B parameters) with more attention placed in the lower-resolution, semantically richer blocks.",
+                "<b>Two text encoders</b> run together (OpenCLIP ViT-bigG plus CLIP ViT-L) so prompts are understood more richly than with one encoder.",
+                "<b>Novel conditioning tricks</b> -- the model is told the original image size and the crop coordinates used during training, fixing two data bugs that previously hurt quality.",
+                "<b>A separate refinement model</b> applied as a second diffusion stage to sharpen local detail."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The rest of this lesson walks through each piece in order: first the architecture, then the size and crop conditioning (the most original idea in the paper), then multi-aspect training, then the refiner, and finally the human-preference numbers that justify all the engineering."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "A bigger UNet and two text encoders",
+          "subtitle": "Where the 3x growth went, and why prompts get fed through two CLIPs at once",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Latent diffusion does not denoise pixels. It runs the whole diffusion process inside a compressed <i>latent space</i>: an autoencoder squeezes a 1024x1024x3 image down to a small 128x128x4 latent tensor (an 8x downsample per side), the <b>UNet</b> denoises in that small space, and the decoder blows the result back up to pixels. This is what makes Stable Diffusion cheap enough to run on one GPU. SDXL keeps this scheme but rebuilds the UNet."
+            },
+            {
+              "type": "h2",
+              "text": "Why make the UNet bigger -- and where?"
+            },
+            {
+              "type": "p",
+              "html": "A UNet processes the latent at several resolutions, from coarse (low spatial resolution, lots of channels, captures <i>what</i> is in the image) to fine (high resolution, captures <i>where the edges are</i>). The SDXL authors observed that the heavy lifting of meaning happens in the coarse blocks, so they concentrated the new parameters there: they shifted the bulk of the <b>transformer (attention) blocks</b> into the lower-resolution stages and dropped the highest-resolution attention entirely. The UNet grows from roughly 860M parameters in SD 1.5 to about <b>2.6B</b> in SDXL."
+            },
+            {
+              "type": "table",
+              "headers": ["", "SDXL", "SD 1.4 / 1.5", "SD 2.0 / 2.1"],
+              "rows": [
+                ["UNet parameters", "2.6B", "860M", "865M"],
+                ["Transformer blocks", "[0, 2, 10]", "[1, 1, 1, 1]", "[1, 1, 1, 1]"],
+                ["Channel multiplier", "[1, 2, 4]", "[1, 2, 4, 4]", "[1, 2, 4, 4]"],
+                ["Text encoder(s)", "CLIP ViT-L + OpenCLIP ViT-bigG", "CLIP ViT-L", "OpenCLIP ViT-H"],
+                ["Context dim", "2048", "768", "1024"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the <code>Transformer blocks</code> row term by term. SDXL has <b>three</b> UNet levels (not four), with <code>[0, 2, 10]</code> attention blocks at the high, mid, and low spatial resolutions. The <code>0</code> means the highest-resolution stage has <i>no</i> attention at all -- attention there is expensive (cost grows quadratically with the number of spatial positions) and adds little semantic value. The <code>10</code> means the lowest-resolution stage is attention-heavy, because that is where global composition is decided."
+            },
+            {
+              "type": "h2",
+              "text": "Two text encoders instead of one"
+            },
+            {
+              "type": "p",
+              "html": "SD 1.x used one CLIP text encoder; SD 2.x swapped in a bigger OpenCLIP. SDXL uses <b>both at once</b>: OpenCLIP ViT-bigG and CLIP ViT-L. The trick is mechanically simple -- run the prompt through each encoder, take the per-token embeddings, and <b>concatenate them along the channel axis</b>. With ViT-bigG contributing 1280 channels and ViT-L contributing 768, the conditioning sequence has 1280 + 768 = <b>2048</b> channels per token. SDXL additionally concatenates the <i>pooled</i> text embedding from ViT-bigG into the global conditioning vector."
+            },
+            {
+              "type": "math",
+              "tex": "c_{\\text{text}} = \\big[\\, E_{\\text{bigG}}(y)\\;\\Vert\\; E_{\\text{ViT-L}}(y)\\,\\big] \\in \\mathbb{R}^{77 \\times 2048}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $y$ is the text prompt; $E_{\\text{bigG}}$ and $E_{\\text{ViT-L}}$ are the two frozen CLIP text encoders; each maps the prompt to a sequence of token embeddings (77 tokens is CLIP's context length); $\\Vert$ is concatenation along the channel/feature dimension; and the result $c_{\\text{text}}$, of shape 77x2048, is the cross-attention conditioning the UNet reads at every denoising step. Two encoders see complementary things -- one may catch a rare proper noun the other misses -- so concatenating gives the UNet a richer description for free."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design rationale:</b> the authors deliberately did <i>not</i> chase a brand-new mega-encoder. Reusing two off-the-shelf frozen CLIPs is cheap, keeps the well-understood cross-attention plumbing, and the concatenation is trivial to implement. This is the recurring SDXL philosophy -- scale and combine known-good parts rather than invent from scratch."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Conditioning",
+      "pages": [
+        {
+          "title": "Size conditioning: stop throwing away small images",
+          "subtitle": "How telling the model the original resolution fixes a quiet data-filtering bug",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is a problem nobody talked about before SDXL. To train at, say, 512x512, the old pipeline discarded every training image smaller than 512px on a side -- otherwise you would have to upscale them, baking in blur. The paper reports that for SD this filtering threw away a <b>huge fraction</b> of the dataset (in one of their data variants, discarding everything below 256px removed about 39% of the data). Throwing away that much data hurts the model. But keeping the small images by upscaling teaches the model to produce blurry results. A genuine dilemma."
+            },
+            {
+              "type": "h2",
+              "text": "The fix: make the model size-aware"
+            },
+            {
+              "type": "p",
+              "html": "Instead of discarding small images, SDXL <b>keeps all of them</b> and simply <i>tells</i> the UNet each image's original width and height as an extra conditioning input during training. A photo that was natively 128x128 is labeled as such; a crisp 1024x1024 photo is labeled as such. At inference time you ask for a large size (e.g. 1024x1024) and the model gives you its sharp, high-resolution behaviour -- because it learned to associate that label with crisp detail, and the blurry-upscale label with low-res sources."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete analogy:</b> imagine training a forger by showing thousands of paintings, some museum-quality, some cheap blurry prints, all mixed together unlabeled. The forger learns a muddy average. Now stamp each example with a quality tag -- 'masterpiece' or 'cheap print'. At test time you request 'masterpiece' and get the good behaviour. The size label is exactly that quality tag, and it is free because every image already knows its own dimensions."
+            },
+            {
+              "type": "math",
+              "tex": "c_{\\text{size}} = \\big[\\, f(h_{\\text{orig}}) \\;\\Vert\\; f(w_{\\text{orig}}) \\,\\big]"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $h_{\\text{orig}}$ and $w_{\\text{orig}}$ are the integer height and width of the image <i>before</i> any resizing; $f(\\cdot)$ is a sinusoidal (Fourier) positional embedding that turns each integer into a smooth vector the network can use; $\\Vert$ concatenates the two; and the resulting $c_{\\text{size}}$ is added into the same global conditioning vector that already carries the timestep and pooled text embedding. No architecture change is needed -- it rides along an existing channel."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works:</b> the model can now treat 'a low-res source' as a distinct, learnable condition rather than contaminating every output with it. The paper shows a sweep where increasing the conditioned size at inference smoothly increases sharpness and detail -- proof the model genuinely learned to use the signal rather than ignore it."
+            }
+          ]
+        },
+        {
+          "title": "Crop conditioning: fix the decapitated cats",
+          "subtitle": "Why random training crops produced off-center subjects, and the one-line cure",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Second quiet bug. Diffusion models train on square batches, but real photos come in all shapes. The standard fix was to resize the short side to the target length and then take a <b>random square crop</b>. That random crop often slices a subject in half -- the famous symptom is generated images of cats and people with their heads cut off, or objects pushed awkwardly to the frame edge. The model had silently learned that cropping out part of the subject is normal, because that is what its training data looked like."
+            },
+            {
+              "type": "h2",
+              "text": "The fix: condition on the crop coordinates"
+            },
+            {
+              "type": "p",
+              "html": "SDXL keeps the cheap random-crop augmentation but <b>records the crop's top-left coordinates</b> $(c_{\\text{top}}, c_{\\text{left}})$ and feeds them to the UNet, exactly like the size signal. During training the model sees that off-center, cropped-looking images carry a non-zero crop coordinate. At inference you simply set $(c_{\\text{top}}, c_{\\text{left}}) = (0, 0)$ -- 'crop from the very corner, no shift' -- and the model produces a well-centered, fully-contained subject."
+            },
+            {
+              "type": "math",
+              "tex": "c_{\\text{crop}} = \\big[\\, f(c_{\\text{top}}) \\;\\Vert\\; f(c_{\\text{left}}) \\,\\big], \\qquad \\text{inference: } (c_{\\text{top}}, c_{\\text{left}}) = (0, 0)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $c_{\\text{top}}, c_{\\text{left}}$ are the pixel offsets of the crop window's top-left corner, sampled uniformly during training; $f(\\cdot)$ is the same Fourier embedding used for size; the two are concatenated and added into the global conditioning vector alongside $c_{\\text{size}}$. Setting both to 0 at inference is the instruction 'this image was not shifted', which is what you want for a centered result."
+            },
+            {
+              "type": "p",
+              "html": "The paper's Figure 4 makes this vivid: sweeping the crop coordinates at inference deterministically slides the subject around the frame, and only $(0,0)$ keeps it centered. The fix costs nothing -- the crop coordinates already exist, they were just being discarded -- yet it removes one of the most-mocked failure modes of earlier Stable Diffusion."
+            },
+            {
+              "type": "quote",
+              "html": "During training, we uniformly sample crop coordinates ... and feed them into the model as conditioning parameters ... At inference time, the user can set [them] to (0, 0) to obtain object-centered samples."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> both the size and crop tricks are instances of a general principle -- if a nuisance property of your data is corrupting outputs, do not filter or fight it, <i>condition on it</i> so the model can learn it explicitly and you can dial it to a clean value at test time. Size and crop conditioning combine into a single small global vector and are the most cited contribution of the SDXL paper."
+            }
+          ]
+        },
+        {
+          "title": "Multi-aspect training",
+          "subtitle": "Teaching one model to natively render 16:9, 1:1, and portrait without distortion",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Real images are not square, but training had been square-only. A model trained only on 1024x1024 squares, when asked for a 16:9 landscape, tends to distort or duplicate content. SDXL adds a <b>multi-aspect-ratio finetuning</b> stage so the base model can natively produce common aspect ratios."
+            },
+            {
+              "type": "h2",
+              "text": "How the buckets work"
+            },
+            {
+              "type": "p",
+              "html": "The data is partitioned into <b>buckets</b>, each a different width-height pair, all chosen so the total pixel count stays near 1024x1024 = ~1,048,576 pixels. Examples of buckets the paper lists include 1024x1024 (1:1), 1152x896 and 1216x832 (landscape), and 896x1152, 832x1216 (portrait). Every image is routed to the bucket whose aspect ratio is closest. Within a training step, every image in the batch comes from the <i>same</i> bucket, so they share one tensor shape and batch cleanly."
+            },
+            {
+              "type": "table",
+              "headers": ["Bucket (WxH)", "Aspect", "~Total pixels"],
+              "rows": [
+                ["1024 x 1024", "1:1", "1,048,576"],
+                ["1152 x 896", "~9:7 landscape", "1,032,192"],
+                ["1216 x 832", "~3:2 landscape", "1,011,712"],
+                ["896 x 1152", "~7:9 portrait", "1,032,192"],
+                ["832 x 1216", "~2:3 portrait", "1,011,712"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The point of the constant-pixel constraint: the latent tensors stay roughly the same size across buckets, so memory and compute per step stay stable no matter the aspect ratio. Switch buckets between steps, keep them uniform within a step."
+            },
+            {
+              "type": "p",
+              "html": "The target aspect ratio is also passed in as a conditioning signal (as a Fourier-embedded $(h_{\\text{target}}, w_{\\text{target}})$), so the same model can be <i>asked</i> for a specific shape at inference. Multi-aspect training is run as a <b>finetuning stage after</b> the square-resolution pretraining, not from scratch -- the model first learns content on squares, then learns to lay it out in different rectangles."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it matters in practice:</b> this is why SDXL can give you a clean 16:9 wallpaper or a 2:3 portrait directly, where SD 1.5 needed outpainting hacks. Combined with size and crop conditioning, all the geometry-related conditioning signals (size, crop, target aspect) live in one small concatenated vector fed to the UNet."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Refiner",
+      "pages": [
+        {
+          "title": "The two-stage pipeline and the refinement model",
+          "subtitle": "A second specialist diffusion model that polishes the base model's output",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Even with the bigger UNet, the base model's latents sometimes lack crisp local texture -- skin, hair, fabric, fine background detail. Rather than make one enormous model do everything, SDXL ships a <b>second model, the refiner</b>, specialized for high-quality, high-resolution local detail. Total parameters across both stages come to about <b>3.5B</b>."
+            },
+            {
+              "type": "h2",
+              "text": "How the handoff works"
+            },
+            {
+              "type": "p",
+              "html": "The base model runs the normal text-to-image diffusion and produces a latent. Then, instead of decoding straight to pixels, that latent is handed to the refiner, which is a separate latent diffusion model trained on the <i>same</i> latent space but specialized on high-resolution data and the <b>first (low-noise) denoising stages</b>. Using a SDEdit-style approach, the refiner adds a small amount of noise back and denoises again, sharpening detail without changing the overall composition."
+            },
+            {
+              "type": "math",
+              "tex": "z_{\\text{base}} \\xrightarrow{\\;\\text{add noise to level } t_0\\;} z_{t_0} \\xrightarrow{\\;\\text{refiner denoise}\\;} z_{\\text{refined}} \\xrightarrow{\\;\\text{decode}\\;} \\text{image}"
+            },
+            {
+              "type": "p",
+              "html": "Reading the pipeline: $z_{\\text{base}}$ is the latent the base UNet produced; we re-noise it to a modest noise level $t_0$ (not all the way back to pure noise -- only enough to let the refiner repaint fine detail); the refiner denoises from $t_0$ down to produce $z_{\\text{refined}}$; finally the autoencoder decoder turns the refined latent into the output image. Because we only re-noise partially, the subject and layout from the base stage survive; only texture is reworked."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a separate model rather than more base training?</b> The two stages have different jobs -- the base model decides <i>what</i> and <i>where</i> (global composition, prompt adherence); the refiner decides <i>how it looks up close</i> (local fidelity). Splitting them lets each specialize and lets users skip the refiner when they want raw speed. It is an optional second pass, not a hard dependency."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trade-off:</b> the refiner roughly doubles the model footprint and adds inference cost, which is why much of the open-source community later ran SDXL base alone or with lightweight refinement. But in the paper's evaluation the base+refiner combination scores highest, so it is the intended full pipeline."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Human preference vs. SD 1.5 and 2.1",
+          "subtitle": "The numbers that justify the engineering",
+          "pdfPages": [2, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Image generation quality is notoriously hard to score automatically -- FID and CLIP-score correlate poorly with what people actually prefer. So the SDXL team ran a <b>user preference study</b>: show annotators a prompt and the outputs of two models, ask which they like, count the wins."
+            },
+            {
+              "type": "h2",
+              "text": "The headline win rate"
+            },
+            {
+              "type": "p",
+              "html": "Against the previous open Stable Diffusion versions, SDXL (with the refiner) wins decisively. The paper reports SDXL+refiner is preferred over SD 1.5 about <b>48.4%</b> of the time and over SD 2.1 about <b>43.6%</b> of the time -- versus single-digit win rates for the older models in the same comparison. In a four-way comparison SDXL takes the clear top spot."
+            },
+            {
+              "type": "table",
+              "headers": ["Comparison", "SDXL+Refiner preferred", "Older model preferred"],
+              "rows": [
+                ["SDXL vs. SD 1.5", "~48.4%", "single digits"],
+                ["SDXL vs. SD 2.1", "~43.6%", "single digits"],
+                ["SDXL base vs. SDXL+refiner", "refiner adds a further bump", "--"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading the gap:</b> a win rate near 48% against ~10% (the rest being ties or the loss) means that when annotators expressed a preference, they overwhelmingly chose SDXL. Crucially this used <i>no</i> prompt engineering -- the same plain prompts were given to every model -- so the gain is the model's, not the user's clever wording."
+            },
+            {
+              "type": "quote",
+              "html": "We achieve this by leveraging a three times larger UNet ... multiple novel conditioning schemes ... and by introducing a separate diffusion-based refinement model."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveat:</b> the authors are candid that automated metrics tell a muddier story. They note that on FID-style scores SDXL does not always beat the older models, which is precisely why they lean on human preference. This is itself a useful lesson -- for perceptual quality, ask humans, because the standard metrics can be actively misleading."
+            },
+            {
+              "type": "p",
+              "html": "The paper also lists honest <b>limitations</b>: hands and fine anatomy still fail sometimes, photorealism is imperfect, complex multi-object scenes with spatial relations can leak attributes between objects, and legible long text is still hard. SDXL narrowed the gap to closed models without closing it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why SDXL mattered and what it became",
+          "subtitle": "The open base model that an entire ecosystem was built on",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "SDXL's lasting importance is less about any single trick and more about being a <b>strong, fully open base model</b>. By releasing the weights, Stability AI gave the community a 1024px foundation to fine-tune, and a wave of LoRAs, DreamBooth fine-tunes, ControlNets, and IP-Adapters were built directly on SDXL within months."
+            },
+            {
+              "type": "h2",
+              "text": "Ideas that spread"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Condition on nuisance metadata</b> (size, crop, aspect) rather than filtering it away -- a reusable recipe that later models adopted for resolution and quality control.",
+                "<b>Concatenate multiple text encoders</b> for richer conditioning at near-zero extra engineering cost.",
+                "<b>Two-stage base-plus-refiner</b> generation, separating global composition from local detail.",
+                "<b>Multi-aspect bucketed training</b> with constant pixel budget, now a standard trick in open-source image-model training."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "It also connects backward and forward in the diffusion lineage. SDXL is the direct descendant of the original <i>Latent Diffusion Models</i> / Stable Diffusion line (Rombach et al., 2022), which itself built on DDPM (Ho et al., 2020) and classifier-free guidance. The refiner's partial re-noising borrows from <b>SDEdit</b>. Downstream, SDXL became the springboard for <b>SDXL-Turbo</b> (adversarial distillation to one-step generation) and informed the design of later transformer-based diffusion systems like Stable Diffusion 3."
+            },
+            {
+              "type": "p",
+              "html": "<b>The takeaway lesson:</b> SDXL is a case study in disciplined scaling. Almost none of its wins came from a single clever new module. They came from making the UNet bigger in the right places, using two encoders instead of one, and -- most memorably -- noticing that the data pipeline was quietly teaching the model bad habits (blurry low-res sources, off-center crops) and fixing that by <i>conditioning on the metadata you already had</i>. Look at your data pipeline before you reach for a bigger model."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

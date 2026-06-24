@@ -1,0 +1,353 @@
+{
+  "title": "Qwen2-VL: Enhancing Vision-Language Models Perception at Any Resolution",
+  "authors": "Wang, et al. (Alibaba)",
+  "year": "2024",
+  "venue": "arXiv:2409.12191",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Seeing at any resolution",
+          "subtitle": "What problem Qwen2-VL solves and why it matters",
+          "pdfPages": [
+            1
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Most vision-language models (VLMs) before Qwen2-VL had a hidden, awkward rule: <b>every image must be squashed to a fixed size</b>, often 224x224 or 448x448 pixels. A tall receipt, a wide spreadsheet, and a tiny phone icon all get resized to the same square. That throws away the very thing that matters for reading documents, charts, and dense scenes — the <i>actual</i> pixels. Qwen2-VL's central question is simple: <b>why should a model that processes a 4000x3000 photo and a 100x100 thumbnail produce the same number of visual tokens?</b> A bigger image carries more information, so it should turn into more tokens."
+            },
+            {
+              "type": "p",
+              "html": "The paper's answer is <b>naive dynamic resolution</b>: feed an image at its native resolution and let it become a <i>variable</i> number of visual tokens, roughly proportional to how many pixels it contains. This mirrors how humans read — you lean in on fine print and glance at a big poster. The team pairs this with a new position-encoding scheme, <b>Multimodal Rotary Position Embedding (M-RoPE)</b>, that gives text, images, and video a unified way to express <i>where</i> a token sits in time and 2D space."
+            },
+            {
+              "type": "quote",
+              "html": "We introduce the Naive Dynamic Resolution mechanism, which enables the model to dynamically process images of varying resolutions into different numbers of visual tokens. This approach allows the model to generate more efficient and accurate visual representations, closely aligning with human perceptual processes."
+            },
+            {
+              "type": "p",
+              "html": "Qwen2-VL ships in three sizes — <b>2B, 8B, and 72B parameters</b> — sharing one architecture. The flagship 72B model reaches state-of-the-art results across document understanding (DocVQA), math-on-images (MathVista), multilingual OCR, and long-video question answering, competitive with closed models like GPT-4o and Claude 3.5 Sonnet. Crucially, the same model can read text in many languages directly from images, understand videos longer than 20 minutes, and act as an agent that operates phones and robots from a screenshot."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Naive Dynamic Resolution — native-resolution images map to a variable token count, no forced square crop.",
+                "Multimodal RoPE (M-RoPE) — one position scheme spanning temporal, height, and width axes for text, images, and video.",
+                "Three open sizes (2B / 8B / 72B) with a unified training recipe and strong agentic and multilingual abilities."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        {
+          "title": "The two-tower design",
+          "subtitle": "A ViT encoder plus a Qwen2 language model",
+          "pdfPages": [
+            3,
+            4
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before touching the new ideas, it helps to see the skeleton. A VLM has to turn pixels into something a language model can read. Qwen2-VL keeps the now-standard <b>two-tower</b> layout: a <b>Vision Transformer (ViT) encoder</b> that looks at the image, followed by a <b>Qwen2 language model</b> that reasons over the resulting visual tokens together with the text prompt."
+            },
+            {
+              "type": "p",
+              "html": "Think of the ViT as a <i>translator</i> and the language model as the <i>thinker</i>. The translator chops the image into patches and converts each into a vector the thinker understands; the thinker then writes the answer. What is unusual here is that the team uses <b>the same ViT (about 675M parameters)</b> for all three model sizes — 2B, 8B, and 72B — so the visual front end stays constant while the language tower grows."
+            },
+            {
+              "type": "quote",
+              "html": "Qwen2-VL retains the Qwen-VL framework, which integrates vision encoders and large language models. For various scale adaptation, we implement a ViT with approximately 675 million parameters, adept at handling both image and video inputs."
+            },
+            {
+              "type": "h2",
+              "text": "Squeezing the token count"
+            },
+            {
+              "type": "p",
+              "html": "Native-resolution images can produce a <i>lot</i> of patches, so the model needs a way to keep the count manageable. Qwen2-VL adds an <b>MLP compressor</b> that merges each group of adjacent <code>2x2</code> patch features into a single token before they enter the language model. A configurable resolution can then be expressed as a token budget rather than a fixed pixel size."
+            },
+            {
+              "type": "quote",
+              "html": "To reduce each image's visual tokens, a simple MLP layer is employed to compress adjacent 2x2 tokens into a single token, with the special <code><|vision_start|></code> and <code><|vision_end|></code> tokens placed at the beginning and end of the compressed visual tokens."
+            },
+            {
+              "type": "p",
+              "html": "Why merge <code>2x2</code> instead of feeding every patch? A 1280x720 frame already produces thousands of patches; without compression a short video would blow past the context window. Merging four neighbors into one keeps spatial detail (the four still came from one local region) while cutting the visual token count by 4x — a cheap, effective trade."
+            }
+          ]
+        },
+        {
+          "title": "Naive Dynamic Resolution",
+          "subtitle": "Native-resolution images become variable-length token sequences",
+          "pdfPages": [
+            4
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the headline mechanism. The question it answers: <b>how do you avoid resizing every image to one fixed square?</b> Older VLMs hard-coded the input grid — say 16x16 = 256 patches — so a wide invoice and a tall menu both got distorted to fit. Qwen2-VL instead lets the image keep its shape and turns it into <i>however many tokens its pixel count warrants</i>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Worked example.</b> Take a 1008x756 image with a patch size of 14 pixels. That is 72 patches wide and 54 patches tall = 3888 raw patches. After the <code>2x2</code> MLP merge you get 36x27 = <b>972 visual tokens</b>. A smaller 224x224 thumbnail, by contrast, is 16x16 = 256 patches, merged to 8x8 = <b>64 tokens</b>. Same model, same code path — the only difference is the token count, which scales with the image's information content."
+            },
+            {
+              "type": "quote",
+              "html": "Qwen2-VL can now process images of any resolution, dynamically converting them into a variable number of visual tokens. To support this feature, we modified ViT by removing the original absolute position embeddings and introducing 2D-RoPE to capture the two-dimensional positional information of images."
+            },
+            {
+              "type": "p",
+              "html": "The key architectural change that makes variable lengths possible: the ViT's <b>fixed absolute position embeddings are removed</b> and replaced with <b>2D-RoPE</b> (rotary embeddings indexed by a patch's row and column). Absolute embeddings are a fixed-length lookup table — they assume you always know how many patches there are. Rotary embeddings are computed from coordinates, so they work for any grid size, large or small."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this works.</b> Two forces are balanced. (1) Information should scale with pixels — more detail deserves more tokens. (2) Compute must stay finite — you cannot let a 50-megapixel photo become a million tokens. The <code>2x2</code> merge plus a cap on the token budget per image keeps the sequence affordable while preserving the proportionality that helps fine-grained tasks like reading a dense table."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> This idea echoes NaViT (\"Patch n' Pack\") and Pix2Struct, which also avoided fixed-aspect resizing, but Qwen2-VL folds it into a production VLM trained at scale. The payoff shows up most on documents and charts — exactly the tasks where a forced 224x224 crop would erase the text."
+            }
+          ]
+        },
+        {
+          "title": "Multimodal RoPE (M-RoPE)",
+          "subtitle": "One position scheme for time, height, and width",
+          "pdfPages": [
+            4,
+            5
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A language model needs to know <i>where</i> each token is. For plain text that is a single number: token 1, token 2, token 3. But a video token has <b>three</b> coordinates that matter — <i>when</i> (which frame), <i>where vertically</i> (row), and <i>where horizontally</i> (column). Standard 1D RoPE flattens all of that into one index, losing the 2D and temporal structure. M-RoPE fixes this by giving every token a <b>three-part position</b>."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy.</b> Imagine seats in a stadium across several days of a tournament. A 1D scheme numbers every seat 1...N regardless of day, row, or section — you lose the sense that seat 5 and seat 6 are neighbors but seat 5 and seat 5000 are not. M-RoPE instead labels each seat with (day, row, seat-in-row). Tokens that are physically close in the image, or close in time, get nearby position values along the relevant axis."
+            },
+            {
+              "type": "p",
+              "html": "Rotary position embedding works by rotating a token's query/key vector by an angle that depends on its position. M-RoPE splits the rotation budget into three groups of frequencies — one for the temporal axis $t$, one for height $h$, one for width $w$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{pos}(\\text{token}) = (t,\\, h,\\, w) \\;\\longrightarrow\\; \\text{RoPE}_t(t) \\,\\oplus\\, \\text{RoPE}_h(h) \\,\\oplus\\, \\text{RoPE}_w(w)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: <code>token</code> is one visual or text token whose embedding has dimension $d$. The triple $(t, h, w)$ are its <b>temporal, height, and width indices</b> (integers). $\\text{RoPE}_t, \\text{RoPE}_h, \\text{RoPE}_w$ each rotate a disjoint slice of the $d$ dimensions using that axis's index, and $\\oplus$ concatenates the three rotated slices back into the full $d$-dimensional vector. For <b>text</b>, the three indices are set equal ($t=h=w$), so M-RoPE collapses exactly to ordinary 1D RoPE — backward compatible by construction."
+            },
+            {
+              "type": "p",
+              "html": "<b>For an image</b>, all patches share one temporal index $t$ but differ in $(h, w)$ by their grid position. <b>For a video</b>, $t$ increments frame to frame while $(h, w)$ track the patch's row and column. This gives one consistent rule across text, image, and video, and lets the model reason about <i>spatial</i> relations (\"the logo above the title\") and <i>temporal</i> ones (\"the cup appears after the pour\") with the same machinery."
+            },
+            {
+              "type": "quote",
+              "html": "By employing M-RoPE, the model can simultaneously capture and integrate the 1D textual, 2D visual, and 3D video positional information. ... not only enhances modeling of positional information but also reduces the value of position IDs for images and videos, enabling the model to extrapolate to longer sequences during inference."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works — a bonus.</b> Because image and video tokens reuse position indices across the $h$ and $w$ axes rather than marching a single counter upward, the <i>maximum</i> position ID grows much more slowly than the token count. Smaller position IDs make it easier to <b>extrapolate to longer sequences</b> at inference than the model ever saw in training — a free win for long documents and long videos."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training",
+      "pages": [
+        {
+          "title": "Unified image and video, three-stage training",
+          "subtitle": "How one model learns to read pages and watch videos",
+          "pdfPages": [
+            5,
+            6
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A model that handles both stills and video has to reconcile two formats. Qwen2-VL's trick is to treat an image as a <b>two-frame video</b> — the static picture is simply duplicated — so the same pipeline serves both. Videos are sampled at <b>2 frames per second</b>, and the <code>2x2</code> merge plus a per-token budget keep even long clips inside the context window."
+            },
+            {
+              "type": "quote",
+              "html": "To preserve video information as completely as possible, we sampled each video at two frames per second. Additionally, we integrated 3D convolutions with a depth of two to process video inputs, allowing the model to handle 3D tubes instead of 2D patches, thus enabling it to process more video frames without increasing the sequence length."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete budget.</b> To cap cost, the team limits each video's tokens (e.g. to 16384 per video in training), dynamically adjusting frame resolution so a 20-minute clip still fits. A 3D convolution of depth 2 fuses pairs of frames into \"tubes,\" halving the temporal token count — the video analogue of the spatial <code>2x2</code> merge."
+            },
+            {
+              "type": "h2",
+              "text": "Three training stages"
+            },
+            {
+              "type": "p",
+              "html": "Training proceeds in three phases, each turning a different knob:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Stage 1 — train ViT only on image-text pairs, with the language model frozen, to teach the visual front end to align pixels with text.",
+                "Stage 2 — unfreeze everything and train on a broad, mixed corpus so vision and language co-adapt.",
+                "Stage 3 — freeze the ViT and instruction-tune the language model on dialogue and multimodal instruction data."
+              ]
+            },
+            {
+              "type": "quote",
+              "html": "The first stage focuses on training the ViT, utilizing a large corpus of image-text pairs. ... In the second stage, all parameters are unfrozen and the model is trained on a wider range of data. ... In the final stage, the ViT parameters are locked while the LLM is fine-tuned using instruction datasets."
+            },
+            {
+              "type": "p",
+              "html": "<b>Scale.</b> The pre-training corpus totals roughly <b>1.4 trillion tokens</b> of image-text data, spanning image-text pairs, OCR, interleaved articles, visual QA, video dialogues, and agentic trajectories. The data mix is the unglamorous engine behind the benchmark numbers: document, multilingual-OCR, and agent abilities all trace back to deliberately including those categories here."
+            }
+          ]
+        },
+        {
+          "title": "Talking to the model and acting on screens",
+          "subtitle": "ChatML dialogue format, visual grounding, and agentic control",
+          "pdfPages": [
+            6,
+            7
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A VLM is only useful if you can <i>address</i> the visual content in a conversation. Qwen2-VL adopts the <b>ChatML</b> format and adds special tokens so the model can point at things: <code><|vision_start|></code> / <code><|vision_end|></code> wrap an image, <code><|box_start|></code> / <code><|box_end|></code> wrap bounding-box coordinates, and <code><|object_ref_start|></code> / <code><|object_ref_end|></code> name the object a box refers to."
+            },
+            {
+              "type": "p",
+              "html": "<b>Example of grounding.</b> Ask \"where is the dog?\" and the model can reply with a box like <code><|box_start|>(176,106),(536,558)<|box_end|></code> tied to <code><|object_ref_start|>dog<|object_ref_end|></code>. Coordinates are normalized so the same format works no matter the native resolution — a direct payoff of the dynamic-resolution design."
+            },
+            {
+              "type": "p",
+              "html": "The same addressing machinery powers <b>agentic control</b>. Given a screenshot, Qwen2-VL can decide on a function call — tap, type, swipe — and return the coordinates to act on. The paper frames the model as the brain of a perception-decision-action loop that can operate phones, browsers, and robots from raw pixels, no accessibility tree required."
+            },
+            {
+              "type": "quote",
+              "html": "To develop Qwen2-VL as a general-purpose VLagent, we treat various agent tasks ... as a sequential decision-making problem, enabling Qwen2-VL to perform multi-step actions through reasoning and decision-making."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why bother unifying grounding and agency?</b> Reading, pointing, and acting are the same skill at different granularities: each needs the model to map a region of pixels to a symbol. Sharing one token vocabulary across all three means improvements in OCR or layout understanding directly lift the agent's reliability — fewer mis-clicks because it reads the button correctly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "State-of-the-art numbers",
+          "subtitle": "Where Qwen2-VL-72B stands against GPT-4o and Claude 3.5 Sonnet",
+          "pdfPages": [
+            8,
+            9
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The promise was \"perception at any resolution.\" The test is whether that translates into wins on the tasks where resolution matters most — documents, charts, math diagrams, and OCR. Qwen2-VL-72B is competitive with, and on several benchmarks ahead of, the strongest closed models of its day."
+            },
+            {
+              "type": "table",
+              "headers": [
+                "Benchmark",
+                "Qwen2-VL-72B",
+                "GPT-4o",
+                "Claude 3.5 Sonnet"
+              ],
+              "rows": [
+                [
+                  "DocVQA (test)",
+                  "96.5",
+                  "92.8",
+                  "95.2"
+                ],
+                [
+                  "MTVQA (multilingual)",
+                  "30.9",
+                  "27.8",
+                  "25.7"
+                ],
+                [
+                  "MathVista (testmini)",
+                  "70.5",
+                  "63.8",
+                  "67.7"
+                ],
+                [
+                  "MMMU (val)",
+                  "64.5",
+                  "69.1",
+                  "68.3"
+                ],
+                [
+                  "RealWorldQA",
+                  "77.8",
+                  "75.4",
+                  "60.1"
+                ]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading the table: on <b>DocVQA</b> (answering questions about scanned documents) Qwen2-VL-72B hits <b>96.5</b>, beating both GPT-4o and Claude 3.5 Sonnet — the clearest vindication of dynamic resolution, since document text survives only at native scale. On <b>MTVQA</b>, a multilingual visual-QA benchmark, it leads at <b>30.9</b>, reflecting the multilingual-OCR data in training. It trails GPT-4o on the broad college-level <b>MMMU</b> reasoning benchmark, where raw knowledge and language reasoning weigh more than pixel fidelity."
+            },
+            {
+              "type": "p",
+              "html": "<b>Video.</b> Qwen2-VL handles clips beyond 20 minutes and posts strong long-video QA scores (for example a leading result on the multilingual video benchmark and competitive numbers on MVBench and EgoSchema), thanks to 2-fps sampling, the 3D-conv tubes, and M-RoPE's temporal axis working together."
+            },
+            {
+              "type": "p",
+              "html": "<b>Smaller models punch above their weight.</b> The trick is not just scale: even <b>Qwen2-VL-7B</b> matches or beats much larger open models on document and multilingual tasks, and the <b>2B</b> model is strong enough for mobile and edge deployment. The shared 675M ViT means the visual perception quality is inherited across all three sizes."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Qwen2-VL mattered",
+          "subtitle": "What it changed and where it sits in the lineage",
+          "pdfPages": [
+            1,
+            8
+          ],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the benchmarks and the contribution is a <b>philosophy</b>: stop forcing images into a fixed grid. Qwen2-VL showed that a production-grade VLM could ingest native resolution, let token count follow pixel count, and use one position scheme — M-RoPE — to bind text, image, and video. That combination is now a default expectation rather than a research curiosity."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Naive Dynamic Resolution made native-resolution input practical, dramatically improving document, chart, and OCR performance where fixed crops fail.",
+                "M-RoPE unified 1D text, 2D image, and 3D video positions, and as a side effect improved length extrapolation to long documents and videos.",
+                "An open 2B / 8B / 72B family with a shared ViT brought near-frontier multimodal ability into the open-weights ecosystem.",
+                "Built-in grounding and agentic control turned the model into a screen-operating agent, not just a captioner."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Lineage.</b> Qwen2-VL extends the original Qwen-VL framework and absorbs ideas from variable-resolution work like NaViT and Pix2Struct, while M-RoPE generalizes the RoPE of Su et al. that underpins most modern LLMs. It sits alongside LLaVA, InternVL, and the GPT-4V / Claude / Gemini families as a landmark in the document-and-video VLM line."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it influenced.</b> The any-resolution + multimodal-RoPE recipe became foundational for the Qwen-VL series that followed (Qwen2.5-VL and later), and its open weights made it a popular base for fine-tuning OCR, document-understanding, and GUI-agent systems across the community. The practical lesson endures: <i>match the representation to the data — give big images more tokens, and tell the model where every token lives in space and time.</i>"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

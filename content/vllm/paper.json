@@ -1,0 +1,311 @@
+{
+  "title": "Efficient Memory Management for LLM Serving with PagedAttention",
+  "authors": "Kwon, et al. (vLLM)",
+  "year": "2023",
+  "venue": "arXiv:2309.06180",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The bottleneck nobody was watching: memory, not FLOPs",
+          "subtitle": "What this paper fixes and why it matters",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "When you serve a large language model to many users at once, the obvious thing to optimize seems to be raw compute. This paper points at something quieter and more wasteful: <b>memory</b>. Specifically, the <b>KV cache</b> &mdash; the per-token attention state every request must keep alive while it generates &mdash; is enormous, grows and shrinks unpredictably, and is managed so clumsily by existing systems that <b>60&ndash;80% of it is wasted</b>. Wasted memory means fewer requests fit on the GPU at once, which directly caps throughput."
+            },
+            {
+              "type": "p",
+              "html": "The core idea is a memory-management trick borrowed wholesale from operating systems. An OS lets a process believe it has one big contiguous chunk of memory, while physically scattering it across small fixed-size <i>pages</i> and keeping a <i>page table</i> to translate. <b>PagedAttention</b> does exactly this for the KV cache: chop it into fixed-size <b>blocks</b>, scatter them anywhere in GPU memory, and keep a <b>block table</b> to map a request's logical blocks to physical ones."
+            },
+            {
+              "type": "quote",
+              "html": "On top of PagedAttention, we build vLLM, an LLM serving system that achieves (1) near-zero waste in KV cache memory and (2) flexible sharing of KV cache within and across requests to further reduce memory usage."
+            },
+            {
+              "type": "p",
+              "html": "The payoff is concrete and large: vLLM improves serving throughput by <b>2&ndash;4&times;</b> over the previous state of the art (FasterTransformer and Orca) <i>at the same latency</i>, with the gains growing for longer sequences, larger models, and more complex decoding algorithms. The win comes entirely from packing more concurrent requests onto the same hardware &mdash; no model changes, no accuracy loss."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> The authors (Woosuk Kwon, Zhuohan Li, and colleagues at UC Berkeley, Stanford, and UCSD) released vLLM as open source alongside the paper. It became one of the most widely deployed LLM-serving engines in industry, and PagedAttention is now a default mental model for thinking about inference memory. This page-by-page lesson walks through why the old way wasted so much, how the OS analogy is made precise, and what the numbers actually look like."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Why the KV cache eats your GPU",
+          "subtitle": "Autoregressive decoding and the memory it leaves behind",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To see the waste, you first have to see <i>why</i> the KV cache exists. A Transformer generates text one token at a time, autoregressively: to produce token $i$ it must attend back over <b>every previous token</b>. Attention compares the current token's query against the keys and values of all earlier tokens. If you recomputed those keys and values from scratch on every step, generation would be quadratically slow."
+            },
+            {
+              "type": "p",
+              "html": "So every system caches them. After token $j$ is processed, its key vector $k_j$ and value vector $v_j$ are stored and never recomputed. That stored set is the <b>KV cache</b>. The probability of the next token is computed as:"
+            },
+            {
+              "type": "math",
+              "tex": "a_{ij} = \\frac{\\exp(q_i^{\\top} k_j / \\sqrt{d})}{\\sum_{t=1}^{i} \\exp(q_i^{\\top} k_t / \\sqrt{d})}, \\qquad o_i = \\sum_{j=1}^{i} a_{ij} v_j"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $q_i$ is the <b>query</b> vector for the current token $i$; $k_j$ and $v_j$ are the cached <b>key</b> and <b>value</b> vectors for an earlier token $j$ (each a vector of dimension $d$ per head). $a_{ij}$ is the <b>attention weight</b> from token $i$ onto token $j$ &mdash; a softmax over the dot products $q_i^{\\top} k_t$, scaled by $\\sqrt{d}$ to keep the logits from exploding. $o_i$ is the <b>output</b>, a weighted average of the value vectors. The key fact: the sum runs over <b>all</b> $j \\le i$, so every key and value must stay in memory for the entire life of the request."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete numbers.</b> For a 13B-parameter OPT model, the paper reports that the KV cache for a <i>single token</i> takes about <b>800 KB</b> (2 vectors &times; 5120 hidden size &times; 40 layers &times; 2 bytes in FP16). A sequence can run to 2048 tokens, so one request can demand on the order of <b>1.6 GB</b> of KV cache. On an NVIDIA A100 with 40 GB, even if the whole GPU did nothing but hold KV cache, it could fit at most a few dozen such requests &mdash; the KV cache, not the model weights, becomes the binding constraint on concurrency."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it matters for serving.</b> Throughput in LLM serving is roughly &lsquo;how many requests can I run in parallel.&rsquo; Parallelism is capped by how many KV caches fit in GPU memory. So every byte of KV cache you waste is a request you could have been serving but aren't. That reframing &mdash; <i>memory is the throughput bottleneck</i> &mdash; is the whole motivation for the paper."
+            }
+          ]
+        },
+        {
+          "title": "Three kinds of waste in the old way",
+          "subtitle": "Why contiguous KV cache allocation fragments memory",
+          "pdfPages": [2, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Existing systems (FasterTransformer, Orca) stored each request's KV cache as <b>one contiguous chunk</b> of memory, sized for the maximum possible sequence length. That single design choice creates three separate kinds of waste, and together they explain the 60&ndash;80% figure."
+            },
+            {
+              "type": "p",
+              "html": "<b>Analogy.</b> Imagine a parking garage that, the moment a car enters, reserves an entire <i>row</i> of spaces in case that car later grows into a bus. Most cars never grow. Most reserved spaces sit empty. And because rows are reserved whole, you can't slot a small car into the gaps. That is exactly how contiguous max-length allocation behaves."
+            },
+            {
+              "type": "h2",
+              "text": "The three wastes"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Internal fragmentation (reserved slots).</b> You don't know the output length in advance, so you reserve the maximum (say 2048 tokens). A request that stops after 10 tokens still holds 2048 tokens' worth of memory. The rest is reserved-but-unused for the request's whole lifetime.",
+                "<b>Internal fragmentation (the tail).</b> Even within what a request does use, the contiguous chunk is rounded up, leaving a partially filled tail.",
+                "<b>External fragmentation.</b> Because each request's chunk is a different size (different max lengths, different models), free memory gets carved into oddly sized gaps that no new request fits into &mdash; classic external fragmentation from a memory allocator."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The paper's profiling (Figure 2) drives the point home: in existing systems, only <b>20.4%&ndash;38.2%</b> of the KV-cache memory actually holds live token state. The rest &mdash; the majority &mdash; is reservation and fragmentation. You bought 40 GB of A100 and you're using a fifth of it for real work."
+            },
+            {
+              "type": "quote",
+              "html": "We observe that existing systems waste 60%&ndash;80% of memory due to fragmentation and over-reservation."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design rationale.</b> The deep reason all three wastes exist is the assumption that a KV cache must live in one contiguous region. That assumption is convenient (the attention kernel can stride through memory linearly) but it forces you to pre-commit a contiguous max-length block. Break the contiguity requirement and all three wastes can, in principle, vanish at once. That is precisely the door PagedAttention walks through."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "PagedAttention",
+      "pages": [
+        {
+          "title": "Paging the KV cache like OS virtual memory",
+          "subtitle": "Blocks, block tables, and the logical-to-physical map",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Operating systems solved fragmentation decades ago with <b>virtual memory</b> and <b>paging</b>. A process sees a clean, contiguous address space; physically, memory is split into fixed-size <b>pages</b> scattered anywhere in RAM, and a <b>page table</b> translates virtual page numbers to physical frames. Fragmentation disappears because every allocation is the same small unit, and you only ever waste, at most, the unfilled remainder of one page. PagedAttention transplants this idea onto the KV cache."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, the KV cache of a request is partitioned into <b>KV blocks</b>, each holding the keys and values of a fixed number of tokens, $B$ (e.g. $B = 16$). The tokens a request actually uses are <i>logical</i> blocks (contiguous, 0,&nbsp;1,&nbsp;2,&nbsp;&hellip;), but they are stored in <i>physical</i> blocks that can sit anywhere in GPU memory, in any order. A per-request <b>block table</b> records the mapping: logical block &rarr; physical block, plus how many slots in that block are filled."
+            },
+            {
+              "type": "p",
+              "html": "PagedAttention rewrites the attention computation to operate block-by-block instead of over one contiguous array. For block number $j$ holding key vectors $K_j = (k_{(j-1)B+1}, \\dots, k_{jB})$ and value vectors $V_j$, the attention is computed as:"
+            },
+            {
+              "type": "math",
+              "tex": "A_{ij} = \\frac{\\exp(q_i^{\\top} K_j / \\sqrt{d})}{\\sum_{t=1}^{\\lceil i/B \\rceil} \\exp(q_i^{\\top} K_t / \\sqrt{d}) \\, \\mathbf{1}}, \\qquad o_i = \\sum_{j=1}^{\\lceil i/B \\rceil} V_j A_{ij}^{\\top}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $q_i$ is the query for the current token. $K_j$ is the matrix of all key vectors in block $j$ (shape $d \\times B$), and $V_j$ the matrix of value vectors in block $j$ (shape $B \\times d$). $A_{ij}$ is the row of attention <b>weights</b> from token $i$ onto the $B$ tokens of block $j$. The outer sum runs over $\\lceil i/B \\rceil$ blocks &mdash; the number of blocks needed to cover the first $i$ tokens &mdash; instead of over individual tokens. $\\mathbf{1}$ is the all-ones vector that sums the per-block softmax denominators. $o_i$ is the final attention output, accumulated block by block. The math is identical to standard attention; only the <i>memory access pattern</i> changed from one stride to a gather over a block table."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this kills fragmentation.</b> Because every block is the same fixed size, external fragmentation is gone &mdash; any free physical block fits any request. Because blocks are allocated <i>on demand</i> as the sequence grows, the &lsquo;reserve the max length&rsquo; waste is gone. The only remaining waste is the unfilled tail of the very last block of each request &mdash; at most $B-1$ slots. With $B = 16$ that bounds internal waste under <b>4%</b>, versus the 60&ndash;80% before. The garage now parks cars one space at a time."
+            }
+          ]
+        },
+        {
+          "title": "Sharing memory across requests with copy-on-write",
+          "subtitle": "Where paging pays off twice: parallel sampling and beam search",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Paging removes <i>waste</i>. The second gift of the OS analogy is <b>sharing</b>: just as multiple processes can map the same physical page (think a shared library loaded once), multiple sequences can map the same physical KV block. This matters whenever requests overlap in content &mdash; and in real LLM serving they overlap constantly."
+            },
+            {
+              "type": "p",
+              "html": "<b>Worked example &mdash; parallel sampling.</b> A user asks for 3 candidate completions of one prompt (&lsquo;write me a tagline&rsquo;). All 3 samples share the identical prompt prefix; they only diverge once generation starts. The naive approach stores the prompt's KV cache 3 times. With PagedAttention, all 3 sequences' block tables point at the <b>same</b> physical blocks for the shared prompt. The prompt's KV cache is stored <b>once</b>."
+            },
+            {
+              "type": "p",
+              "html": "The trick that makes shared blocks safe is <b>copy-on-write</b>, lifted straight from OS process forking. A shared block carries a reference count. As long as sequences only <i>read</i> it, they share it. The moment one sequence needs to <i>write</i> a new token into a shared block, the system copies that single block, points the writer at the private copy, and decrements the original's reference count. Reads stay free; only the first divergent write pays a one-block copy."
+            },
+            {
+              "type": "p",
+              "html": "<b>Beam search.</b> Beam search is the hard case for older systems: beams constantly fork and merge, and their shared history must be copied around. The paper reports beam search as where prior systems waste the most memory on redundant copies. With block-level sharing, common prefixes across beams are shared by reference, and only the diverging tails are distinct &mdash; the bookkeeping is a few reference-count updates instead of large memory copies."
+            },
+            {
+              "type": "p",
+              "html": "<b>Shared system prompts.</b> Many production deployments prepend the same long system prompt or few-shot examples to every request. Those identical prefix blocks can be stored once and shared across <i>all</i> concurrent requests, not just samples of one request. The savings scale with how many requests share the prefix."
+            },
+            {
+              "type": "quote",
+              "html": "PagedAttention enables the sharing of memory across different sequences associated with the same request or even across different requests."
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks without it.</b> Contiguous allocation can't share, because two requests' caches are separate fixed regions &mdash; there's no unit small enough to alias. Sharing is only possible <i>because</i> the cache was already chopped into uniform, reference-countable blocks. The paging design and the sharing design are the same design."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The vLLM System",
+      "pages": [
+        {
+          "title": "vLLM: the serving engine around PagedAttention",
+          "subtitle": "Block manager, scheduler, and how requests actually run",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "PagedAttention is the memory-access primitive; <b>vLLM</b> is the full serving system built on top of it. The split mirrors an OS again: PagedAttention is the &lsquo;hardware paging&rsquo; mechanism, and vLLM's <b>KV cache manager</b> is the OS that decides which physical blocks to hand out, when to evict, and how to schedule requests."
+            },
+            {
+              "type": "h2",
+              "text": "The pieces"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Centralized scheduler.</b> Decides which requests run each step and how their KV blocks are laid out. It runs continuous batching so finished sequences free their blocks immediately and new requests slot in.",
+                "<b>KV cache manager / block tables.</b> Maintains the logical-to-physical block mapping per sequence, a pool of free physical blocks, and the reference counts that power copy-on-write sharing.",
+                "<b>Distributed execution.</b> For models too big for one GPU, vLLM supports tensor (Megatron-style) parallelism; each worker holds its slice of every block, and the manager coordinates one shared block-table view across workers."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Preemption and recovery.</b> Because requests grow unpredictably, GPU memory can fill mid-flight. When it does, vLLM <b>preempts</b> some sequences to free their blocks &mdash; an all-or-nothing eviction at the granularity of a whole request (so a half-evicted sequence never deadlocks). Two recovery strategies are offered:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Swapping</b> &mdash; copy the evicted sequence's KV blocks out to CPU RAM, then swap them back when memory frees up. Like an OS swapping pages to disk.",
+                "<b>Recomputation</b> &mdash; throw the blocks away and regenerate the KV cache from the tokens when the sequence resumes. Cheaper than swapping when the sequence is short or PCIe bandwidth is the bottleneck."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a custom kernel was needed.</b> Standard attention kernels assume the contiguous layout PagedAttention abandons. The authors wrote custom CUDA kernels that fuse the block-table gather with the attention math, so the indirection through the block table doesn't cost a separate memory pass. Fusing block reads, the softmax, and the value-weighted sum into one kernel is what keeps the paging overhead small enough that the memory savings dominate."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "2 to 4x throughput at the same latency",
+          "subtitle": "What the memory savings buy on real workloads",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The headline result: vLLM sustains <b>2&ndash;4&times; higher request throughput</b> than FasterTransformer and Orca <i>at the same level of latency</i>. The mechanism is simple &mdash; near-zero KV waste means more sequences fit on the GPU at once, so more requests run in parallel per step. Memory efficiency converts directly into throughput."
+            },
+            {
+              "type": "p",
+              "html": "The authors evaluate on OPT models (13B, 66B, 175B) and LLaMA-13B, on NVIDIA A100 GPUs, against three Orca variants (Orca-Oracle, which cheats by knowing exact output lengths; Orca-Pow2; and Orca-Max) plus FasterTransformer. Workloads are real request traces from <b>ShareGPT</b> (long, varied conversations) and <b>Alpaca</b> (short instructions)."
+            },
+            {
+              "type": "table",
+              "headers": ["Setting", "vLLM gain vs. baselines"],
+              "rows": [
+                ["Basic sampling (1 output/request)", "~2-4x more requests at same latency"],
+                ["Parallel sampling / beam search", "Largest gains — shared prefixes amplify savings"],
+                ["Longer sequences (ShareGPT)", "Bigger gains than short (Alpaca) — more cache to save"],
+                ["Internal KV waste", "<4% (vs. 60-80% in prior systems)"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Where the gains concentrate.</b> The advantage is biggest exactly where the old systems hurt most. Long sequences (ShareGPT) have large KV caches, so eliminating reservation waste frees the most room. Complex decoding (parallel sampling, beam search) creates heavy prefix overlap, so block sharing pays off on top of the paging savings. On the simplest short-output workload the gain is smaller but still solidly positive."
+            },
+            {
+              "type": "p",
+              "html": "<b>Ablation &mdash; block size.</b> Block size $B$ is a genuine knob, and the physical world sets the tuning. Too small ($B=1$) and you lose kernel efficiency and pay more block-table overhead; too large ($B=256$) and the last-block tail waste creeps back and sharing becomes coarse. The paper finds a middle value (around $B = 16$) best balances internal fragmentation against kernel throughput across workloads."
+            },
+            {
+              "type": "p",
+              "html": "<b>Ablation &mdash; recovery.</b> Comparing swapping versus recomputation: recomputation wins for small block sizes and short sequences (regenerating is cheap), while swapping wins for large blocks (bulk PCIe transfer amortizes well). vLLM keeps both because the right choice depends on the workload &mdash; the calibration knob the model can't see from theory alone."
+            },
+            {
+              "type": "p",
+              "html": "<b>Honest framing.</b> vLLM does not make the model faster per token or more accurate &mdash; output quality is identical, since the math is unchanged. Every gain is a <i>systems</i> gain: better memory packing &rarr; higher concurrency &rarr; more throughput per dollar of GPU."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why PagedAttention reshaped LLM serving",
+          "subtitle": "Influence, lineage, and what to remember",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The lasting lesson is a reframing: <b>for LLM inference, memory management is the throughput problem.</b> Before this paper, serving research mostly chased better batching and kernels; PagedAttention showed that the KV cache's allocation strategy was leaving a 2&ndash;4&times; speedup on the table, untouched, in plain sight."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intellectual move.</b> The contribution is less a new algorithm than a precise <i>port</i> of a 1960s OS idea &mdash; demand paging with a page table and copy-on-write &mdash; onto a 2023 deep-learning problem. The value is in recognizing that the KV cache <i>is</i> a virtual address space and treating it like one. That kind of cross-domain transplant is a recurring pattern in good systems work."
+            },
+            {
+              "type": "p",
+              "html": "<b>Influence.</b> vLLM shipped as open source and became one of the most widely adopted inference engines in production. PagedAttention turned into a near-standard building block; later serving systems and features &mdash; continuous batching engines, prefix-caching for shared system prompts, and KV-cache offloading schemes &mdash; build directly on the paged abstraction it introduced. &lsquo;Block table&rsquo; and &lsquo;KV blocks&rsquo; are now common vocabulary."
+            },
+            {
+              "type": "p",
+              "html": "<b>How it connects to other landmarks.</b> The KV cache it manages comes from the original Transformer (Vaswani et al., 2017). The continuous-batching scheduling it improves on comes from <b>Orca</b> (Yu et al., 2022), its strongest baseline. And it sits in the same systems-for-LLMs lineage as Megatron-LM tensor parallelism, which vLLM uses to scale across GPUs. PagedAttention is the memory-management piece that those compute-focused works left open."
+            },
+            {
+              "type": "h2",
+              "text": "One-paragraph takeaway"
+            },
+            {
+              "type": "p",
+              "html": "Split the KV cache into fixed-size blocks, scatter them across GPU memory, and keep a per-request block table that maps logical blocks to physical ones &mdash; exactly like OS paging. Allocate blocks on demand (no reservation waste, no external fragmentation, &lt;4% internal waste) and share identical blocks across sequences with copy-on-write (cheap parallel sampling, beam search, and shared prompts). Wrap it in the vLLM scheduler and you fit far more concurrent requests on the same GPU, yielding <b>2&ndash;4&times; throughput at equal latency, with no change to model output</b>."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,334 @@
+{
+  "title": "Mixtral of Experts",
+  "authors": "Jiang, Sablayrolles, et al. (Mistral AI)",
+  "year": "2024",
+  "venue": "arXiv:2401.04088",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Pay for 13B, get the brain of 47B",
+          "subtitle": "The central bargain of a sparse mixture of experts",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Every dense large language model has the same uncomfortable property: <b>to compute one token you wake up every single parameter</b>. A 70B model multiplies all 70 billion weights for every token, whether the token is the word <code>the</code> or a subtle piece of legal reasoning. That is the bill you pay at every step. Mixtral asks a sharper question: <i>what if most of the network could stay asleep for most tokens, and you only woke up the small part that is actually useful right now?</i>"
+            },
+            {
+              "type": "p",
+              "html": "Mixtral 8x7B is a <b>Sparse Mixture-of-Experts (SMoE)</b> language model. It holds <b>47B total parameters</b>, but for any given token it only activates about <b>13B of them</b>. So you store a big model on disk and in GPU memory, but you compute as if it were a small one. The paper's headline claim is that this trade is almost free of downside: Mixtral matches or beats <b>Llama 2 70B</b> and <b>GPT-3.5</b> on most benchmarks while running roughly <b>6x faster at inference</b> than a dense 70B."
+            },
+            {
+              "type": "quote",
+              "html": "Mixtral is a sparse mixture-of-experts network. It is a decoder-only model where the feedforward block picks from a set of 8 distinct groups of parameters. At every layer, for every token, a router network chooses two of these groups (the “experts”) to process the token and combine their output additively."
+            },
+            {
+              "type": "p",
+              "html": "Read that quote carefully, because the whole paper lives inside it. The experts are <b>per-layer</b>, not per-model — the router re-chooses at <i>every</i> layer. The choice is <b>per-token</b>, not per-prompt — two words in the same sentence can route to different experts. And it is <b>top-2</b>, not top-1, so each token blends two specialists rather than betting everything on one."
+            },
+            {
+              "type": "h2",
+              "text": "Why this matters"
+            },
+            {
+              "type": "p",
+              "html": "The dream of scaling laws is \"more parameters, better model.\" The curse is \"more parameters, slower and more expensive.\" Mixture-of-experts is the main known way to <b>decouple those two</b>: grow the parameter count (which helps quality) without growing the per-token compute (which sets your cost and latency). Mixtral was the first <i>open-weights</i> model to make that decoupling convincing at GPT-3.5 quality, which is why it became the reference point for nearly every open MoE released after it (Qwen-MoE, DeepSeek-MoE, DBRX, Grok-1)."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>8</b> experts per layer, <b>top-2</b> routing per token.",
+                "<b>47B</b> total parameters, <b>~13B</b> active per token.",
+                "<b>32k</b> token context window, trained multilingually (EN, FR, DE, ES, IT).",
+                "Released under <b>Apache 2.0</b> — weights free for commercial use.",
+                "<b>Mixtral 8x7B – Instruct</b> beats GPT-3.5 Turbo, Claude-2.1, Gemini Pro and Llama 2 70B chat on human evaluation benchmarks."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The MoE Layer",
+      "pages": [
+        {
+          "title": "A committee of eight, two members vote per token",
+          "subtitle": "Replacing the feed-forward block with a mixture of experts",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A standard Transformer block has two halves: <b>attention</b> (tokens look at each other) and a <b>feed-forward network (FFN)</b> (each token is transformed on its own). The FFN is where most of the parameters and most of the compute live — it is a fat two-layer MLP applied identically to every token. Mixtral leaves attention completely untouched and surgically replaces <i>only the FFN</i> with a mixture of experts."
+            },
+            {
+              "type": "h2",
+              "text": "The committee analogy"
+            },
+            {
+              "type": "p",
+              "html": "Picture a consulting firm with <b>8 specialists</b> sitting in a room. A token walks in — say the token for a chunk of Python code. A receptionist (the <b>router</b>) glances at it, decides which 2 specialists are most relevant, and hands the token only to those two. Each writes an opinion; the receptionist weighs the two opinions and merges them into one answer. The other 6 specialists never even look up from their desks — <b>they cost nothing for this token</b>. The next token (maybe an English word) might be sent to a completely different pair."
+            },
+            {
+              "type": "p",
+              "html": "In Mixtral each \"specialist\" is itself a full <b>SwiGLU</b> feed-forward network — the exact same kind of FFN that Mistral 7B uses. So one MoE layer is literally 8 copies of an ordinary FFN, plus a tiny router that decides which 2 to fire. That is why the total parameter count is large but the per-token compute is only about that of <i>two</i> FFNs (plus shared attention)."
+            },
+            {
+              "type": "math",
+              "tex": "y = \\sum_{i=0}^{n-1} G(x)_i \\cdot E_i(x)"
+            },
+            {
+              "type": "p",
+              "html": "This is the mixture-of-experts output, read term by term. <b>$x$</b> is the input vector for a single token (shape $\\mathbb{R}^{d}$, where $d$ is the model's hidden dimension, 4096 for Mixtral). <b>$n=8$</b> is the number of experts. <b>$E_i(x)$</b> is the output of the $i$-th expert network — a full FFN applied to $x$, also shape $\\mathbb{R}^{d}$. <b>$G(x)_i$</b> is the $i$-th entry of the gate vector $G(x) \\in \\mathbb{R}^{n}$: a non-negative weight saying how much expert $i$ contributes. <b>$y$</b> is the final output, a weighted sum of expert outputs. The whole point is that $G(x)$ will be <b>sparse</b> — mostly zeros — so most $E_i(x)$ terms never have to be computed at all."
+            },
+            {
+              "type": "p",
+              "html": "<b>The crucial efficiency observation:</b> if $G(x)_i = 0$, then there is no reason to evaluate $E_i(x)$ — anything times zero is zero. So if the gate is zero for 6 of the 8 experts, we skip 6 of the 8 FFNs entirely. Sparsity in the gate translates directly into FLOPs you never pay."
+            }
+          ]
+        },
+        {
+          "title": "The router: a softmax over the top two",
+          "subtitle": "How the gate vector is computed and kept sparse",
+          "pdfPages": [2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The router has one job: turn a token vector into a sparse set of weights over the 8 experts. The naive way — softmax over all 8 — would give every expert a non-zero weight, forcing you to run all 8 FFNs and destroying the savings. The trick is to <b>keep only the top 2</b> logits, set the rest to $-\\infty$, and <i>then</i> softmax. After softmax, $-\\infty$ becomes exactly $0$, so 6 experts get weight zero and are skipped."
+            },
+            {
+              "type": "h2",
+              "text": "Worked mini-example"
+            },
+            {
+              "type": "p",
+              "html": "Suppose the router produces raw logits $[1.0,\\ 3.0,\\ 0.5,\\ 2.5,\\ 0.1,\\ -1.0,\\ 0.8,\\ 0.0]$ for experts 0–7. The two largest are expert 1 (3.0) and expert 3 (2.5). We blank the other six to $-\\infty$, leaving $[-\\infty,\\ 3.0,\\ -\\infty,\\ 2.5,\\ -\\infty,\\ -\\infty,\\ -\\infty,\\ -\\infty]$. Softmax over just those two gives roughly $G_1 = \\frac{e^{3.0}}{e^{3.0}+e^{2.5}} \\approx 0.62$ and $G_3 \\approx 0.38$. So this token's output is $0.62\\,E_1(x) + 0.38\\,E_3(x)$ — a 62/38 blend of experts 1 and 3, and experts 0,2,4,5,6,7 are never run."
+            },
+            {
+              "type": "math",
+              "tex": "G(x) := \\text{Softmax}\\big(\\text{TopK}(x \\cdot W_g)\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term. <b>$x$</b> is the token vector ($\\mathbb{R}^{d}$). <b>$W_g$</b> is the router's weight matrix (shape $\\mathbb{R}^{d \\times n}$); the product $x \\cdot W_g$ gives one logit per expert, a vector in $\\mathbb{R}^{n}$. <b>$\\text{TopK}(\\cdot)$</b> keeps the $K$ largest logits and replaces every other entry with $-\\infty$. <b>$\\text{Softmax}$</b> then exponentiates and normalizes; the $-\\infty$ entries map to $0$, so the result is a gate vector that is non-zero only on the $K$ chosen experts. For Mixtral, $K = 2$ and $n = 8$."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{TopK}(\\ell)_i := \\ell_i \\ \\text{if } \\ell_i \\text{ is among the top-}K \\text{ entries, else } -\\infty"
+            },
+            {
+              "type": "p",
+              "html": "Here <b>$\\ell = x \\cdot W_g$</b> is the logit vector and <b>$\\ell_i$</b> its $i$-th entry. This function is what makes the gate sparse: of the 8 logits only the 2 biggest survive; the other 6 are sent to $-\\infty$ so that, after the softmax, their gate weight is exactly $0$ and their expert is skipped. Note the router is just a <b>single linear layer</b> — $W_g$ has only $d \\times n = 4096 \\times 8$ parameters, utterly negligible next to the experts themselves."
+            },
+            {
+              "type": "p",
+              "html": "<b>Putting the layer together:</b> the full Mixtral expert layer is the gate from above feeding the mixture sum, with each expert being a SwiGLU FFN. The paper writes it concretely as below — the same equation as before, now naming the expert as a SwiGLU network $\\text{SwiGLU}_i$."
+            },
+            {
+              "type": "math",
+              "tex": "y = \\sum_{i=0}^{n-1} \\text{Softmax}\\big(\\text{Top2}(x \\cdot W_g)\\big)_i \\cdot \\text{SwiGLU}_i(x)"
+            },
+            {
+              "type": "p",
+              "html": "Every symbol is as defined above, with $\\text{Top2}$ meaning $\\text{TopK}$ with $K=2$ and $\\text{SwiGLU}_i$ being the $i$-th expert FFN. This single line is the entire architectural novelty of Mixtral: a sparse gate over eight ordinary feed-forward networks."
+            }
+          ]
+        },
+        {
+          "title": "Why sparse experts beat a dense block",
+          "subtitle": "The design rationale, and what breaks without each piece",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "It is worth stopping to ask <i>why this design works at all</i>, because each choice is a deliberate trade-off and removing any of them breaks something."
+            },
+            {
+              "type": "h2",
+              "text": "Why top-2, not top-1?"
+            },
+            {
+              "type": "p",
+              "html": "Top-1 (one expert per token, as in the Switch Transformer) is cheaper still, but the routing decision becomes brutally discrete: a tiny change in the logits flips the whole computation to a different expert, which makes training unstable and gradients to the router noisy. <b>Top-2 softens this</b> — the token is a blend, so the router gets a smoother signal about which experts helped, and the model has redundancy if one expert is a poor fit. The cost is exactly double the expert FLOPs of top-1, which the authors judged worth it for the stability and quality."
+            },
+            {
+              "type": "h2",
+              "text": "Why this saves money"
+            },
+            {
+              "type": "p",
+              "html": "With 8 experts but only 2 active, a token's FFN cost is that of 2 FFNs, not 8 — so per-token compute matches a ~13B dense model even though 47B parameters exist. The paper stresses this is a <b>compute</b> saving, not a memory saving: <i>all</i> 47B parameters must still sit in VRAM, because any token might route to any expert. You trade GPU memory (cheap-ish, you can shard across cards) for FLOPs and latency (expensive, on the critical path)."
+            },
+            {
+              "type": "quote",
+              "html": "Mixtral has 47B total parameters but only uses 13B active parameters during inference. ... Mixtral was trained with a context size of 32k tokens and it outperforms or matches Llama 2 70B and GPT-3.5 across all evaluated benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "Note the arithmetic: 8 × 7B would be 56B, but it is 47B — because <b>attention layers are shared</b>, not duplicated. Only the FFN sublayers are expert-replicated. The \"8x7B\" name is marketing-friendly shorthand, not literal multiplication."
+            },
+            {
+              "type": "h2",
+              "text": "The hardware angle"
+            },
+            {
+              "type": "p",
+              "html": "The authors note that expert routing maps naturally onto <b>Expert Parallelism (EP)</b>: put different experts on different GPUs. The catch they flag is load balancing — if the router sends most tokens to a few experts, those GPUs become a bottleneck while others idle. High-throughput MoE serving lives or dies on spreading tokens evenly across experts, which is why training uses load-balancing pressure and why the routing analysis later in the paper matters for systems, not just curiosity."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Matching a 70B model at a fraction of the cost",
+          "subtitle": "Benchmark results versus Llama 2 and GPT-3.5",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The promise was \"47B quality at 13B cost.\" Does it hold? The paper benchmarks Mixtral against the Llama 2 family (7B, 13B, 70B) and GPT-3.5 across commonsense reasoning, world knowledge, reading comprehension, math, and code. The pattern is consistent and striking: <b>Mixtral matches or beats Llama 2 70B on essentially every category while using ~5x fewer active parameters</b>, and it is especially far ahead on math and code."
+            },
+            {
+              "type": "quote",
+              "html": "Mixtral outperforms or matches Llama 2 70B, as well as GPT-3.5, on most benchmarks. In particular, Mixtral vastly outperforms Llama 2 70B on mathematics and code generation."
+            },
+            {
+              "type": "table",
+              "headers": ["Benchmark", "Llama 2 70B", "GPT-3.5", "Mixtral 8x7B"],
+              "rows": [
+                ["MMLU (5-shot)", "69.9%", "70.0%", "70.6%"],
+                ["HellaSwag (10-shot)", "87.1%", "85.5%", "86.7%"],
+                ["ARC Challenge", "85.1%", "85.2%", "85.8%"],
+                ["WinoGrande", "83.2%", "81.6%", "81.2%"],
+                ["GSM8K (8-shot, math)", "53.6%", "57.1%", "58.4%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the table as \"open 13B-active model vs the two heavyweights of late 2023.\" On <b>MMLU</b> (a broad 57-subject knowledge exam) all three land near 70% — Mixtral nudges ahead. On <b>GSM8K</b> grade-school math it beats both. The point is not that Mixtral dominates by huge margins; it is that a model running at the speed of a small one <b>refuses to fall behind</b> the much larger Llama 2 70B and the proprietary GPT-3.5."
+            },
+            {
+              "type": "p",
+              "html": "The paper frames this with a \"cost vs performance\" view: plotting active parameters (the thing you pay for at inference) against benchmark score, Mixtral sits on a <b>Pareto-better frontier</b> than the entire Llama 2 family — for the same quality it uses dramatically fewer active parameters, and for the same active-parameter budget it is dramatically higher quality."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Code & math:</b> the largest margins over Llama 2 70B — the experts seem to specialize usefully here.",
+                "<b>Multilingual:</b> trained on more multilingual data, Mixtral beats Llama 2 70B clearly on French, German, Spanish and Italian benchmarks.",
+                "<b>Long context:</b> the 32k window gives ~100% retrieval accuracy on passkey retrieval regardless of where the key is hidden."
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Mixtral Instruct beats GPT-3.5 Turbo",
+          "subtitle": "Fine-tuning for chat and human preference",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A strong base model is only half the story — what users actually touch is the chat-tuned version. The authors fine-tune <b>Mixtral 8x7B – Instruct</b> with supervised instruction tuning followed by <b>Direct Preference Optimization (DPO)</b>, the lightweight RLHF alternative that trains directly on preference pairs without a separate reward model and RL loop."
+            },
+            {
+              "type": "h2",
+              "text": "The headline chat result"
+            },
+            {
+              "type": "p",
+              "html": "On <b>MT-Bench</b> (a multi-turn LLM-judged chat benchmark scored 0–10), Mixtral 8x7B – Instruct reaches a score of <b>8.30</b>. That places it above GPT-3.5 Turbo, Claude-2.1, Gemini Pro, and Llama 2 70B chat — making it, at release, <b>the best open-weights chat model</b> and the first open model to credibly trade blows with GPT-3.5 in head-to-head preference evaluation."
+            },
+            {
+              "type": "quote",
+              "html": "Mixtral 8x7B – Instruct reaches a score of 8.30 on MT-Bench, making it the best open-weights model as of December 2023. ... Mixtral 8x7B – Instruct outperforms GPT-3.5 Turbo, Claude-2.1, Gemini Pro, and Llama 2 70B – chat model on human evaluation benchmarks."
+            },
+            {
+              "type": "p",
+              "html": "Why DPO rather than full PPO-style RLHF? DPO reframes preference learning as a simple classification loss over (preferred, rejected) response pairs, so there is no reward model to train, no unstable RL rollout loop, and far fewer moving parts. For a small team shipping fast, it captures most of the benefit of RLHF at a fraction of the engineering cost — and it clearly worked here."
+            },
+            {
+              "type": "p",
+              "html": "The paper also runs a bias/sentiment check (BBQ, BOLD), reporting that Mixtral shows <b>less bias and more positive sentiment</b> than Llama 2 on these measures — a modest but real point in its favor for deployment."
+            }
+          ]
+        },
+        {
+          "title": "What are the experts actually specialized in?",
+          "subtitle": "Routing analysis — the surprising answer",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The intuitive story — \"one expert does math, one does French, one does code\" — is so appealing that the authors went looking for it directly, measuring which experts fire on text from different domains (ArXiv math, biology, philosophy, code, etc.). The honest finding is a <b>surprise</b>: that clean domain specialization mostly <i>does not exist</i>."
+            },
+            {
+              "type": "quote",
+              "html": "Surprisingly, we do not observe obvious patterns in the assignment of experts based on the topic. ... the router does exhibit some structured syntactic behaviour."
+            },
+            {
+              "type": "p",
+              "html": "Across topics, the distribution of selected experts looks roughly uniform — there is no \"the biology expert.\" The one clear exception is <b>DM Mathematics</b>, whose routing differs noticeably, likely because its synthetic, formula-heavy text is so distinct on the surface. Otherwise specialization is <b>syntactic and positional, not semantic</b>: experts latch onto things like indentation, punctuation, code keywords, and token <i>position</i> rather than subject matter."
+            },
+            {
+              "type": "h2",
+              "text": "The temporal-locality finding"
+            },
+            {
+              "type": "p",
+              "html": "The most actionable observation is that routing is <b>sticky across adjacent tokens</b>: consecutive tokens are routed to the same expert far more often than chance. For example, in code and math the rate of a token going to the same expert as its predecessor is well above the ~1-in-4 you would expect from random top-2-of-8 assignment, and this stickiness grows in the deeper layers."
+            },
+            {
+              "type": "quote",
+              "html": "We observe that consecutive tokens are often assigned the same experts. ... This suggests that the router exhibits some structured sequential behaviour."
+            },
+            {
+              "type": "p",
+              "html": "This is not just trivia — it is a <b>systems gift</b>. If a token tends to reuse its neighbor's expert, then expert assignments cluster in time, which improves cache locality and makes expert-parallel serving more efficient than worst-case routing would suggest. The lesson cuts against the intuition the architecture invites: <b>MoE experts are not interpretable topic specialists; they are low-level pattern routers that the optimizer happened to find useful</b>, and their value is empirical, not semantic."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why Mixtral mattered",
+          "subtitle": "Legacy, context, and what it set in motion",
+          "pdfPages": [1, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Mixture-of-experts was not new — it traces to Jacobs & Hinton (1991), was scaled by Shazeer et al.'s sparsely-gated MoE (2017), and pushed to trillion parameters by the Switch Transformer (2021). What Mixtral added was <b>proof, in the open, at a quality people cared about</b>: an Apache-2.0 model anyone could download that ran like a 13B and scored like a 70B / GPT-3.5."
+            },
+            {
+              "type": "h2",
+              "text": "The decoupling, restated"
+            },
+            {
+              "type": "p",
+              "html": "The one idea to carry away: MoE <b>breaks the link between parameter count and per-token compute</b>. Dense models force you to pay for every parameter on every token; sparse experts let you store knowledge in 47B weights but spend the FLOPs of only 13B. That is the single most important lever for serving large models cheaply, and Mixtral made it concrete and reproducible."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Open-weights MoE became mainstream</b> after Mixtral: DBRX, Qwen-MoE, DeepSeek-MoE, Grok-1 and others followed the same sparse top-k recipe.",
+                "<b>Apache 2.0 release</b> meant labs and startups could fine-tune and deploy it commercially — a deliberate counterweight to closed frontier models.",
+                "<b>Routing is empirical, not interpretable</b> — the paper's honest negative result reset expectations about what \"experts\" learn.",
+                "<b>Memory-vs-compute trade</b> — Mixtral made it common knowledge that MoE saves FLOPs and latency, not VRAM; you still host all 47B."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "A small but telling detail: the paper reports the experts show <b>no clean semantic specialization</b>, yet the model is excellent. That tension — a method that works wonderfully for reasons that resist tidy explanation — is a recurring theme in deep learning, and Mixtral is one of its cleaner case studies. The architecture is simple enough to state in one equation, open enough to verify, and good enough to have reshaped how the field serves large language models."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

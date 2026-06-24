@@ -1,0 +1,255 @@
+{
+  "title": "ORPO: Monolithic Preference Optimization without Reference Model",
+  "authors": "Hong, Lee, Thorne",
+  "year": "2024",
+  "venue": "arXiv:2403.07691",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "One stage instead of three",
+          "subtitle": "Folding preference alignment into supervised fine-tuning",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The question this paper answers:</b> do we really need three separate training stages to align a language model with human preferences? The standard recipe since InstructGPT is (1) <b>supervised fine-tuning (SFT)</b> to teach the format, (2) train a <b>reward model</b> on human preference pairs, then (3) <b>RLHF/PPO</b> or <b>DPO</b> to push the model toward preferred answers. That pipeline needs a frozen <i>reference model</i> kept in memory the whole time and a second labeled dataset. ORPO asks: what if a single tweak to the SFT loss could do the alignment too?"
+            },
+            {
+              "type": "p",
+              "html": "<b>The analogy:</b> imagine teaching a student to write essays. The usual way is to first show them example essays (SFT), then hire a grader to score pairs of essays (reward model), then have the student practice while the grader and a frozen 'old self' watch over their shoulder (RLHF/DPO). ORPO instead hands the student pairs of one good and one bad essay <i>at the same time</i> as the examples, and a single penalty term nudges them toward the good one and away from the bad one. No grader, no frozen old self, one sitting."
+            },
+            {
+              "type": "p",
+              "html": "<b>The key observation</b> the authors make is that plain SFT has a hidden flaw: by only ever maximizing the likelihood of 'good' tokens, it <i>also</i> raises the probability of undesirable tokens that happen to look similar. SFT has no mechanism to <i>push down</i> on rejected responses. ORPO adds exactly that mechanism, and it costs almost nothing."
+            },
+            {
+              "type": "quote",
+              "html": "In this paper, we introduce a novel and intuitive reference model-free monolithic odds ratio preference optimization algorithm, ORPO, eliminating the necessity for an additional preference alignment phase."
+            },
+            {
+              "type": "p",
+              "html": "<b>The headline result:</b> applying ORPO to <code>Phi-2 (2.7B)</code>, <code>Llama-2 (7B)</code>, and <code>Mistral (7B)</code> on just 61k preference pairs (the UltraFeedback set) beats much larger and reportedly state-of-the-art instruction-tuned models. <code>Mistral-ORPO-&beta; (7B)</code> reaches <b>12.20%</b> on AlpacaEval2.0, <b>66.19%</b> on IFEval, and <b>7.32</b> on MT-Bench, surpassing Zephyr and Llama-2-Chat baselines while using a single stage."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it landed:</b> ORPO became one of the simplest preference-tuning methods to adopt because it removes two of the most annoying engineering costs of RLHF and DPO at once: the reference-model memory footprint and the separate reward-modeling round. It slots directly into a normal fine-tuning script with one extra loss term."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Motivation",
+      "pages": [
+        {
+          "title": "The hidden flaw in plain SFT",
+          "subtitle": "Why supervised fine-tuning alone can't align",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem:</b> SFT is the workhorse of adaptation, but it has no notion of 'bad'. Its only instruction is 'make the reference answers more likely'. The authors argue this is exactly why a separate alignment phase was ever invented in the first place, and they want to understand the failure precisely before fixing it."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete example:</b> suppose you fine-tune on the prompt 'How do I make a bomb?' paired with the safe refusal 'I can't help with that.' SFT raises the probability of the refusal tokens. But the gradient of cross-entropy also tends to raise the probability of tokens that frequently co-occur in the same region of the distribution, including tokens that start a <i>compliant</i> answer. SFT gives the model no signal that the harmful continuation is undesirable, it only ever rewards, never penalizes."
+            },
+            {
+              "type": "p",
+              "html": "Plain SFT minimizes the negative log-likelihood of the reference tokens:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{SFT} = -\\frac{1}{m} \\sum_{k=1}^{m} \\log P_\\theta(y_k \\mid x, y_{<k})"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it term by term.</b> $x$ is the input prompt (a token sequence). $y = (y_1, \\dots, y_m)$ is the target response of length $m$ tokens. $y_k$ is the $k$-th target token, and $y_{<k}$ are the tokens before it. $P_\\theta(y_k \\mid x, y_{<k})$ is the model's predicted probability of the correct next token given the prompt and the preceding tokens, where $\\theta$ are the model parameters. The $\\frac{1}{m}$ averages over the $m$ token positions. Every term in this sum is a <i>reward</i> for a desired token, there is no term anywhere that lowers the score of an undesired one."
+            },
+            {
+              "type": "p",
+              "html": "<b>The evidence (Figure 3 in the paper):</b> the authors track the log-probability the model assigns to <i>chosen</i> vs <i>rejected</i> responses during pure SFT on the HH-RLHF dataset. Both curves rise together. SFT increases the likelihood of the rejected, disfavored answers <i>at the same time</i> as the chosen ones, because nothing in the loss separates them. That co-movement is the smoking gun the rest of the method is designed to eliminate."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> this connects directly to why InstructGPT (Ouyang et al., 2022) bolted RLHF on after SFT, and why DPO (Rafailov et al., 2023) and RRHF emerged. All of them are, in effect, machinery to supply the 'push down on bad answers' signal that SFT structurally lacks. ORPO's bet is that you can supply that signal <i>inside</i> SFT rather than in a stage after it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method",
+      "pages": [
+        {
+          "title": "Odds and the odds ratio",
+          "subtitle": "The right quantity to penalize, and why not probability",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Why odds, not probability?</b> ORPO needs a measure of 'how much does the model favor the chosen response over the rejected one'. The natural-looking choice is the probability ratio, but the authors deliberately use the <i>odds ratio</i> instead. Odds turn out to be far gentler: they don't blow up the gradient and they don't drive the model to assign near-zero probability to plausible-but-rejected text, which keeps generation diverse."
+            },
+            {
+              "type": "p",
+              "html": "<b>The odds of generating a response.</b> For a response $y$ given input $x$:"
+            },
+            {
+              "type": "math",
+              "tex": "\\textbf{odds}_\\theta(y \\mid x) = \\frac{P_\\theta(y \\mid x)}{1 - P_\\theta(y \\mid x)}"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it.</b> $P_\\theta(y \\mid x)$ is the model's probability of producing the whole response $y$ given prompt $x$. The odds are that probability divided by its complement. <b>Intuition with numbers:</b> if the model gives response $y$ a probability of $0.5$, the odds are $0.5/0.5 = 1$ ('even money'). If $P_\\theta = 0.8$, the odds are $0.8/0.2 = 4$, the model is '4 times more likely than not' to generate $y$. As the paper notes, $\\textbf{odds}_\\theta(y \\mid x) = k$ means the model is $k$ times more likely to generate $y$ than not."
+            },
+            {
+              "type": "p",
+              "html": "<b>The odds ratio</b> compares the favored response $y_w$ ('winner', chosen) against the disfavored $y_l$ ('loser', rejected):"
+            },
+            {
+              "type": "math",
+              "tex": "\\textbf{OR}_\\theta(y_w, y_l) = \\frac{\\textbf{odds}_\\theta(y_w \\mid x)}{\\textbf{odds}_\\theta(y_l \\mid x)}"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it.</b> The numerator is the odds of the chosen response, the denominator the odds of the rejected one. $\\textbf{OR}_\\theta > 1$ means the model favors the chosen response; the larger it is, the stronger the preference. This single scalar captures, for one preference pair, 'how much does the model already prefer the right answer', and ORPO's job is to push it up."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the odds ratio beats the probability ratio (design rationale):</b> the authors show that the probability ratio $P_\\theta(y_w)/P_\\theta(y_l)$ is far more sensitive, its gradient over-suppresses the rejected response and contracts the model toward a narrow set of outputs. The odds ratio gives a milder, more stable contrast, which is critical because ORPO runs this contrast <i>during</i> SFT where you don't want to wreck the model's fluency. This is the paper's central design choice, even reflected in the name."
+            }
+          ]
+        },
+        {
+          "title": "The ORPO objective",
+          "subtitle": "SFT plus an odds-ratio penalty, weighted by lambda",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Putting it together.</b> ORPO's full loss is just the ordinary SFT loss plus one extra term that rewards a high odds ratio between chosen and rejected. That's the whole method, two terms, one weight, no reference model, no reward model."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{ORPO} = \\mathbb{E}_{(x, y_w, y_l)}\\left[ \\mathcal{L}_{SFT} + \\lambda \\cdot \\mathcal{L}_{OR} \\right]"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it.</b> The expectation is over preference triples $(x, y_w, y_l)$: a prompt, its chosen response, and its rejected response. $\\mathcal{L}_{SFT}$ is the same negative log-likelihood from the Motivation page, computed on the <i>chosen</i> response $y_w$, so ORPO still learns to produce good answers. $\\mathcal{L}_{OR}$ is the new odds-ratio penalty. $\\lambda$ is a single scalar hyperparameter controlling how hard the penalty pushes, in the paper's experiments $\\lambda$ is set to values like $0.1$ to $1.0$."
+            },
+            {
+              "type": "p",
+              "html": "<b>The penalty term itself:</b>"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{OR} = -\\log \\sigma\\!\\left( \\log \\frac{\\textbf{odds}_\\theta(y_w \\mid x)}{\\textbf{odds}_\\theta(y_l \\mid x)} \\right)"
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading it.</b> Inside, $\\log \\frac{\\textbf{odds}_\\theta(y_w)}{\\textbf{odds}_\\theta(y_l)}$ is the <i>log</i> odds ratio, large and positive when the model strongly prefers the chosen response. $\\sigma$ is the logistic sigmoid, squashing that into $(0,1)$. The outer $-\\log \\sigma(\\cdot)$ is the standard log-sigmoid loss: it is near $0$ when the log odds ratio is large and positive (model already prefers the right answer, no push needed) and grows large when the model wrongly favors the rejected answer (strong corrective gradient). This is the same log-sigmoid shape DPO uses, but here it operates on the odds ratio of the policy <i>alone</i>, with no reference model in the denominator."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this works.</b> The two terms split the labor cleanly. $\\mathcal{L}_{SFT}$ teaches the model <i>what good answers look like</i> (the format and content), exactly as normal fine-tuning would. $\\mathcal{L}_{OR}$ supplies the missing 'and not like this' signal that the Motivation page showed SFT lacks, by penalizing the model whenever the rejected response's odds creep up. Because the penalty is gated by the sigmoid, it self-attenuates once the model already prefers the chosen answer, so it doesn't fight the SFT term unnecessarily."
+            },
+            {
+              "type": "p",
+              "html": "<b>The contrast with DPO (design rationale):</b> DPO's loss has the same log-sigmoid wrapper, but its argument is the difference of <i>log-probability ratios against a frozen reference model</i>. That reference model is what forces DPO to hold two networks in memory and run a separate stage after SFT. ORPO replaces the reference-model ratio with the policy's own odds ratio, the reference is gone, and the alignment signal lives inside the SFT step. One model, one stage, one dataset of triples."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Beating bigger, multi-stage models",
+          "subtitle": "AlpacaEval, MT-Bench, and IFEval on Phi-2, Llama-2, Mistral",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The claim to verify:</b> can a single-stage, reference-free method actually match or beat the established two/three-stage pipelines? The authors fine-tune <code>Phi-2 (2.7B)</code>, <code>Llama-2 (7B)</code>, and <code>Mistral (7B)</code> with ORPO on the 61k UltraFeedback preference pairs and benchmark them on AlpacaEval, MT-Bench, and IFEval."
+            },
+            {
+              "type": "p",
+              "html": "<b>AlpacaEval results (Table 1).</b> Even the tiny 2.7B model is competitive, and the 7B ORPO models cross the strongest baselines:"
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Size", "AlpacaEval1.0", "AlpacaEval2.0"],
+              "rows": [
+                ["Phi-2 + SFT", "2.7B", "48.37%", "0.11%"],
+                ["Phi-2 + SFT + DPO", "2.7B", "50.63%", "0.78%"],
+                ["Phi-2 + ORPO", "2.7B", "71.80%", "6.35%"],
+                ["Llama-2 + ORPO", "7B", "81.26%", "9.44%"],
+                ["Mistral-ORPO-&alpha;", "7B", "87.92%", "11.33%"],
+                ["Mistral-ORPO-&beta;", "7B", "91.41%", "12.20%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Reading the table.</b> For <code>Phi-2</code>, ORPO jumps AlpacaEval1.0 from ~48% (plain SFT) and ~51% (SFT+DPO) to <b>71.80%</b>, a roughly 20-point gain over the same model trained with DPO, while staying single-stage. <code>Mistral-ORPO-&beta;</code> reaches <b>91.41%</b> on AlpacaEval1.0 and <b>12.20%</b> on the much harder AlpacaEval2.0, surpassing Zephyr-&alpha;/&beta; and Llama-2-Chat baselines. The &alpha; and &beta; variants differ only in their $\\lambda$ setting."
+            },
+            {
+              "type": "p",
+              "html": "<b>MT-Bench and IFEval.</b> <code>Mistral-ORPO-&beta; (7B)</code> scores <b>7.32</b> on MT-Bench and <b>66.19%</b> on IFEval (instruction-following), placing it ahead of much larger or proprietary-distilled instruction models despite using only the 61k-pair dataset and no reward model. The gains hold across both single-turn and multi-turn MT-Bench categories."
+            },
+            {
+              "type": "p",
+              "html": "<b>The reward-model-free check (Figure 5).</b> To show ORPO genuinely separates good from bad answers without an explicit reward model, the authors plot the distribution of test-set log-odds for chosen vs rejected responses. Under ORPO the two distributions pull cleanly apart, the chosen mass shifts right of the rejected mass, confirming that the odds-ratio penalty is doing the discrimination job a reward model would normally do."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters.</b> The story isn't just 'ORPO wins a benchmark'. It's that a method which deletes an entire training stage and an entire model from memory still wins. The 7B ORPO models beat 7B competitors that were trained with a reward-modeling round plus DPO/PPO on top of SFT, so the simplification is essentially free, or better than free."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why ORPO caught on",
+          "subtitle": "Cheaper alignment and where it sits among RLHF and DPO",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The practical payoff.</b> ORPO removes the two costs that make preference tuning painful in practice. First, no <i>reference model</i>: DPO and PPO must keep a frozen copy of the policy in memory to anchor the KL/ratio term, roughly doubling the memory needed for the forward pass. ORPO's penalty uses the policy's own odds, so that frozen copy disappears. Second, no <i>separate reward-modeling stage</i>: you go straight from a preference dataset to an aligned model in one fine-tuning run."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in the lineage.</b> ORPO is the third move in a clear simplification arc:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>InstructGPT / RLHF (Ouyang et al., 2022):</b> SFT, then train a reward model, then PPO against it with a frozen reference. Three stages, two extra models.",
+                "<b>DPO (Rafailov et al., 2023):</b> drops the explicit reward model and PPO, but still needs SFT first and a frozen reference model during preference optimization. Two stages, one extra frozen model.",
+                "<b>ORPO (this paper):</b> drops the reward model, the reference model, and the separate stage. One stage, one model."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The conceptual contribution</b> is the diagnosis as much as the algorithm: the paper shows with the chosen-vs-rejected log-probability plot that SFT's cross-entropy <i>raises the likelihood of rejected responses too</i>, and that a small odds-ratio penalty added to SFT is enough to fix it. That reframes alignment not as a post-hoc correction stage but as a missing term in the fine-tuning objective itself."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the odds ratio specifically, in hindsight.</b> The authors' choice of odds ratio over the probability ratio is what makes the in-SFT penalty safe: the milder odds-ratio gradient avoids the catastrophic over-suppression and loss of generation diversity that a raw probability ratio would cause when run jointly with the likelihood objective. That stability is what lets the whole thing collapse into a single loss."
+            },
+            {
+              "type": "p",
+              "html": "<b>Adoption and trivia.</b> Because it drops into any standard fine-tuning loop with a triples dataset and one extra loss term, ORPO was quickly picked up by open-source training libraries (it became a standard option in Hugging Face's TRL alongside DPO). The released <code>Mistral-ORPO-&alpha;</code> and <code>Mistral-ORPO-&beta;</code> checkpoints, trained on the 61k UltraFeedback pairs, served as accessible demonstrations that a single-GPU-friendly, single-stage recipe could reach the AlpacaEval and MT-Bench scores of much heavier alignment pipelines."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

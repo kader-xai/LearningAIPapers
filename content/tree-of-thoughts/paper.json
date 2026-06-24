@@ -1,0 +1,367 @@
+{
+  "title": "Tree of Thoughts: Deliberate Problem Solving with LLMs",
+  "authors": "Yao, et al.",
+  "year": "2023",
+  "venue": "arXiv:2305.10601",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Thinking is a search, not a single stream",
+          "subtitle": "Why left-to-right token generation caps what an LLM can reason through",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Ask a language model to solve a puzzle and it does something oddly impulsive: it commits to an answer one token at a time, left to right, never pausing to weigh alternatives or undo a bad early move. That works for fluent text, but it is a terrible way to <i>reason</i>. A human solving a hard problem does not blurt out the answer in one breath — they explore options, judge which look promising, abandon dead ends, and backtrack. This paper asks: what if we let the model do the same?"
+            },
+            {
+              "type": "p",
+              "html": "<b>Tree of Thoughts (ToT)</b> generalizes the popular <b>Chain-of-Thought (CoT)</b> prompting into a deliberate <i>search</i>. Instead of one linear chain of reasoning steps, ToT builds a <i>tree</i> whose nodes are coherent units of text called <b>thoughts</b> — partial solutions that serve as intermediate stepping stones. The model proposes several thoughts at each step, evaluates how promising each one is using the LLM itself, and uses classic search (breadth-first or depth-first) to explore the tree, looking ahead and backtracking when needed."
+            },
+            {
+              "type": "quote",
+              "html": "ToT allows LMs to perform deliberate decision making by considering multiple different reasoning paths and self-evaluating choices to decide the next course of action, as well as looking ahead or backtracking when necessary to make global choices."
+            },
+            {
+              "type": "p",
+              "html": "The headline result is dramatic. On the <b>Game of 24</b>, a math puzzle where you must combine four numbers to make 24, GPT-4 with standard chain-of-thought prompting solves only <b>4%</b> of instances. ToT solves <b>74%</b> — a roughly 18x jump on the same underlying model. The paper also shows gains on <b>Creative Writing</b> and <b>Mini Crosswords</b>, two very different tasks, demonstrating that search-over-thoughts is a general framework, not a single-puzzle trick."
+            },
+            {
+              "type": "p",
+              "html": "The framework has deep roots. Newell, Shaw, and Simon described problem solving in the 1950s as <i>search through a combinatorial problem space</i> represented as a tree, where each node is a partial solution and the brancing is the set of operators that extend it. ToT takes that 70-year-old picture of human cognition and drops a modern LLM into every role: the model proposes branches, scores nodes, and decides where to search next."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Background",
+      "pages": [
+        {
+          "title": "From single samples to chains to trees",
+          "subtitle": "The ladder of inference strategies ToT sits on top of",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To see what ToT adds, it helps to line up the existing ways people coax answers out of a language model. Each one is a small step toward more deliberate reasoning, and ToT is the natural next rung on that ladder."
+            },
+            {
+              "type": "h2",
+              "text": "Rung 1 — Input-Output (IO) prompting"
+            },
+            {
+              "type": "p",
+              "html": "The most basic approach: wrap the problem $x$ in instructions and read out the answer $y$ directly."
+            },
+            {
+              "type": "math",
+              "tex": "y \\sim p_\\theta(y \\mid \\text{prompt}_{IO}(x))"
+            },
+            {
+              "type": "p",
+              "html": "Here $x$ is the problem input (e.g. the four numbers <code>4 9 10 13</code>), $y$ is the final answer, $p_\\theta$ is the language model with frozen parameters $\\theta$, and $\\text{prompt}_{IO}(x)$ wraps $x$ in task instructions. There is no visible reasoning — the model jumps straight to $y$. For anything that needs multiple steps of thought, this fails badly."
+            },
+            {
+              "type": "h2",
+              "text": "Rung 2 — Chain-of-Thought (CoT)"
+            },
+            {
+              "type": "p",
+              "html": "CoT (Wei et al., 2022) inserts a sequence of intermediate <i>thoughts</i> $z_1, \\dots, z_n$ between input and answer, each a coherent language step toward the solution."
+            },
+            {
+              "type": "math",
+              "tex": "z_i \\sim p_\\theta^{CoT}(z_i \\mid x, z_{1\\dots i-1}), \\qquad y \\sim p_\\theta^{CoT}(y \\mid x, z_{1\\dots n})"
+            },
+            {
+              "type": "p",
+              "html": "$z_i$ is the $i$-th reasoning step (a thought), sampled conditioned on the input $x$ and all earlier thoughts $z_{1\\dots i-1}$; the final answer $y$ is read off after $n$ steps. The chain is a single line — generated once, left to right, with no branching and no way back. One unlucky early step dooms the whole chain."
+            },
+            {
+              "type": "h2",
+              "text": "Rung 3 — Self-consistency with CoT (CoT-SC)"
+            },
+            {
+              "type": "p",
+              "html": "CoT-SC (Wang et al., 2022) samples $k$ independent chains and takes a <b>majority vote</b> over their final answers. It helps because some chains get lucky, but it is still blind sampling: it never inspects a chain mid-way, never reuses a good partial step, and only works when the answer space is small enough to vote over."
+            },
+            {
+              "type": "p",
+              "html": "<b>The gap ToT fills.</b> All three rungs share a flaw — no <i>local exploration</i> within a reasoning path. The model cannot say 'this step has three plausible continuations, let me try each,' cannot rate how promising a partial state is, and cannot back up after a dead end. ToT supplies exactly those missing pieces: branching, evaluation, and backtracking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The ToT Framework",
+      "pages": [
+        {
+          "title": "Four questions every Tree of Thoughts must answer",
+          "subtitle": "Decomposition, generation, evaluation, search",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "ToT is not one algorithm but a <i>recipe</i>. To instantiate it on a new problem you answer four design questions. Get these four right and the search runs itself."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>1. Thought decomposition.</b> How do you chop the problem into intermediate steps? A thought should be small enough that the LLM can generate diverse, promising candidates, yet large enough that it can be evaluated. For Game of 24 a thought is one arithmetic line (e.g. '4 + 9 = 13'); for Creative Writing it is a whole paragraph plan; for crosswords it is filling one word.",
+                "<b>2. Thought generation.</b> Given a state, how do you propose the next thoughts? Either <i>sample</i> $k$ independent thoughts from a CoT prompt (good when the thought space is rich, like writing), or <i>propose</i> them all in one prompt (good when the space is constrained, like the small set of legal arithmetic moves).",
+                "<b>3. State evaluation.</b> How good is a partial state? Use the LLM itself as a heuristic — either <i>value</i> each state independently with a score, or <i>vote</i> across states to pick the most promising. This replaces hand-coded heuristics with the model's own judgment.",
+                "<b>4. Search algorithm.</b> How do you traverse the tree? The paper uses plain <b>BFS</b> (keep the best $b$ states per level) or <b>DFS</b> (go deep, backtrack on failure). Any classic search could plug in."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Worked example — Game of 24.</b> Input is <code>4 9 10 13</code>; goal is to reach 24 using each number once with +, -, *, /. ToT decomposes this into <b>3 steps</b>: each step picks two remaining numbers and combines them, shrinking four numbers to three, then two, then one. A complete path might be: <code>10 - 4 = 6</code> (left: 6 9 13) → <code>13 - 9 = 4</code> (left: 4 6) → <code>4 * 6 = 24</code>. That is one root-to-leaf path through the tree."
+            },
+            {
+              "type": "p",
+              "html": "The key formal object is a <b>thought generator</b> $G(p_\\theta, s, k)$ that returns $k$ candidate next thoughts from state $s$, and a <b>state evaluator</b> $V(p_\\theta, S)$ that scores a set of states $S$. Both are just structured prompts to the same frozen model $p_\\theta$ — no training, no fine-tuning."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this modularity matters.</b> By separating <i>what counts as a thought</i> from <i>how you score it</i> from <i>how you search</i>, ToT becomes a framework you reconfigure per task rather than a monolith. The same code skeleton handles a math puzzle and a 100-word story by swapping these four components."
+            }
+          ]
+        },
+        {
+          "title": "Generating and evaluating thoughts with the model itself",
+          "subtitle": "Sample vs. propose; value vs. vote",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The two cleverest pieces of ToT are <i>how it expands the tree</i> and <i>how it prunes it</i> — and both reuse the LLM as a general-purpose engine instead of bespoke heuristics. This is what makes ToT plug-and-play across wildly different tasks."
+            },
+            {
+              "type": "h2",
+              "text": "Generating thoughts: sample or propose"
+            },
+            {
+              "type": "p",
+              "html": "<b>Sample.</b> Draw $k$ thoughts independently and identically from a CoT-style prompt:"
+            },
+            {
+              "type": "math",
+              "tex": "z^{(j)} \\sim p_\\theta^{CoT}(z \\mid x, s), \\quad j = 1, \\dots, k"
+            },
+            {
+              "type": "p",
+              "html": "$z^{(j)}$ is the $j$-th candidate thought, $s$ is the current state (the partial solution so far), and $x$ is the original input. Independent sampling gives <i>diversity</i> — ideal when the thought space is large and open-ended, such as proposing different paragraph plans for a story."
+            },
+            {
+              "type": "p",
+              "html": "<b>Propose.</b> Ask for all candidates in a single prompt:"
+            },
+            {
+              "type": "math",
+              "tex": "[z^{(1)}, \\dots, z^{(k)}] \\sim p_\\theta^{propose}(z^{(1\\dots k)} \\mid x, s)"
+            },
+            {
+              "type": "p",
+              "html": "Listing candidates together lets the model avoid duplicates and stay inside a constrained space — ideal for Game of 24, where only a handful of arithmetic combinations are legal, so independent sampling would waste effort repeating itself."
+            },
+            {
+              "type": "h2",
+              "text": "Evaluating states: value or vote"
+            },
+            {
+              "type": "p",
+              "html": "<b>Value.</b> Score each state on its own. For Game of 24 the model labels a state <code>sure</code> / <code>maybe</code> / <code>impossible</code> based on whether the remaining numbers can still reach 24 — it even does a quick mental check, e.g. '10 and 14 left → 10 + 14 = 24 → sure.' These labels become a numeric heuristic that ranks states."
+            },
+            {
+              "type": "p",
+              "html": "<b>Vote.</b> When an absolute score is hard (is this story plan really better?), show the model several states at once and have it <i>vote</i> for the best:"
+            },
+            {
+              "type": "math",
+              "tex": "V(p_\\theta, S)(s) = \\mathbb{1}\\left[s = \\arg\\max_{s' \\in S} \\; \\text{vote}_\\theta(s', S)\\right]"
+            },
+            {
+              "type": "p",
+              "html": "$S$ is the set of competing states, $\\text{vote}_\\theta(s', S)$ aggregates the model's preference for state $s'$ within that set, and $\\mathbb{1}[\\cdot]$ is the indicator that flags whichever state wins the vote. Comparison is often easier and more reliable than absolute scoring — the same reason humans rank essays by comparing pairs rather than assigning raw scores."
+            },
+            {
+              "type": "p",
+              "html": "<b>Robustness trick.</b> The evaluator can be noisy, so ToT samples it multiple times and aggregates — a cheap LLM heuristic does not need to be perfect, it only needs to rank good states above bad ones often enough to guide the search."
+            }
+          ]
+        },
+        {
+          "title": "Searching the tree: BFS and DFS",
+          "subtitle": "The two algorithms that turn evaluations into answers",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "With a way to grow branches (generation) and a way to rank them (evaluation), the last ingredient is the search itself. ToT deliberately uses <i>textbook</i> search algorithms — the contribution is plugging an LLM into the generate and evaluate slots, not inventing exotic search."
+            },
+            {
+              "type": "h2",
+              "text": "Algorithm 1 — Breadth-First Search (BFS)"
+            },
+            {
+              "type": "p",
+              "html": "Keep a frontier of the $b$ most promising states. At each level, expand every state in the frontier into candidate thoughts, evaluate all of them, and keep only the best $b$ for the next level. This is a <b>beam search</b> over thoughts."
+            },
+            {
+              "type": "math",
+              "tex": "S_{t}' = \\bigcup_{s \\in S_{t-1}} \\{ [s, z] : z \\in G(p_\\theta, s, k) \\}, \\qquad S_t = \\arg\\!\\max_{S \\subseteq S_t',\\, |S| = b} \\sum_{s \\in S} V(p_\\theta, S_t')(s)"
+            },
+            {
+              "type": "p",
+              "html": "$S_{t-1}$ is the frontier kept from the previous level; for each state $s$ in it we append each generated thought $z$ to form extended states $[s,z]$, collecting them into the candidate pool $S_t'$. We then evaluate every candidate with $V$ and keep the top $b$ by score as the new frontier $S_t$. The <b>breadth limit</b> $b$ controls how many parallel lines of thought survive — Game of 24 uses just $b = 5$."
+            },
+            {
+              "type": "h2",
+              "text": "Algorithm 2 — Depth-First Search (DFS)"
+            },
+            {
+              "type": "p",
+              "html": "Commit to the most promising thought and dive deeper, building one path until you reach a solution or hit a state the evaluator deems hopeless. On a dead end, <b>backtrack</b> to the parent and try the next-best sibling thought. DFS suits problems with a clear notion of 'this partial state is already broken' — like crosswords, where an impossible letter pattern can be pruned early and the search returns to fill that slot differently."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why both?</b> BFS shines when the tree is shallow (Game of 24 is only 3 levels deep) and you want to hedge across several lines at once. DFS shines when the tree is deep and you want to fully pursue one promising line before spending budget elsewhere, with pruning to avoid wasting effort on doomed branches. The shared win over CoT is the same: the model can <i>look ahead</i> (evaluate before committing) and <i>backtrack</i> (undo a bad step) — exactly the two abilities a single left-to-right chain lacks."
+            },
+            {
+              "type": "p",
+              "html": "Crucially, both algorithms are short and generic — a handful of lines. All the intelligence lives in the LLM-powered $G$ and $V$, which is what lets the very same search machinery solve a math puzzle, plan a story, and fill a crossword."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Experiments",
+      "pages": [
+        {
+          "title": "Game of 24 — from 4% to 74%",
+          "subtitle": "The headline result, and why it is so large",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Game of 24 is the cleanest demonstration. You get four numbers and must reach exactly 24 using each once with +, -, *, /. It is hard for LLMs precisely because one wrong early combination poisons everything downstream — and a left-to-right model has no way to notice and recover. ToT's look-ahead and backtracking are tailor-made for this."
+            },
+            {
+              "type": "p",
+              "html": "The authors test on the 100 hardest puzzles (indices 901–1000 on a difficulty-ranked list) and report <b>success rate</b> — the fraction solved. All methods run on the same GPT-4."
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "Success on Game of 24"],
+              "rows": [
+                ["IO prompt (direct answer)", "7.3%"],
+                ["CoT prompt", "4.0%"],
+                ["CoT-SC (100 samples, majority vote)", "9.0%"],
+                ["ToT (breadth b = 1)", "45%"],
+                ["ToT (breadth b = 5)", "74%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "ToT with $b = 5$ hits <b>74%</b> versus CoT's <b>4%</b> — and even ToT with $b = 1$ (keeping a single best state per level, the most frugal setting) already reaches <b>45%</b>, more than 4x the best baseline. Widening the beam from 1 to 5 buys the rest, showing the search budget translates directly into accuracy."
+            },
+            {
+              "type": "p",
+              "html": "<b>The most telling comparison.</b> The authors push the baseline as hard as it will go: sample <i>100</i> independent CoT chains and accept the puzzle as solved if <i>any</i> of them is correct (best-of-100). That oracle-generous baseline still only reaches <b>49%</b> — below ToT's 74%. So ToT's edge is not just 'more samples.' Structured search that <i>evaluates and prunes</i> partial states beats brute-force resampling of whole chains."
+            },
+            {
+              "type": "p",
+              "html": "An error analysis on CoT confirms the diagnosis: about <b>60%</b> of failed CoT runs already go wrong at the <i>very first step</i>. A single linear chain has no mechanism to recover from a bad opening move; a tree simply explores a different branch."
+            }
+          ]
+        },
+        {
+          "title": "Creative Writing and Crosswords",
+          "subtitle": "ToT generalizes beyond a single math puzzle",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A framework is only convincing if it transfers. The authors stress-test ToT on two tasks that look nothing like arithmetic search, to show the four-component recipe is genuinely general."
+            },
+            {
+              "type": "h2",
+              "text": "Creative Writing"
+            },
+            {
+              "type": "p",
+              "html": "Given four random sentences, write a coherent 4-paragraph passage that <i>ends</i> each paragraph with one of those sentences — a hard constraint-satisfaction-meets-creativity task. ToT decomposes it into two levels: first generate several <b>plans</b> (a thought is a paragraph-by-paragraph outline), <i>vote</i> for the best plan, then generate several full passages from it and vote again."
+            },
+            {
+              "type": "p",
+              "html": "Judged by a GPT-4 coherence score (1–10), ToT averages about <b>7.56</b> versus roughly <b>6.93</b> for CoT and <b>6.19</b> for IO. A human-judgment study agrees: humans preferred the ToT passage over the CoT passage in <b>41</b> of 100 comparisons, versus only <b>21</b> the other way (the rest tied) — concrete evidence that deliberate planning improves open-ended generation, not just puzzles with a single right answer."
+            },
+            {
+              "type": "h2",
+              "text": "Mini Crosswords"
+            },
+            {
+              "type": "p",
+              "html": "On 5x5 crosswords, a thought is filling one word, and ToT uses <b>DFS with backtracking</b>: pursue a candidate word, propagate its letters, and if the resulting letter pattern makes another clue impossible, back up and try a different word. The evaluator labels partial states as <code>sure / maybe / impossible</code> to prune doomed branches early."
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "Word-level success", "Games solved"],
+              "rows": [
+                ["IO prompt", "38.7%", "0%"],
+                ["CoT prompt", "40.6%", "1%"],
+                ["ToT (DFS)", "60%", "20%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "ToT solves <b>20%</b> of full crossword games versus about <b>1%</b> for CoT and <b>0%</b> for IO, and roughly <b>60%</b> of individual words against ~40% for the baselines. The deep, prune-and-backtrack search is what unlocks a task where every filled word constrains its neighbors — a structure that punishes the commit-and-never-undo style of plain CoT."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why Tree of Thoughts matters",
+          "subtitle": "Search as a first-class tool for LLM reasoning",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "ToT's lasting idea is a clean separation of concerns: keep the LLM as a powerful but myopic <i>local</i> reasoner, and wrap it in a <i>global</i> search loop that decides where to think next. The neural network proposes and judges; classical search plans and backtracks. Neither alone solves Game of 24; together they hit 74%."
+            },
+            {
+              "type": "p",
+              "html": "This reframes a deep tension in AI. Classical symbolic planners search beautifully but cannot read natural-language problems; LLMs read anything but cannot plan. ToT is a bridge — it borrows the 1950s Newell-Simon picture of problem solving as tree search and uses an LLM to supply the heuristics that traditionally had to be hand-engineered for every domain. No training, no fine-tuning; everything is prompting on a frozen model."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Generality.</b> One framework, four swappable components (decompose, generate, evaluate, search) handle arithmetic, creative writing, and crosswords — strong evidence it is a paradigm, not a puzzle hack.",
+                "<b>Modularity.</b> Sample-vs-propose generation and value-vs-vote evaluation are mix-and-match, letting practitioners match the method to the task's structure.",
+                "<b>Interpretability.</b> The search tree is human-readable: you can see which thoughts were explored, scored, and pruned — far more transparent than a single opaque chain.",
+                "<b>Recoverability.</b> Look-ahead and backtracking fix the failure mode that dooms CoT — a bad first step (the cause of ~60% of CoT errors on Game of 24) is no longer fatal."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Costs and honesty.</b> ToT is not free: it issues many more model calls than a single chain, trading compute for accuracy. The authors are upfront that for tasks GPT-4 already handles well, plain prompting may be enough — ToT earns its keep on problems that genuinely require exploration and planning."
+            },
+            {
+              "type": "p",
+              "html": "<b>Influence.</b> Appearing in 2023 alongside the related <i>Graph of Thoughts</i> and earlier <i>Chain-of-Thought</i> and <i>Self-Consistency</i> work, ToT helped crystallize a now-standard view: scaling test-time <i>search and deliberation</i>, not just model size, is a lever for reasoning. It is a direct conceptual ancestor of the inference-time search and 'thinking longer' strategies that power later reasoning systems and agentic LLM pipelines."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

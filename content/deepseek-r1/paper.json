@@ -1,0 +1,373 @@
+{
+  "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via RL",
+  "authors": "DeepSeek-AI",
+  "year": "2025",
+  "venue": "arXiv:2501.12948",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Can reasoning be grown, not taught?",
+          "subtitle": "The central bet of the paper",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Every prior recipe for making a language model <i>reason</i> followed the same script: hire humans (or a stronger model) to write thousands of worked, step-by-step solutions, then fine-tune the model to imitate them. This is <b>supervised fine-tuning (SFT)</b>. It works, but it has a ceiling: the model can only learn the reasoning styles a human bothered to demonstrate. The question this paper asks is radical: <b>what if you never show the model a single example of how to reason, and instead only reward it for getting the final answer right?</b> Could good reasoning <i>emerge on its own</i> as the strategy that maximizes reward?"
+            },
+            {
+              "type": "p",
+              "html": "The answer turns out to be yes. The authors introduce two models. <b>DeepSeek-R1-Zero</b> is trained by <b>pure reinforcement learning (RL)</b> directly on the base model with <i>no SFT warm-up at all</i>. <b>DeepSeek-R1</b> adds a small amount of curated 'cold-start' data and a multi-stage pipeline to fix R1-Zero's rough edges. Both reach reasoning performance rivaling OpenAI's o1 series."
+            },
+            {
+              "type": "quote",
+              "html": "We introduce our first-generation reasoning models, DeepSeek-R1-Zero and DeepSeek-R1. DeepSeek-R1-Zero, a model trained via large-scale reinforcement learning (RL) without supervised fine-tuning (SFT) as a preliminary step, demonstrates remarkable reasoning capabilities."
+            },
+            {
+              "type": "p",
+              "html": "The headline number: on the AIME 2024 math competition, DeepSeek-R1-Zero's <b>pass@1 climbs from 15.6% to 71.0%</b> over the course of RL training, and reaches <b>86.7%</b> with majority voting (cons@64) &mdash; matching OpenAI-o1-0912. The full DeepSeek-R1 reaches <b>79.8%</b> pass@1 on AIME 2024, on par with OpenAI-o1-1217. No human reasoning traces were used to teach R1-Zero <i>how</i> to think; it discovered that itself."
+            },
+            {
+              "type": "p",
+              "html": "There is a second gift in the paper. The reasoning learned by the big model can be <b>distilled into small dense models</b>. A distilled 14B model beats prior open-source reasoning models, and the distilled 32B and 70B models set new records on reasoning benchmarks for dense models. The authors open-sourced R1-Zero, R1, and six distilled checkpoints (1.5B through 70B), built on Qwen and Llama."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this mattered.</b> Released January 2025, DeepSeek-R1 was the first widely-reproduced public demonstration that o1-style 'long thinking' could be reproduced with an RL recipe simple enough to describe in a few equations &mdash; and that the recipe needed no proprietary reasoning data. It set off a wave of open reasoning models and made 'RL with verifiable rewards' a standard phrase in the field."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The RL Engine: GRPO",
+      "pages": [
+        {
+          "title": "GRPO: reinforcement learning without a critic",
+          "subtitle": "How the model is updated from rewards",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To make a model 'try things and keep what works,' you need a reinforcement learning algorithm. The standard choice, <b>PPO</b>, trains a second neural network &mdash; a <i>critic</i> (or value model) &mdash; just as large as the model being trained, whose job is to estimate how good a partially-written answer is. That critic doubles your memory and compute. The authors instead use <b>Group Relative Policy Optimization (GRPO)</b>, which throws the critic away entirely."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition.</b> Instead of asking a learned critic 'how good is this answer in absolute terms?', GRPO samples a <i>group</i> of answers to the same question and judges each one <i>relative to its groupmates</i>. If you generate 16 attempts at a math problem and 4 of them are correct, those 4 are 'above average for this question' and get pushed up; the 12 wrong ones get pushed down. The group's own average <i>is</i> the baseline &mdash; no separate network needed."
+            },
+            {
+              "type": "h2",
+              "text": "A concrete mini-example"
+            },
+            {
+              "type": "p",
+              "html": "Suppose the question is <code>2 + 3 * 4 = ?</code>. We sample a group of 4 answers and a rule-based checker assigns rewards: $r_1=1$ (correct, 14), $r_2=0$, $r_3=1$, $r_4=0$. The group mean is $0.5$ and the standard deviation is $0.5$. The <b>advantage</b> of answer 1 is $(1-0.5)/0.5 = +1$; the advantage of answer 2 is $(0-0.5)/0.5 = -1$. The policy is then nudged to make the $+1$ answers more likely and the $-1$ answers less likely. That is the whole idea."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{J}_{GRPO}(\\theta) = \\mathbb{E}\\Big[ \\frac{1}{G}\\sum_{i=1}^{G} \\min\\Big( \\frac{\\pi_\\theta(o_i|q)}{\\pi_{\\theta_{old}}(o_i|q)} A_i,\\ \\text{clip}\\big(\\tfrac{\\pi_\\theta(o_i|q)}{\\pi_{\\theta_{old}}(o_i|q)}, 1-\\varepsilon, 1+\\varepsilon\\big) A_i \\Big) - \\beta\\, \\mathbb{D}_{KL}(\\pi_\\theta \\| \\pi_{ref}) \\Big]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $\\pi_\\theta$ is the model we are training (the <i>policy</i>), $\\pi_{\\theta_{old}}$ is the snapshot that generated the samples, and $\\pi_{ref}$ is a frozen reference model. For each question $q$ we sample a group of $G$ outputs $o_1,\\dots,o_G$. The ratio $\\pi_\\theta(o_i|q)/\\pi_{\\theta_{old}}(o_i|q)$ measures how much more (or less) likely the new policy makes output $i$ versus the old one. $A_i$ is that output's <b>advantage</b> (defined below). The $\\text{clip}(\\cdot,1-\\varepsilon,1+\\varepsilon)$ with the outer $\\min$ stops any single update from moving the ratio too far &mdash; the same trust-region trick as PPO. The final term $\\beta\\,\\mathbb{D}_{KL}$ penalizes drifting too far from the reference model, keeping language fluent and stable. Everything is a scalar except the policies, which are the LLM's token distributions."
+            },
+            {
+              "type": "math",
+              "tex": "A_i = \\frac{r_i - \\text{mean}(\\{r_1, r_2, \\dots, r_G\\})}{\\text{std}(\\{r_1, r_2, \\dots, r_G\\})}"
+            },
+            {
+              "type": "p",
+              "html": "Here $A_i$ is the advantage of output $i$, $r_i$ is its scalar reward, and $\\text{mean}$ / $\\text{std}$ are taken over the whole group of $G$ rewards. This is just a <b>z-score</b>: it asks 'how many standard deviations above or below the group average was this answer?' Above-average answers get positive advantage and are reinforced; below-average ones get negative advantage and are suppressed. Because the baseline is computed from the group itself, GRPO needs <i>no value network</i> &mdash; the single biggest source of its efficiency."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works / what breaks without it.</b> PPO's critic must learn a hard target (the expected future reward of a half-finished proof) and a bad critic injects noise into every update. GRPO sidesteps that: as long as you can score complete answers, the relative comparison is well-defined. The cost is that you must generate a whole group per question, but for verifiable tasks (math, code) that is cheap and parallelizable. GRPO comes from DeepSeek's earlier DeepSeekMath paper; R1 is its highest-profile success."
+            }
+          ]
+        },
+        {
+          "title": "Rule-based rewards, not a learned judge",
+          "subtitle": "What the model is actually rewarded for",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "RL is only as good as its reward signal. The obvious choice &mdash; train a neural <b>reward model</b> to score answers &mdash; is exactly what the authors <i>avoid</i> for R1-Zero. A learned reward model can be gamed: the policy discovers weird outputs that the reward model scores highly but a human would reject. This is <b>reward hacking</b>, and at the massive scale of RL training it can quietly derail everything."
+            },
+            {
+              "type": "p",
+              "html": "Instead, R1-Zero uses a <b>rule-based reward</b> with two simple, ungameable components."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Accuracy reward.</b> For math with a deterministic answer, the model must put its final answer in a box; a program checks it against the ground truth. For code, the answer is run against test cases in a sandbox. Reward = correct or not. There is no opinion to fool here.",
+                "<b>Format reward.</b> A separate rule rewards the model for wrapping its thinking in <code>&lt;think&gt;...&lt;/think&gt;</code> tags and its answer in <code>&lt;answer&gt;...&lt;/answer&gt;</code> tags. This forces a clean separation between scratch work and final answer."
+              ]
+            },
+            {
+              "type": "quote",
+              "html": "To train DeepSeek-R1-Zero, we adopt a rule-based reward system that mainly consists of two types of rewards: Accuracy rewards ... Format rewards. We do not apply the outcome or process neural reward model in developing DeepSeek-R1-Zero, because we find that the neural reward model may suffer from reward hacking in the large-scale reinforcement learning process."
+            },
+            {
+              "type": "h2",
+              "text": "The template that gives reasoning room to grow"
+            },
+            {
+              "type": "p",
+              "html": "R1-Zero's only 'instruction' is a tiny template (Table 1 in the paper): the assistant must first produce a reasoning process inside <code>&lt;think&gt;</code> tags, then a final answer inside <code>&lt;answer&gt;</code> tags. Crucially the template constrains the <i>format</i> but never the <i>content</i> &mdash; it never says 'use chain-of-thought' or 'reflect on your work.' That restraint is deliberate."
+            },
+            {
+              "type": "quote",
+              "html": "We intentionally limit our constraints to this structural format, avoiding any content-specific biases—such as mandating reflective reasoning or promoting particular problem-solving strategies—to ensure that we can accurately observe the model's natural progression during the RL process."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is the key design choice.</b> If the reward had baked in <i>how</i> to reason, any reasoning the model showed would just be obedience to that prior, not discovery. By rewarding only <i>correctness + format</i>, the authors set up a clean experiment: any reasoning behavior that appears must have been <b>selected for because it raised the success rate</b>. This is what lets them claim reasoning genuinely <i>emerges</i> from RL. The trade-off: rule-based rewards only work where answers are checkable, which is why the recipe shines on math and code and needs help elsewhere."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Emergence & the Aha Moment",
+      "pages": [
+        {
+          "title": "Reasoning that grows itself",
+          "subtitle": "Self-evolution and the 'aha moment'",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the most striking result in the paper, and it costs nothing extra to obtain &mdash; it just <i>falls out</i> of the RL process. As training proceeds, R1-Zero spontaneously starts to <b>think longer</b>. Nobody told it to. The reward only cares about the final answer, but the strategy that maximizes that reward turns out to be: generate more reasoning, check your work, explore alternatives."
+            },
+            {
+              "type": "quote",
+              "html": "DeepSeek-R1-Zero naturally acquires the ability to solve increasingly complex reasoning tasks by leveraging extended test-time computation. This computation ranges from generating hundreds to thousands of reasoning tokens, allowing the model to explore and refine its thought processes in greater depth."
+            },
+            {
+              "type": "p",
+              "html": "Figure 3 in the paper plots the <b>average response length growing steadily across training steps</b> &mdash; from a few hundred tokens to many thousands. This longer 'thinking budget' is not hard-coded; it is an emergent strategy. The model learns, by trial and error, that spending more tokens deliberating produces more correct answers, and RL rewards exactly that."
+            },
+            {
+              "type": "h2",
+              "text": "The 'aha moment'"
+            },
+            {
+              "type": "p",
+              "html": "More remarkable than length is <i>kind</i>. The model starts to exhibit behaviors that look like genuine metacognition: it <b>re-evaluates its own steps, backtracks, and tries different approaches</b> &mdash; none of which were demonstrated to it. The authors highlight one mid-training transcript (Table 3) on a square-root equation where the model interrupts itself."
+            },
+            {
+              "type": "quote",
+              "html": "Wait, wait. Wait. That's an aha moment I can flag here. Let's reevaluate this step-by-step to identify if the correct sum can be ... It learns to rethink using an anthropomorphic tone. This is also an aha moment for us, allowing us to witness the power of reinforcement learning."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is profound.</b> The 'aha moment' is the headline of the whole paper: reflection and self-correction &mdash; behaviors humans painstakingly write into chain-of-thought datasets &mdash; emerged for free, purely because they raise the success rate. The authors describe the wonder of watching the model teach itself a better problem-solving style without any explicit instruction. It is a concrete demonstration that RL can <i>incentivize</i> capabilities rather than imitate them."
+            },
+            {
+              "type": "p",
+              "html": "<b>But there is a catch.</b> R1-Zero, for all its reasoning power, has ugly outputs: it mixes languages mid-answer (English and Chinese in one breath), and its formatting is poor and hard to read. Pure RL optimized for <i>being right</i>, not for <i>being readable</i>. Fixing this is the entire motivation for the next model, DeepSeek-R1."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The DeepSeek-R1 Pipeline",
+      "pages": [
+        {
+          "title": "Four stages to a usable reasoner",
+          "subtitle": "Cold start, reasoning RL, rejection sampling, final RL",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "R1-Zero proved reasoning can emerge from pure RL &mdash; but it was a research artifact, not a product, because of the language-mixing and unreadable output. <b>DeepSeek-R1</b> keeps the RL engine but wraps it in a <b>four-stage pipeline</b> that produces a clean, helpful, well-formatted reasoner. Think of R1-Zero as discovering that a wild plant is edible, and R1 as cultivating it into a crop."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 1 — Cold start"
+            },
+            {
+              "type": "p",
+              "html": "Before any RL, the base model (DeepSeek-V3-Base) is fine-tuned on a few thousand high-quality, human-readable long chain-of-thought examples. This is a small dose of SFT whose only job is to give RL a civilized starting point &mdash; clean formatting, consistent language &mdash; so the model does not have to rediscover readability from scratch. Unlike R1-Zero (which started from the raw base model), R1 starts 'warm.'"
+            },
+            {
+              "type": "h2",
+              "text": "Stage 2 — Reasoning-oriented RL"
+            },
+            {
+              "type": "p",
+              "html": "Now the same GRPO + rule-based-reward machine from R1-Zero is applied, with one addition: a <b>language-consistency reward</b> that penalizes mixing languages. This directly fixes R1-Zero's worst habit, at a tiny cost in raw accuracy."
+            },
+            {
+              "type": "math",
+              "tex": "r_{\\text{reasoning}} = r_{\\text{accuracy}} + r_{\\text{format}} + \\lambda \\cdot r_{\\text{language-consistency}}"
+            },
+            {
+              "type": "p",
+              "html": "In words: the total reward for a reasoning rollout adds three signals. $r_{\\text{accuracy}}$ checks the boxed/tested answer, $r_{\\text{format}}$ rewards proper <code>&lt;think&gt;</code>/<code>&lt;answer&gt;</code> structure, and $r_{\\text{language-consistency}}$ measures the fraction of the answer written in the target language. $\\lambda$ weights how hard to push for one-language output. The authors note this slightly lowers benchmark accuracy but makes outputs far more readable &mdash; a deliberate human-preference trade-off."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 3 — Rejection sampling + broader SFT"
+            },
+            {
+              "type": "p",
+              "html": "Once Stage-2 RL converges, the model is used as a <b>data factory</b>. It generates many candidate answers; correct, well-formatted ones are kept (<b>rejection sampling</b>) to build ~600k reasoning examples. These are combined with ~200k <b>non-reasoning</b> examples (writing, factual QA, self-cognition &mdash; reused from the DeepSeek-V3 pipeline) and the base model is re-fine-tuned on all ~800k. This re-injects general-purpose skills that pure reasoning RL would otherwise neglect."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 4 — RL for all scenarios"
+            },
+            {
+              "type": "p",
+              "html": "A final RL pass aligns the model with <b>human preferences for helpfulness and harmlessness</b> across all prompt types, not just verifiable ones. For reasoning prompts it keeps rule-based rewards; for open-ended prompts it uses preference-style reward models. The result is a model that reasons like R1-Zero <i>and</i> behaves like a polished assistant."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why four stages and not one.</b> Each stage repairs a specific failure of pure RL: cold-start fixes readability at the start, the language reward fixes mixing during RL, rejection-sampling SFT restores general ability, and the final RL adds alignment. Skip any one and you get back a sharper-but-rougher R1-Zero. This staged 'SFT → RL → SFT → RL' loop became a widely-copied template for building reasoning models."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Matching o1, and the numbers behind it",
+          "subtitle": "Benchmark performance of R1 and R1-Zero",
+          "pdfPages": [4, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Does the recipe actually work? The cleanest evidence is the <b>AIME 2024</b> training curve for R1-Zero (Figure 2). With nothing but RL and rule-based rewards, math ability climbs from near-novice to expert."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "AIME 2024 pass@1", "AIME 2024 cons@64"],
+              "rows": [
+                ["DeepSeek-R1-Zero (start of RL)", "15.6%", "—"],
+                ["DeepSeek-R1-Zero (after RL)", "71.0%", "86.7%"],
+                ["OpenAI-o1-0912", "74.4%", "83.3%"],
+                ["DeepSeek-R1 (full pipeline)", "79.8%", "—"],
+                ["OpenAI-o1-1217", "79.2%", "—"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The two takeaways: (1) <b>pure RL alone</b> (R1-Zero) gets within striking distance of o1, and majority voting over 64 samples (cons@64) pushes it to <b>86.7%</b>, actually exceeding o1-0912's single-shot score; (2) the <b>full pipeline</b> (R1) reaches <b>79.8%</b> pass@1, statistically on par with the strongest o1-1217. The cold-start and staged training did not just clean up output &mdash; they raised the ceiling."
+            },
+            {
+              "type": "quote",
+              "html": "DeepSeek-R1 achieves performance comparable to OpenAI-o1-1217 on reasoning tasks. ... DeepSeek-R1-Zero ... achieves a score of 71.0% [on AIME 2024], and with majority voting, the score further improves to 86.7%, matching the performance of OpenAI-o1-0912."
+            },
+            {
+              "type": "p",
+              "html": "Beyond AIME, R1 is strong across the board. On <b>MATH-500</b> it reaches around <b>97.3%</b>, comparable to o1-1217. On the coding side it earns a <b>Codeforces</b> rating around <b>2029</b> (roughly the 96th percentile of human competitors), and it is competitive on knowledge benchmarks like MMLU (~90.8%) and GPQA Diamond. The model reasons, codes, and answers factual questions at frontier level."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> These numbers landed at a moment when o1-level reasoning was considered a closely-guarded frontier capability. Reproducing it with an openly-described RL recipe &mdash; and open weights &mdash; is what made R1 a landmark release rather than just another strong model."
+            }
+          ]
+        },
+        {
+          "title": "Distillation: shipping reasoning to small models",
+          "subtitle": "Why a 7B student can out-reason a giant",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A frontier reasoner is expensive to run. The natural question: can the reasoning be <b>compressed into small models</b> that run on modest hardware? The authors answer with a deliberately simple experiment &mdash; and a clean negative result that makes the positive one sharper."
+            },
+            {
+              "type": "p",
+              "html": "<b>The method is almost embarrassingly plain.</b> Take the ~800k curated examples that DeepSeek-R1 generated (Stage 3 above), and <b>fine-tune small off-the-shelf dense models (Qwen and Llama) on them &mdash; plain SFT, no RL at all.</b> The reasoning behavior transfers."
+            },
+            {
+              "type": "quote",
+              "html": "We demonstrate that the reasoning patterns of larger models can be distilled into smaller models, resulting in better performance compared to the reasoning patterns discovered through RL on small models."
+            },
+            {
+              "type": "table",
+              "headers": ["Distilled model", "AIME 2024 pass@1", "MATH-500 pass@1"],
+              "rows": [
+                ["DeepSeek-R1-Distill-Qwen-7B", "55.5%", "92.8%"],
+                ["DeepSeek-R1-Distill-Qwen-14B", "69.7%", "93.9%"],
+                ["DeepSeek-R1-Distill-Qwen-32B", "72.6%", "94.3%"],
+                ["GPT-4o-0513 (reference)", "9.3%", "74.6%"],
+                ["OpenAI-o1-mini (reference)", "63.6%", "90.0%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read those rows: a <b>7B</b> distilled model scores <b>55.5%</b> on AIME, crushing GPT-4o's 9.3% and approaching o1-mini. The <b>14B</b> distill (69.7%) beats o1-mini outright on AIME, and the <b>32B</b> distill reaches 72.6%. Reasoning skills the small models could never have learned alone transfer cleanly from the big teacher's traces."
+            },
+            {
+              "type": "h2",
+              "text": "The distillation-vs-RL finding"
+            },
+            {
+              "type": "p",
+              "html": "The authors then ran the control: apply the <i>same large-scale RL</i> directly to a small model (Qwen-32B) instead of distilling. The distilled version <b>won clearly</b>. The lesson: small models lack the raw capacity to <i>discover</i> sophisticated reasoning through RL on their own, but they have plenty of capacity to <i>imitate</i> it once a larger model has found it. Distillation is both cheaper and better."
+            },
+            {
+              "type": "quote",
+              "html": "Distilling more powerful models into smaller ones yields excellent results, whereas smaller models relying on the large-scale RL ... cannot achieve the performance of distillation. ... distillation is both economical and effective."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it matters.</b> This split &mdash; <i>discover with RL on a big model, then distill to small ones</i> &mdash; gave the community a practical path to put o1-class reasoning on consumer hardware. The released 1.5B–70B distilled checkpoints were immediately reproduced and fine-tuned worldwide, and 'distill the reasoning traces' became a default move for anyone shipping a small reasoning model."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What R1 changed, and what it left unsolved",
+          "subtitle": "Impact, limitations, and open questions",
+          "pdfPages": [1, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Stepping back: DeepSeek-R1's lasting contribution is not a single benchmark number but a <b>proof of method</b>. It showed publicly that (1) sophisticated reasoning &mdash; reflection, verification, backtracking, the 'aha moment' &mdash; can be <b>incentivized by pure RL</b> rather than imitated from human traces, and (2) a few simple ideas (GRPO, rule-based verifiable rewards, a staged pipeline, distillation) are enough to reach o1-level performance with open weights."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>R1-Zero</b> — the existence proof: reasoning emerges from RL with no SFT at all.",
+                "<b>GRPO</b> — a critic-free RL algorithm that halves the memory cost of PPO and makes large-scale RL practical.",
+                "<b>Rule-based / verifiable rewards</b> — sidestep reward hacking by rewarding checkable correctness, not a learned judge.",
+                "<b>The 'aha moment'</b> — concrete evidence that self-correction is a learned strategy, not a hand-written one.",
+                "<b>Distillation</b> — a cheap, effective recipe to put frontier reasoning into 1.5B–70B models."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest limitations.</b> The authors are candid that R1 is not strictly better than DeepSeek-V3 everywhere. It can underperform on some <i>non-reasoning</i> tasks &mdash; function calling, multi-turn conversation, complex role-play, structured JSON output. It is <b>sensitive to prompting</b>: few-shot prompts actually <i>hurt</i> it, so the authors recommend zero-shot. It is optimized for Chinese and English and may language-mix on other languages. And rule-based RL only helped where answers are verifiable, so software-engineering tasks (slow to evaluate at scale) saw limited gains."
+            },
+            {
+              "type": "quote",
+              "html": "DeepSeek-R1 is sensitive to prompts. Few-shot prompting consistently degrades its performance. Therefore, we recommend users directly describe the problem and specify the output format using a zero-shot setting for optimal results."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in the lineage.</b> R1 is the open counterpart to OpenAI's o1 (Sept 2024), which introduced 'inference-time scaling' / long chain-of-thought but kept the method secret. R1 built on DeepSeek's own DeepSeek-V3 (the base model) and DeepSeekMath (the source of GRPO). Its emphasis on <i>verifiable rewards</i> connects to a broad line of process- and outcome-reward research; its 'let RL find the reasoning' philosophy echoes the bitter-lesson intuition that scalable search and learning beat hand-engineered priors."
+            },
+            {
+              "type": "p",
+              "html": "<b>Its influence.</b> Within weeks of its January 2025 release, R1 was reproduced, fine-tuned, and benchmarked across the open community; 'RLVR' (RL with verifiable rewards) and 'reasoning distillation' entered common usage. By cleanly separating the <i>discovery</i> of reasoning (big-model RL) from its <i>deployment</i> (small-model distillation), DeepSeek-R1 handed the field both a result and a reusable playbook &mdash; which is why it became one of the most-cited open models of its era."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

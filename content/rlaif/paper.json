@@ -1,0 +1,364 @@
+{
+  "title": "RLAIF: Scaling RL from Human Feedback with AI Feedback",
+  "authors": "Lee, et al. (Google)",
+  "year": "2023",
+  "venue": "arXiv:2309.00267",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The bottleneck is the humans, not the algorithm",
+          "subtitle": "What RLHF costs, and the one-sentence fix",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Reinforcement Learning from Human Feedback (RLHF) is the recipe that turned raw language models into helpful assistants like ChatGPT. The trick: instead of training a model to imitate text, you train it to <i>prefer</i> the kinds of answers humans like. But there is a hidden tax. RLHF needs a giant pile of <b>human preference labels</b> — people sitting down, reading two candidate answers, and clicking which one is better. Tens of thousands of comparisons. Slow, expensive, and hard to scale to every new task you care about."
+            },
+            {
+              "type": "p",
+              "html": "This paper asks a deceptively simple question: <b>what if we let an off-the-shelf LLM do the clicking instead of a person?</b> The human annotator reads a prompt and two responses and picks a winner — but so can a capable language model, if you just ask it to. The authors call this <b>RLAIF</b>: Reinforcement Learning from <i>AI</i> Feedback. Swap the human labeler for an LLM labeler, keep everything else the same, and see if the final model is any worse."
+            },
+            {
+              "type": "h2",
+              "text": "A concrete picture"
+            },
+            {
+              "type": "p",
+              "html": "Imagine you want a model that writes good summaries. You have a draft model (the SFT model) that writes okay-but-mediocre summaries. To improve it with RLHF you would collect ~10,000+ human judgments of the form \"summary A is better than summary B.\" With RLAIF you instead show those same A/B pairs to a frozen LLM (here, PaLM 2) and prompt it: <i>\"Which summary is better, 1 or 2?\"</i> The LLM's answer becomes your label. No humans in the loop for labeling."
+            },
+            {
+              "type": "p",
+              "html": "The headline result is the surprise: <b>RLAIF performs on par with RLHF.</b> On summarization, human evaluators preferred RLAIF outputs over the baseline SFT model <b>71%</b> of the time, versus <b>73%</b> for RLHF — a gap small enough to be statistically a tie. Head-to-head, RLAIF beat RLHF in <b>50%</b> of comparisons: a dead heat. On harmless dialogue, RLAIF was actually <i>better</i>, rated harmless <b>88%</b> of the time vs <b>76%</b> for RLHF."
+            },
+            {
+              "type": "quote",
+              "html": "RLAIF achieves comparable performance to RLHF. Furthermore, we take a step towards \"self-improvement\" by demonstrating that RLAIF can outperform a supervised fine-tuned baseline even when the AI labeler is the same size as the policy."
+            },
+            {
+              "type": "p",
+              "html": "That last clause matters. You might assume RLAIF only works because the labeler is a bigger, smarter model teaching a smaller one (distillation). But even when the AI labeler is the <b>same size</b> as the model being trained, RLAIF still improves it — <b>68%</b> win rate vs SFT. The model is, in a loose sense, supervising its own improvement. The paper also introduces <b>direct-RLAIF (d-RLAIF)</b>, which skips an entire training stage by using the LLM's score as the reward directly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The RLHF Pipeline",
+      "pages": [
+        {
+          "title": "What RLAIF inherits: the three-stage RLHF recipe",
+          "subtitle": "SFT, then a reward model, then RL",
+          "pdfPages": [2, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before we can replace humans, we need to see exactly <i>where</i> in the pipeline humans are used. Classic RLHF has three stages, and humans only enter in the middle one. RLAIF changes only that middle stage, so understanding the skeleton tells you precisely what is being swapped."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 1 — Supervised Fine-Tuning (SFT)"
+            },
+            {
+              "type": "p",
+              "html": "Start from a pretrained LLM and fine-tune it on (prompt, good-answer) pairs for your task — e.g. Reddit posts paired with their human-written TL;DR summaries. This gives a policy $\\pi^{SFT}$ that can do the task passably. No preferences yet; this is plain imitation."
+            },
+            {
+              "type": "h2",
+              "text": "Stage 2 — Reward Model (RM)"
+            },
+            {
+              "type": "p",
+              "html": "This is the expensive stage. Collect pairs of responses $(y_w, y_l)$ to the same prompt $x$, where a <b>labeler decides which is preferred</b> ($y_w$ = winner, $y_l$ = loser). Train a reward model $r_\\phi(x, y)$ — a scalar-output network — so that it scores the preferred response higher. The standard loss is the Bradley-Terry objective:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{RM} = -\\,\\mathbb{E}_{(x, y_w, y_l)}\\big[\\log \\sigma\\big(r_\\phi(x, y_w) - r_\\phi(x, y_l)\\big)\\big]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $r_\\phi(x,y) \\in \\mathbb{R}$ is the reward model's scalar score for response $y$ given prompt $x$, with parameters $\\phi$. The difference $r_\\phi(x, y_w) - r_\\phi(x, y_l)$ is how much more the model likes the winner than the loser. $\\sigma$ is the logistic sigmoid, squashing that difference into a probability in $(0,1)$ — the model's predicted probability that $y_w$ beats $y_l$. The $-\\log$ makes the loss small when that probability is near 1 (winner correctly ranked above loser). $\\mathbb{E}$ averages over all labeled pairs in the dataset. <b>This is the only stage where the labeler — human or AI — is consulted.</b>"
+            },
+            {
+              "type": "h2",
+              "text": "Stage 3 — Reinforcement Learning"
+            },
+            {
+              "type": "p",
+              "html": "Now optimize the policy $\\pi_\\theta$ to produce responses that the reward model scores highly, while not drifting too far from the SFT model (a KL penalty keeps it from gaming the reward with gibberish):"
+            },
+            {
+              "type": "math",
+              "tex": "\\max_{\\theta}\\; \\mathbb{E}_{x,\\, y \\sim \\pi_\\theta}\\Big[ r_\\phi(x, y) \\;-\\; \\beta\\, \\mathrm{KL}\\big(\\pi_\\theta(\\cdot\\mid x)\\,\\|\\,\\pi^{SFT}(\\cdot\\mid x)\\big) \\Big]"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\pi_\\theta$ is the policy being trained (parameters $\\theta$), $y \\sim \\pi_\\theta$ is a response it samples for prompt $x$, $r_\\phi(x,y)$ is the trained reward from Stage 2, and $\\mathrm{KL}(\\pi_\\theta \\| \\pi^{SFT})$ measures how far the policy has wandered from the SFT starting point. $\\beta > 0$ is the strength of that leash. The paper optimizes this with a REINFORCE-style algorithm (a simpler cousin of PPO). <b>The punchline of the whole pipeline:</b> humans only ever touch Stage 2's labels. So to remove humans, you only need to change how Stage 2's preference labels are produced."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "AI Labeling",
+      "pages": [
+        {
+          "title": "Asking an LLM to pick the better answer",
+          "subtitle": "The prompt structure that turns a chatbot into a labeler",
+          "pdfPages": [3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The heart of RLAIF is the AI labeler. The job: given a prompt and two candidate responses, output which one is better. The authors do this with pure prompting of a frozen, off-the-shelf LLM — no fine-tuning of the labeler at all. The structure of that prompt is what makes the labels reliable."
+            },
+            {
+              "type": "h2",
+              "text": "The four-part labeling prompt"
+            },
+            {
+              "type": "p",
+              "html": "Each labeling query to the LLM is assembled from up to four pieces:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Preamble</b> — instructions describing the task, e.g. \"You will be given a post and two summaries. Judge which summary better captures the essence of the post.\"",
+                "<b>Few-shot exemplars (optional)</b> — a worked example or two: a sample post, two summaries, a chain-of-thought rationale, and the correct preference.",
+                "<b>Sample to annotate</b> — the actual prompt and the two candidate responses to be judged.",
+                "<b>Ending</b> — a closing string that cues the model to answer, e.g. \"Preferred Summary=\"."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The LLM is then asked for the log-probabilities of generating the tokens <code>\"1\"</code> versus <code>\"2\"</code> right after that ending. Crucially, instead of taking the hard winner, they apply a <b>softmax over those two log-probabilities to get a soft label</b> — a distribution like $[0.8, 0.2]$ meaning \"80% confident response 1 is better.\""
+            },
+            {
+              "type": "p",
+              "html": "Why soft labels? Because confidence carries information. A pair where the LLM is 51/49 is a near-toss-up; a pair it calls 95/5 is clear-cut. Feeding the reward model the soft target via cross-entropy lets it learn calibrated rewards rather than treating every comparison as equally certain. The RM is trained with cross-entropy against these soft AI labels — the same Stage-2 machinery as RLHF, just with the human's vote replaced by a probability vector."
+            },
+            {
+              "type": "quote",
+              "html": "We experiment with two styles of preambles - \"Base\", which essentially asks which response is better, and \"Detailed\", which resembles detailed rating instructions typically given to human annotators."
+            },
+            {
+              "type": "p",
+              "html": "The detailed preamble matters: spelling out the rubric the way you would brief a human annotator (coherence, accuracy, coverage, overall quality) measurably raises label quality. The lesson is that the LLM already <i>knows</i> how to judge — you mostly have to ask it the way you would ask a careful person."
+            }
+          ]
+        },
+        {
+          "title": "Two tricks that make AI labels trustworthy",
+          "subtitle": "Position bias and chain-of-thought",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "An LLM labeler has quirks a human does not. Two of them would quietly poison the labels if ignored, so the paper fixes both."
+            },
+            {
+              "type": "h2",
+              "text": "Problem 1: Position bias"
+            },
+            {
+              "type": "p",
+              "html": "LLMs have a sticky preference for whichever option came <i>first</i> (or sometimes last), regardless of content. Ask \"Is summary 1 or 2 better?\" and the model leans toward 1 just because it is labeled 1. A human is not perfect here either, but the LLM's bias can be large enough to swamp the real signal."
+            },
+            {
+              "type": "p",
+              "html": "The fix is symmetric and cheap: <b>label every pair twice, once in each order</b> (A then B, and B then A), and average the two soft labels. Any constant tilt toward \"the first slot\" cancels out, leaving the content-driven preference. This doubles labeling calls but the cost is trivial compared to human annotation."
+            },
+            {
+              "type": "quote",
+              "html": "The order in which candidates are shown to an LLM can bias which candidate it prefers. We find evidence of position bias, which is especially prevalent in smaller LLM labelers."
+            },
+            {
+              "type": "h2",
+              "text": "Problem 2: snap judgments"
+            },
+            {
+              "type": "p",
+              "html": "If you force the model to emit \"1\" or \"2\" immediately, it has no room to reason. So the paper elicits <b>chain-of-thought (CoT)</b>: the ending becomes something like <i>\"Consider coherence, accuracy, coverage, and overall quality of each summary and explain which one is better. Rationale:\"</i>, the model writes out its reasoning, and only <i>then</i> is the \"Preferred Summary=1/2\" appended and the 1-vs-2 log-probabilities read off."
+            },
+            {
+              "type": "p",
+              "html": "This is the same insight as CoT prompting for math problems: thinking before answering improves the answer. Here it improves <i>label quality</i>, which then propagates into a better reward model and a better final policy. The two tricks combine, and the best configuration is detailed-preamble + CoT."
+            },
+            {
+              "type": "h2",
+              "text": "How good are the AI labels, measured directly?"
+            },
+            {
+              "type": "p",
+              "html": "The paper measures <b>AI Labeler Alignment</b> — the fraction of pairs where the AI's preferred response matches the human's preferred response. On summarization, prompting choices move this from ~71% to ~78%:"
+            },
+            {
+              "type": "table",
+              "headers": ["Prompt configuration", "Alignment (Summ.)"],
+              "rows": [
+                ["Base, 0-shot", "76.1%"],
+                ["Base, 1-shot", "76.0%"],
+                ["Detailed, 0-shot", "77.5%"],
+                ["Detailed + CoT, 0-shot (best)", "78.0%"],
+                ["Detailed + CoT, 1-shot", "77.4%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Notably, <b>few-shot exemplars did not help</b> for summarization (and sometimes hurt) — the detailed instructions plus CoT already saturate what the labeler can do. An AI labeler agreeing with humans ~78% of the time is roughly in the range that two humans agree with <i>each other</i>, which is why the downstream policy ends up so close to RLHF."
+            }
+          ]
+        },
+        {
+          "title": "Direct-RLAIF: skip the reward model entirely",
+          "subtitle": "Use the LLM's score as the reward",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Standard RLAIF still trains a separate reward model (Stage 2) on the AI labels, then runs RL against it (Stage 3). But a reward model is a frozen snapshot — once trained, it can go \"stale\" as the policy drifts into regions the RM never saw, and it adds a whole training stage. The paper's <b>direct-RLAIF (d-RLAIF)</b> asks: why not just ask the LLM to score each response and use that number as the reward, live?"
+            },
+            {
+              "type": "h2",
+              "text": "The scoring trick"
+            },
+            {
+              "type": "p",
+              "html": "Prompt the off-the-shelf LLM to rate a single response on a <b>1-to-10 scale</b>. Rather than taking the model's literal digit, compute the probability of each score token and take a weighted average — the <i>expected</i> score under the model's own distribution. Then normalize that expected score from the $[1,10]$ range into $[-1, 1]$ to serve as the reward:"
+            },
+            {
+              "type": "math",
+              "tex": "s(y\\mid x) \\;=\\; \\sum_{i=1}^{10} i \\cdot P(i \\mid x, y), \\qquad r(x,y) \\;=\\; \\frac{2\\,\\big(s(y\\mid x) - 1\\big)}{10 - 1} - 1"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $P(i \\mid x, y)$ is the LLM's probability of emitting the score token $i$ for response $y$ to prompt $x$, summed over $i = 1 \\ldots 10$ to give the soft expected score $s(y\\mid x) \\in [1, 10]$. Using the expectation rather than the argmax keeps the reward smooth and continuous (a 7.4 instead of a hard 7), which RL likes. The second equation is just a linear rescaling of $[1,10]$ onto $[-1,1]$ so the reward has a convenient centered range. There is <b>no $r_\\phi$, no Bradley-Terry training</b> — the reward function is the frozen LLM plus this arithmetic."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this is more than a shortcut:</b> a trained reward model is fixed at the moment training ends, so as the policy evolves the RM is increasingly evaluating out-of-distribution responses it was never calibrated on. The LLM-as-reward in d-RLAIF re-scores every fresh sample on the fly, so it never goes stale. The trade-off is compute: scoring with a large LLM at every RL step is more expensive than a quick forward pass through a small reward model."
+            },
+            {
+              "type": "p",
+              "html": "And it works: <b>d-RLAIF beat the SFT baseline 74%</b> of the time, and beat canonical (RM-based) RLAIF <b>60%</b> of the time head-to-head. Removing the reward-model stage did not just simplify the pipeline — it slightly improved it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "RLAIF matches RLHF — the numbers",
+          "subtitle": "Win rates on summarization and harmless dialogue",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole bet rides on one comparison: is a policy trained on AI feedback actually as good as one trained on human feedback? The authors measure this with <b>human evaluation</b> — they show real people outputs from each method and ask which they prefer. The key metric is the <b>win rate</b>: how often method A's output is preferred over a baseline."
+            },
+            {
+              "type": "h2",
+              "text": "Summarization (OpenAI TL;DR)"
+            },
+            {
+              "type": "table",
+              "headers": ["Comparison", "Win rate"],
+              "rows": [
+                ["RLAIF vs SFT", "71%"],
+                ["RLHF vs SFT", "73%"],
+                ["RLAIF vs RLHF (head-to-head)", "50%"],
+                ["Same-size RLAIF vs SFT", "68%"],
+                ["d-RLAIF vs SFT", "74%"],
+                ["d-RLAIF vs same-size RLAIF", "60%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Read the first three rows together. Both RLAIF and RLHF crush the SFT baseline by a similar margin (71% vs 73%). And when you pit them directly against each other, RLAIF wins exactly <b>50%</b> of the time — a statistical tie. <b>Replacing every human label with an LLM label cost essentially nothing in final quality.</b>"
+            },
+            {
+              "type": "h2",
+              "text": "Harmless dialogue (Anthropic HH)"
+            },
+            {
+              "type": "p",
+              "html": "On the task of avoiding harmful responses, evaluators rated each output simply harmless-or-not. Here RLAIF did not just match RLHF — it <b>beat</b> it:"
+            },
+            {
+              "type": "table",
+              "headers": ["Method", "% harmless"],
+              "rows": [
+                ["SFT", "64%"],
+                ["RLHF", "76%"],
+                ["RLAIF", "88%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why would AI feedback be <i>better</i> at harmlessness? Plausibly because judging harm against a written principle is exactly the kind of crisp, rule-following task LLMs excel at and humans are inconsistent on — a connection back to Constitutional AI, where an LLM critiques responses against a list of principles."
+            },
+            {
+              "type": "h2",
+              "text": "The self-improvement result"
+            },
+            {
+              "type": "p",
+              "html": "The most provocative number is <b>same-size RLAIF: 68%</b> win rate over SFT. The AI labeler here is the <i>same size</i> as the policy it is training, so this cannot be explained away as a big model distilling into a small one. A model is being improved using preference signals generated by a model of its own capability — a genuine step toward <b>self-improvement</b>, not just cheaper distillation."
+            },
+            {
+              "type": "p",
+              "html": "Qualitatively, the paper notes a tendency for RLHF to hallucinate slightly more than RLAIF on summarization, while RLAIF occasionally produces less coherent text — neither is uniformly perfect, but on net they land at the same quality."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why RLAIF mattered",
+          "subtitle": "Removing the human bottleneck from alignment",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "RLAIF's contribution is less a new algorithm than a demonstration that a long-assumed dependency is breakable. The field had treated <b>human preference data as the irreplaceable ingredient</b> in alignment — the thing that made RLHF work and the thing that made it expensive. RLAIF showed that for at least summarization and harmless dialogue, an off-the-shelf LLM can generate that signal at a fraction of the cost with no measurable loss in quality."
+            },
+            {
+              "type": "h2",
+              "text": "What it unlocks"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Cost and speed.</b> Preference labels go from \"hire and coordinate human annotators over weeks\" to \"run an LLM over a dataset in hours.\" Alignment becomes something you can iterate on rapidly.",
+                "<b>Scale to new tasks.</b> Any task where you can write a judging rubric in a prompt can now have a preference dataset, without standing up an annotation pipeline.",
+                "<b>A self-improvement loop.</b> The same-size result suggests models can supervise their own refinement, hinting at iterated improvement without ever-growing human effort.",
+                "<b>A simpler pipeline (d-RLAIF).</b> Using the LLM score directly as reward removes the reward-model stage entirely and avoids reward staleness."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the landscape"
+            },
+            {
+              "type": "p",
+              "html": "RLAIF is the empirical, head-to-head companion to Anthropic's <b>Constitutional AI</b> (Bai et al., 2022), which introduced \"RL from AI Feedback\" as part of a larger harmlessness system. Where Constitutional AI folded AI feedback into a broader method, this paper isolates the variable — <i>same data, same algorithm, only the labeler changes</i> — and measures RLAIF against RLHF directly on win rate. That apples-to-apples framing is what made the \"on par with RLHF\" claim credible and widely cited."
+            },
+            {
+              "type": "p",
+              "html": "It also rhymes with the broader <b>LLM-as-a-judge</b> movement: the same realization that capable models can stand in for human evaluation, here applied to <i>training</i> rather than just benchmarking. The position-bias and CoT mitigations the paper details became standard hygiene for anyone using an LLM to score or compare outputs."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveats.</b> The AI labeler is itself an LLM that was originally aligned with human feedback, so RLAIF does not remove humans from the universe — it removes them from <i>your</i> labeling loop by amortizing earlier human effort. The strongest results are on summarization and harmlessness; harder, more subjective, or higher-stakes tasks may still need humans. And d-RLAIF trades the reward model's cheap inference for repeated large-LLM scoring. Even with those caveats, RLAIF reframed preference data from a scarce resource into something you can manufacture — a shift that shaped how the next generation of models was aligned."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

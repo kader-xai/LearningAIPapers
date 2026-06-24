@@ -1,0 +1,357 @@
+{
+  "title": "From Local to Global: A Graph RAG Approach to Query-Focused Summarization",
+  "authors": "Edge, et al. (Microsoft)",
+  "year": "2024",
+  "venue": "arXiv:2404.16130",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The question vanilla RAG can't answer",
+          "subtitle": "Local lookups vs. global sensemaking",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine you have a 1-million-token pile of text — a year of podcast transcripts, or every news article about a company — and someone asks: <i>\"What are the main themes in this corpus?\"</i> Standard <b>Retrieval-Augmented Generation (RAG)</b> is hopeless here. RAG works by finding the few chunks of text most <i>similar</i> to your question and stuffing them into the prompt. That is perfect when the answer lives in one place (\"What was the Q3 revenue?\"), but a question about <i>themes</i> has no single home — the answer is spread across the <b>entire</b> dataset. There is nothing specific to retrieve."
+            },
+            {
+              "type": "p",
+              "html": "The paper calls these <b>query-focused summarization (QFS)</b> or <b>global sensemaking</b> questions. They ask you to connect the dots across thousands of documents at once. You can't retrieve your way to that answer — and you can't fit 1M tokens in a context window either. This is the gap GraphRAG fills."
+            },
+            {
+              "type": "quote",
+              "html": "We propose a Graph RAG approach to question answering over private text corpora that scales with both the generality of user questions and the quantity of source text to be indexed."
+            },
+            {
+              "type": "p",
+              "html": "The core idea, in one sentence: <b>pre-compute structure once, so global questions become cheap at query time.</b> GraphRAG uses an LLM to read the whole corpus and build a <b>knowledge graph</b> of entities and relationships. It then finds tightly-connected <b>communities</b> in that graph and writes a <b>summary of each community</b> ahead of time. When a global question arrives, every community summary takes a stab at it in parallel, and the partial answers are merged into one. The graph is the index; the community summaries are the pre-chewed answers."
+            },
+            {
+              "type": "p",
+              "html": "The headline result: on two ~1M-token datasets, GraphRAG <b>substantially beat</b> a conventional vector-search RAG baseline on the <b>comprehensiveness</b> and <b>diversity</b> of generated answers, as judged head-to-head by an LLM. And its most compressed variant matched a brute-force \"summarize all the source text\" approach while using as little as <b>2–3%</b> of the tokens."
+            },
+            {
+              "type": "p",
+              "html": "Authored by a Microsoft Research team (Darren Edge, Ha Trinh, and colleagues), the open-source <code>graphrag</code> release made this one of the most influential RAG papers of 2024 — it reframed RAG from \"find the relevant chunk\" to \"understand the whole corpus.\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Why retrieval breaks on global questions",
+          "subtitle": "Two failed alternatives, and the gap between them",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To see why a new method is needed, picture the two obvious things you could try instead — and why each one fails."
+            },
+            {
+              "type": "h2",
+              "text": "Attempt 1: just use vector RAG"
+            },
+            {
+              "type": "p",
+              "html": "Embed every chunk, embed the question, retrieve the top-<i>k</i> most similar chunks, answer from those. This is the dominant RAG recipe and it is excellent for <b>local</b> questions where the answer text exists somewhere specific. But ask \"what are the top 5 themes?\" and the retriever has no anchor — a theme isn't a phrase you can match. You get a handful of arbitrary chunks and a shallow, partial answer that misses most of the corpus. The paper's own results later show vector RAG (condition <b>SS</b>) losing on comprehensiveness <b>72–83%</b> of the time."
+            },
+            {
+              "type": "h2",
+              "text": "Attempt 2: summarize everything"
+            },
+            {
+              "type": "p",
+              "html": "If the answer is everywhere, just feed the LLM <b>all</b> the text and ask it to summarize. With modern long-context models you can even do this in a map-reduce loop: summarize each chunk, then summarize the summaries. This actually <i>works</i> for quality — it's the paper's <b>TS</b> (source-text summarization) condition and it's strong. The problem is <b>cost</b>: you pay to read every token of every source chunk, for every query. On 1M tokens that is enormous and it does not scale to repeated questions."
+            },
+            {
+              "type": "p",
+              "html": "GraphRAG threads the needle: get the <b>broad coverage</b> of \"summarize everything\" but pay for reading the corpus <b>once</b>, up front, not per query. The trick is to do the expensive reading at <b>index time</b> and store the result as a structure you can query cheaply."
+            },
+            {
+              "type": "quote",
+              "html": "Naive RAG fails on global questions such as “What are the main themes in the dataset?”, since this is inherently a query-focused summarization (QFS) task, rather than an explicit retrieval task."
+            },
+            {
+              "type": "p",
+              "html": "The other ingredient is an old graph-theory observation: real-world entity graphs have <b>community structure</b> — dense clusters of related nodes with sparse links between clusters. Each community is a natural \"theme\" the corpus is talking about. If you summarize communities, you've effectively pre-computed the answer to \"what are the themes?\" before anyone asks."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Method · Building the Graph",
+      "pages": [
+        {
+          "title": "From text chunks to a knowledge graph",
+          "subtitle": "Step 1–2 of the indexing pipeline",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "GraphRAG's pipeline has two halves. <b>Index time</b> (done once): chunk → extract graph → detect communities → summarize communities. <b>Query time</b> (done per question): map every relevant community summary onto the question, then reduce the partials into one answer. This page covers the first two index-time steps; the next page covers the rest. We'll follow the source text all the way to a queryable structure."
+            },
+            {
+              "type": "h2",
+              "text": "Step 1 — Chunk the source text"
+            },
+            {
+              "type": "p",
+              "html": "Split the corpus into chunks of a fixed size. The size is a real trade-off. The paper tests this directly: with <b>600-token</b> chunks the extractor found <b>nearly 2×</b> as many entity references as with 2400-token chunks on the same text (their Figure 2 finds roughly 2x more entities at 600 vs 2400 tokens). Why? An LLM asked to extract entities from a long chunk gets lazy and misses things; shorter chunks force more careful reads. But shorter chunks mean more LLM calls and more cost. The paper uses 600 tokens as the sweet spot."
+            },
+            {
+              "type": "h2",
+              "text": "Step 2 — Extract entities and relationships"
+            },
+            {
+              "type": "p",
+              "html": "For each chunk, a single LLM prompt does the heavy lifting. It pulls out <b>entities</b> (people, places, organizations — each with a name, type, and a short generated description) and <b>relationships</b> (which entities are connected, plus a description of how). It also extracts <b>claims</b> — factual statements about entities. This is the step that turns flat prose into structured nodes and edges."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, a chunk mentioning \"<i>NeoChip's CTO, Maria Santos, announced the acquisition of Verdyn Systems</i>\" yields nodes <code>Maria Santos</code> (person), <code>NeoChip</code> (org), <code>Verdyn Systems</code> (org), and edges <code>Maria Santos —CTO of→ NeoChip</code> and <code>NeoChip —acquired→ Verdyn Systems</code>. The same entity surfaces in many chunks; GraphRAG collects <b>all</b> the descriptions per entity and lets the LLM summarize them into one, so a node carries everything the corpus knows about it."
+            },
+            {
+              "type": "math",
+              "tex": "G = (V, E), \\quad v \\in V \\text{ an entity}, \\quad (u, v) \\in E \\text{ a relationship}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $G$ is the resulting <b>knowledge graph</b>. $V$ is the set of <b>nodes</b>, one per distinct entity $v$ (deduplicated across all chunks). $E$ is the set of <b>edges</b>; an edge $(u, v)$ means entities $u$ and $v$ co-occur in some relationship. In practice edges carry a <b>weight</b> — the number of source chunks that detected that relationship — so a link mentioned 50 times is heavier than one mentioned once, which matters for the clustering step next."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why a graph and not a vector store?</b> A vector store knows that two chunks are <i>similar</i>; it has no idea that two <i>entities</i> are <i>connected</i>. Global sensemaking is about connections — who relates to whom, which topics cluster — so an explicit graph is the natural substrate. It's also why GraphRAG can answer \"how are X and Y related?\" questions vanilla RAG can't reach."
+            }
+          ]
+        },
+        {
+          "title": "Communities and their summaries",
+          "subtitle": "Step 3–4: Leiden clustering and hierarchical summaries",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "We now have a graph with possibly millions of edges. Step 3 carves it into <b>communities</b> — groups of entities that talk to each other far more than to the rest of the graph. Each community is, in effect, a topic the corpus keeps circling back to. Step 4 writes a report-style <b>summary</b> of each one. These summaries <i>are</i> the pre-computed global knowledge."
+            },
+            {
+              "type": "h2",
+              "text": "Step 3 — Detect communities with Leiden"
+            },
+            {
+              "type": "p",
+              "html": "The paper uses the <b>Leiden</b> algorithm (Traag et al., 2019), the modern fix to the older Louvain method, because it is fast on large graphs and — crucially — produces a <b>hierarchy</b>. At the top level the graph splits into a few big communities; each of those splits into sub-communities; and so on down to small, tightly-knit groups. This gives a tree of granularity."
+            },
+            {
+              "type": "p",
+              "html": "Community detection optimizes <b>modularity</b>, the gap between observed within-cluster edges and what you'd expect by chance:"
+            },
+            {
+              "type": "math",
+              "tex": "Q = \\frac{1}{2m} \\sum_{i,j} \\left[ A_{ij} - \\frac{k_i k_j}{2m} \\right] \\delta(c_i, c_j)"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $Q$ is <b>modularity</b>, a single number measuring how good a clustering is (higher = denser communities). $A_{ij}$ is the weight of the edge between nodes $i$ and $j$ (0 if none). $k_i$ is the <b>degree</b> of node $i$ (sum of its edge weights), so $\\frac{k_i k_j}{2m}$ is the edge weight you'd <i>expect</i> between $i$ and $j$ if edges were random. $m$ is the total edge weight in the graph; the $\\frac{1}{2m}$ normalizes. $\\delta(c_i, c_j)$ is the Kronecker delta — it equals $1$ when $i$ and $j$ are in the same community $c$ and $0$ otherwise, so the sum only counts <b>within-community</b> edges. Leiden searches partitions to maximize $Q$. <i>(This is the standard objective Leiden optimizes; the paper invokes Leiden rather than re-deriving it.)</i>"
+            },
+            {
+              "type": "h2",
+              "text": "Step 4 — Summarize each community, bottom-up"
+            },
+            {
+              "type": "p",
+              "html": "For a <b>leaf</b> community, GraphRAG prioritizes its element summaries (the most-connected nodes, their strongest edges, and associated claims) and packs as many as fit into one LLM prompt, which writes a stand-alone report. For a <b>higher-level</b> community that is too big to fit, it doesn't re-read the raw text — it substitutes the already-written <b>sub-community summaries</b> for the longest elements, recursively. The hierarchy is summarized from the leaves up."
+            },
+            {
+              "type": "p",
+              "html": "The payoff is a set of summaries at <b>every level of granularity</b>. The paper names these levels <b>C0</b> (root — a few broad summaries), <b>C1</b>, <b>C2</b>, and <b>C3</b> (leaf — many fine-grained summaries). Coarse levels are cheap and give the big picture; fine levels are richer but cost more tokens. The same corpus is now queryable at whichever zoom level suits the question — a knob vanilla RAG simply doesn't have."
+            }
+          ]
+        },
+        {
+          "title": "Answering a global query: map-reduce",
+          "subtitle": "Step 5: from community summaries to one answer",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now a user asks a global question. There is no retrieval over source text — instead GraphRAG runs a <b>map-reduce over community summaries</b> at a chosen level (say C1). The whole point of all that index-time work was to make this step cheap and parallel."
+            },
+            {
+              "type": "h2",
+              "text": "Map: every community answers in parallel"
+            },
+            {
+              "type": "p",
+              "html": "Shuffle the community summaries and pack them into context-window-sized batches (shuffling avoids concentrating related info in one prompt). For each batch, the LLM produces a list of partial answers — and, critically, rates each partial with a <b>helpfulness score from 0 to 100</b> for how much it actually addresses the question. Partials scored <b>0 are discarded</b>."
+            },
+            {
+              "type": "math",
+              "tex": "\\text{partials} = \\{ (a_i, s_i) : s_i = \\text{LLM}(q, \\text{batch}_i), \\; s_i > 0 \\}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $q$ is the user's <b>question</b>. $\\text{batch}_i$ is the $i$-th bundle of community summaries that fit in one prompt. $a_i$ is the <b>partial answer</b> the LLM generates from that batch. $s_i \\in [0, 100]$ is the <b>helpfulness score</b> the LLM assigns to its own partial — a self-rated relevance signal. Keeping only $s_i > 0$ throws away batches that had nothing useful to say about $q$."
+            },
+            {
+              "type": "h2",
+              "text": "Reduce: merge the survivors"
+            },
+            {
+              "type": "p",
+              "html": "Sort the surviving partials by score, highest first, and add them to a final context window until it's full. The LLM reads this curated, ranked set of partial answers and writes the single <b>global answer</b> the user sees. The score-sort matters: the most relevant community contributions land in the final prompt; the marginal ones get dropped if space runs out."
+            },
+            {
+              "type": "p",
+              "html": "Why this beats stuffing everything into one prompt: a million tokens of summaries won't fit, and even if they did, the model would drown. Map-reduce lets <b>every</b> community weigh in on the question (broad coverage → high comprehensiveness and diversity) while the helpfulness score keeps the final answer focused (relevance → not just a data dump). It's the mechanism that turns \"many local views\" into one global answer — the paper's title, literally."
+            },
+            {
+              "type": "p",
+              "html": "Concrete example: ask \"what are the main themes?\" over the podcast corpus. Community A (about <i>AI regulation</i>) returns \"regulatory uncertainty is a recurring concern\" with score 95; community B (about <i>chip supply chains</i>) returns a supply-shock theme with score 88; a community about studio mic setups returns score 0 and is dropped. The reduce step weaves the high scorers into a coherent thematic overview — something no single retrieved chunk could ever produce."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Does it actually answer global questions better?",
+          "subtitle": "Head-to-head LLM evaluation on two 1M-token corpora",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "There's no gold-standard \"correct\" answer to \"what are the themes?\", so the paper can't score against a reference. Instead it runs a <b>head-to-head LLM judge</b>: for each question, the judge sees two answers (from two methods) side by side and picks a winner, repeated to get a win-rate percentage. This is a now-standard way to evaluate open-ended generation."
+            },
+            {
+              "type": "h2",
+              "text": "The setup"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Two datasets</b>, each ~1 million tokens: <b>podcast transcripts</b> (~1669 chunks at 600 tokens) and <b>news articles</b> (~3197 chunks).",
+                "<b>Conditions:</b> <b>C0–C3</b> = GraphRAG at root/intermediate/low/leaf community levels; <b>TS</b> = map-reduce summarization over the raw source text; <b>SS</b> = conventional vector-search RAG (the baseline to beat).",
+                "<b>Questions</b> were LLM-generated to be genuinely global — by describing the corpus to an LLM and asking for high-level sensemaking questions a user might pose.",
+                "<b>Four metrics</b>, each judged head-to-head: <b>Comprehensiveness</b> (covers all aspects?), <b>Diversity</b> (varied perspectives?), <b>Empowerment</b> (helps the reader reach an informed judgment?), and <b>Directness</b> (specific and to the point?)."
+              ]
+            },
+            {
+              "type": "h2",
+              "text": "The headline numbers"
+            },
+            {
+              "type": "p",
+              "html": "Against the vector-RAG baseline (SS), GraphRAG won decisively on the two metrics that matter most for sensemaking. The win rates for GraphRAG over SS:"
+            },
+            {
+              "type": "table",
+              "headers": ["Metric", "GraphRAG win rate vs. vector RAG (SS)"],
+              "rows": [
+                ["Comprehensiveness", "72–83%"],
+                ["Diversity", "62–82%"],
+                ["Directness", "SS wins (baseline's strength)"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The pattern is intuitive. GraphRAG pulls in <b>every</b> community's view, so its answers are broader (comprehensiveness) and pull in more distinct angles (diversity). Vector RAG retrieves a few tight chunks, so it wins on <b>directness</b> — it's concise because it's narrow. For global sensemaking, breadth is exactly what you want, and that's the win GraphRAG claims."
+            },
+            {
+              "type": "quote",
+              "html": "Both global approaches outperformed the naïve RAG baseline (SS) in comprehensiveness and diversity... global approaches consistently outperformed the naïve RAG approach on both datasets."
+            }
+          ]
+        },
+        {
+          "title": "The efficiency win: matching brute force at a fraction of the cost",
+          "subtitle": "Why the root level (C0) is the punchline",
+          "pdfPages": [9, 10],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Beating vector RAG is nice, but the real surprise is GraphRAG vs. the <b>strong</b> baseline — TS, which reads and summarizes <i>all</i> the source text. TS is expensive but thorough, so matching it cheaply is the prize."
+            },
+            {
+              "type": "p",
+              "html": "The standout is the <b>root level, C0</b>: just a handful of top-level community summaries. C0 produced answers <b>competitive with</b> the much costlier TS and the lower GraphRAG levels on comprehensiveness and diversity — while using <b>dramatically fewer tokens</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["Condition", "Context tokens used (relative)", "Quality vs. TS"],
+              "rows": [
+                ["TS (summarize all source text)", "100% (full source pass)", "strong, expensive"],
+                ["C0 (root community summaries)", "~2–3% of TS", "competitive / on par"],
+                ["C3 (leaf summaries)", "much more than C0", "richer but pricier"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The paper reports that root-level community summaries required as little as <b>2–3%</b> of the context tokens of the source-text approach while remaining competitive on quality. That is the whole thesis paying off: because the corpus was digested into community summaries <b>once</b>, a global query touches only a tiny, pre-distilled slice of text yet still reflects the whole dataset."
+            },
+            {
+              "type": "p",
+              "html": "There's also a clean <b>granularity dial</b>. Lower levels (C2/C3) give richer, more detailed answers but cost more tokens; the root level (C0) is the efficient default. You pick the level to match how much depth the question deserves — a control surface that flat vector RAG simply doesn't offer."
+            },
+            {
+              "type": "p",
+              "html": "<b>What this buys in practice:</b> for a corpus that gets queried repeatedly, you pay the expensive LLM-extraction bill <b>once</b> at index time, then serve global questions for the token cost of a few summaries. That cost amortization is what makes \"ask global questions over a private corpus\" economically viable at all."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why GraphRAG mattered",
+          "subtitle": "Impact, trade-offs, and what it changed",
+          "pdfPages": [1, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "GraphRAG reframed what RAG is <i>for</i>. Before it, RAG meant \"retrieve the relevant chunk.\" GraphRAG showed that by spending LLM effort <b>at index time</b> to build structure, you can answer a whole class of questions — global, thematic, sensemaking questions — that retrieval alone cannot touch. <i>From local to global</i> is the literal contribution: turning many local entity facts into a global understanding."
+            },
+            {
+              "type": "h2",
+              "text": "The central trade-off, stated honestly"
+            },
+            {
+              "type": "p",
+              "html": "GraphRAG is not free. It front-loads cost: an LLM must read the <b>entire</b> corpus to extract entities, relationships, and write community summaries before you can ask a single question. That index is also <b>stale</b> when the corpus changes (though the hierarchy makes incremental updates feasible). The bet is that for a corpus queried many times, paying once up front and then answering global questions for the cost of a few summaries is a clear win — and the 2–3%-of-tokens result is the evidence."
+            },
+            {
+              "type": "p",
+              "html": "When is it <i>not</i> worth it? For purely local lookups (\"what did the report say about X?\"), plain vector RAG is cheaper and more direct — and the paper's own directness numbers admit as much. GraphRAG earns its keep specifically on whole-corpus questions."
+            },
+            {
+              "type": "h2",
+              "text": "How it connects to the landscape"
+            },
+            {
+              "type": "list",
+              "items": [
+                "It builds on classic <b>RAG</b> (Lewis et al., 2020) but replaces the vector index with an LLM-built knowledge graph — reviving structured knowledge in the LLM era.",
+                "It leans on decades of <b>graph community detection</b> (Louvain → Leiden, Traag et al. 2019), applying modularity-based clustering to an LLM-extracted graph.",
+                "It echoes <b>map-reduce summarization</b> (the TS baseline) but pre-computes the per-region summaries, decoupling the expensive read from the per-query cost.",
+                "The <b>LLM-as-judge</b> head-to-head evaluation reflects the same shift toward model-graded open-ended generation seen across 2023–2024 LLM research."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Microsoft Research open-sourced the implementation as the <code>graphrag</code> package, which spread quickly and spawned a wave of follow-ups (LightRAG, GraphReader, and many \"agentic\" and hybrid graph-plus-vector retrieval systems). The lasting lesson: <b>the right pre-computed structure can answer questions that no amount of clever retrieval can</b> — spend the LLM tokens building understanding once, and global sensemaking becomes cheap forever after."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

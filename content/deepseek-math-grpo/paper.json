@@ -1,0 +1,312 @@
+{
+  "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning (GRPO)",
+  "authors": "Shao, et al. (DeepSeek)",
+  "year": "2024",
+  "venue": "arXiv:2402.03300",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A 7B model that does competition math",
+          "subtitle": "What the paper claims, and why it surprised people",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Until this paper, doing hard math reasoning was something only giant closed models like GPT-4 and Gemini-Ultra could do. The intuition everyone had was: <i>math reasoning needs scale</i>. DeepSeekMath breaks that intuition. It takes a <b>7-billion-parameter</b> open model and pushes it to a level that rivals models tens of times larger, using two ideas: (1) feed it a huge, carefully mined corpus of math from the web, and (2) train it with a new, cheaper reinforcement-learning algorithm called <b>GRPO</b>."
+            },
+            {
+              "type": "p",
+              "html": "The benchmark to watch is <b>MATH</b> — competition-level problems (AMC/AIME style), not grade-school arithmetic. A score here is hard-won. The headline result is a single number that the whole paper is built to justify."
+            },
+            {
+              "type": "quote",
+              "html": "DeepSeekMath 7B has achieved a score of 51.7% on the competition-level MATH benchmark without relying on external toolkits and voting techniques, approaching the performance level of Gemini-Ultra and GPT-4."
+            },
+            {
+              "type": "p",
+              "html": "To put <b>51.7%</b> in context: previous open 7B models scored in the low-to-mid teens on MATH. With self-consistency (majority vote over 64 samples) DeepSeekMath reaches <b>60.9%</b>. The base model alone — before any RL — already hits <b>36.2%</b>, beating much larger open models. That gap from 36.2% to 51.7% is the part GRPO is responsible for."
+            },
+            {
+              "type": "p",
+              "html": "The paper has two halves. The first is about <b>data</b>: where do you get 120B tokens of real math? The second is about <b>RL</b>: GRPO, the algorithm that later became the engine behind <b>DeepSeek-R1</b>. We spend most of this lesson on GRPO, because that is the idea that traveled."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Math pre-training corpus: 120B tokens mined from Common Crawl (the DeepSeekMath Corpus).",
+                "Base model: 51.7% pass and 36.2% top-1 on MATH — best open model of its size at release.",
+                "GRPO: a value-network-free variant of PPO that normalizes rewards within a sampled group.",
+                "Legacy: GRPO is the reinforcement-learning method used to train DeepSeek-R1."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Data Engine",
+      "pages": [
+        {
+          "title": "Mining 120B tokens of math from the open web",
+          "subtitle": "A model that is good at math is mostly a model that has read a lot of math",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before any clever RL, you need a model that already knows what an equation looks like. The cheapest place to find math at scale is the open web (Common Crawl), but most of Common Crawl is <i>not</i> math, and the math that exists is buried. The problem this section answers: <b>how do you pull the math pages out of a 40-trillion-token haystack without hand-labeling the whole thing?</b>"
+            },
+            {
+              "type": "p",
+              "html": "The trick is an <b>iterative classifier bootstrap</b>. Start with a small, trusted seed of known-good math pages (the authors use OpenWebMath). Train a fastText classifier to tell 'math' from 'not math'. Run it over Common Crawl, collect the pages it likes, look at which web <i>domains</i> those pages cluster in, hand-check those domains for more math URLs the classifier missed, add them to the seed, and retrain. Each pass widens the net."
+            },
+            {
+              "type": "p",
+              "html": "Concretely: seed with OpenWebMath as positives, sample negatives from Common Crawl, train fastText, then score the whole crawl. A domain like <code>mathoverflow.net</code> shows up heavily, so the authors mark it as a math source and pull in URLs from it the first classifier missed. Four iterations of this loop yield the corpus."
+            },
+            {
+              "type": "quote",
+              "html": "After four iterations of data collection, we end up with 35.5 million mathematical web pages, totaling 120B tokens."
+            },
+            {
+              "type": "p",
+              "html": "A real worry with web-scraped math: are you secretly training on the test set? Competition problems get reposted everywhere. The authors run <b>decontamination</b> — removing any web text that overlaps n-grams with the GSM8K and MATH test problems — so the 51.7% is not memorization."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this matters:</b> the ablation in the paper shows the corpus quality directly drives downstream math accuracy — a model trained on DeepSeekMath Corpus beats the same model trained on prior math corpora (MathPile, OpenWebMath, Proof-Pile-2). Data quality, not just RL, carries a large share of the result. RL only sharpens a base that already has the knowledge."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "RL Background",
+      "pages": [
+        {
+          "title": "Why PPO needs a value network — and why that hurts",
+          "subtitle": "The thing GRPO is going to delete",
+          "pdfPages": [11, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "To understand GRPO you first have to feel the pain it removes. The standard RL recipe for language models is <b>PPO</b> (Proximal Policy Optimization). The setup: the model (the <b>policy</b>) generates an answer, a <b>reward model</b> scores it, and we nudge the policy to make high-scoring answers more likely. The catch is the word 'high' — high <i>relative to what?</i>"
+            },
+            {
+              "type": "p",
+              "html": "If you just maximize raw reward, training is noisy: a hard prompt where every answer scores low and an easy prompt where every answer scores high both push the model, even though the model didn't really do anything good or bad on either. What you actually want is the <b>advantage</b>: did this answer beat the expected reward for <i>this</i> prompt? To know the expected reward, PPO trains a second neural network — the <b>value network</b> (or critic) — usually the same size as the policy."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{J}_{PPO}(\\theta) = \\mathbb{E}\\big[ q \\sim P(Q),\\, o \\sim \\pi_{\\theta_{old}}(O|q) \\big] \\frac{1}{|o|} \\sum_{t=1}^{|o|} \\min\\!\\left[ \\frac{\\pi_\\theta(o_t \\mid q, o_{<t})}{\\pi_{\\theta_{old}}(o_t \\mid q, o_{<t})} A_t,\\; \\text{clip}\\!\\left( \\frac{\\pi_\\theta(o_t \\mid q, o_{<t})}{\\pi_{\\theta_{old}}(o_t \\mid q, o_{<t})}, 1-\\varepsilon, 1+\\varepsilon \\right) A_t \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: <code>q</code> is a question drawn from the data distribution <code>P(Q)</code>; <code>o</code> is the generated output (a token sequence), sampled from the <i>old</i> policy $\\pi_{\\theta_{old}}$ (a frozen snapshot we collect data with). The sum runs over each token position <code>t</code> in the output, length <code>|o|</code>. The fraction $\\frac{\\pi_\\theta}{\\pi_{\\theta_{old}}}$ is the <b>probability ratio</b> — how much more likely the current policy makes this token versus the snapshot. <code>A_t</code> is the <b>advantage</b> at token <code>t</code> (how much better than expected). The <code>clip</code> to $[1-\\varepsilon, 1+\\varepsilon]$ with $\\varepsilon$ a small constant (e.g. 0.2) stops any single update from moving the policy too far — the 'proximal' in PPO."
+            },
+            {
+              "type": "p",
+              "html": "Where does <code>A_t</code> come from in PPO? From the value network, usually via GAE (Generalized Advantage Estimation). And that is the problem the next page attacks: <b>the value network is as big as the model, doubles your memory, and is itself hard to train</b> — especially when the reward only arrives at the very end of a long math solution."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> PPO (Schulman et al., 2017) is the same algorithm behind InstructGPT and ChatGPT's RLHF. It works, but the critic is the expensive, fiddly part. DeepSeekMath's question: in the LLM setting, do we even need it?"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "GRPO",
+      "pages": [
+        {
+          "title": "The core idea: let the group be the baseline",
+          "subtitle": "Drop the critic, sample many answers, compare them to each other",
+          "pdfPages": [13],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the whole insight in one sentence: <b>instead of training a value network to estimate the expected reward, just sample several answers to the same question and use their average reward as the baseline.</b> The group <i>is</i> the critic. This is Group Relative Policy Optimization."
+            },
+            {
+              "type": "p",
+              "html": "<b>The analogy:</b> imagine grading one student's exam answer. PPO hires a second teacher (the value network) whose full-time job is to predict 'what score is normal for this question'. GRPO fires that teacher and instead has the <i>same</i> student answer the question 8 times; whichever attempts beat the student's own average are reinforced, the below-average ones are discouraged. You never needed an external estimate of 'normal' — the spread of the student's own attempts told you."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete mini-example.</b> Question: 'Compute 17 × 24.' Sample $G=4$ answers and a reward model (or a simple correctness check) scores them: $r = \\{1, 0, 1, 0\\}$ for correct/wrong. The group mean is $0.5$, std is $0.5$. The normalized advantage for each answer is $\\hat{A}_i = (r_i - 0.5)/0.5$, giving $\\{+1, -1, +1, -1\\}$. The two correct solutions get pushed up, the two wrong ones get pushed down — <i>no value network was consulted.</i>"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{J}_{GRPO}(\\theta) = \\mathbb{E}\\big[ q \\sim P(Q),\\, \\{o_i\\}_{i=1}^{G} \\sim \\pi_{\\theta_{old}}(O|q) \\big] \\frac{1}{G} \\sum_{i=1}^{G} \\frac{1}{|o_i|} \\sum_{t=1}^{|o_i|} \\left\\{ \\min\\!\\left[ \\rho_{i,t}\\, \\hat{A}_{i,t},\\; \\text{clip}\\!\\left( \\rho_{i,t}, 1-\\varepsilon, 1+\\varepsilon \\right) \\hat{A}_{i,t} \\right] - \\beta\\, \\mathbb{D}_{KL}\\!\\left[ \\pi_\\theta \\,\\|\\, \\pi_{ref} \\right] \\right\\}"
+            },
+            {
+              "type": "p",
+              "html": "Term by term. We now sample a whole <b>group</b> of $G$ outputs $\\{o_1,\\dots,o_G\\}$ per question (the paper uses $G=64$). The outer $\\frac{1}{G}\\sum_i$ averages over the group; the inner $\\frac{1}{|o_i|}\\sum_t$ averages over tokens of output $i$. $\\rho_{i,t} = \\frac{\\pi_\\theta(o_{i,t}\\mid q,o_{i,<t})}{\\pi_{\\theta_{old}}(o_{i,t}\\mid q,o_{i,<t})}$ is the same probability ratio as PPO. The clip with $\\varepsilon$ is the same trusted-region guard. The two structural changes from PPO: (1) the advantage $\\hat{A}_{i,t}$ now comes <b>from the group, not a critic</b>; (2) there is an explicit KL penalty $\\beta\\,\\mathbb{D}_{KL}[\\pi_\\theta \\| \\pi_{ref}]$ pulling the policy toward a frozen <b>reference</b> model $\\pi_{ref}$ (the initial SFT model), with strength $\\beta$."
+            },
+            {
+              "type": "p",
+              "html": "<b>A subtle but important detail:</b> in PPO the KL penalty is usually folded into the reward at each token. GRPO instead adds the KL <i>directly to the loss</i> as a separate term. This keeps the advantage computation clean — the advantage only ever reflects task reward, and the KL is a separate leash. The next page reads the two remaining pieces: how $\\hat{A}$ is computed and the unusual unbiased KL estimator."
+            }
+          ]
+        },
+        {
+          "title": "Computing the advantage and the KL leash",
+          "subtitle": "Outcome supervision, group normalization, and an unbiased KL",
+          "pdfPages": [13, 14],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Two mechanical pieces make GRPO actually run: how you turn group rewards into a per-token advantage $\\hat{A}_{i,t}$, and how you measure the KL distance to the reference model without it ever going negative-biased. Both are small but load-bearing."
+            },
+            {
+              "type": "h2",
+              "text": "Group-normalized advantage"
+            },
+            {
+              "type": "p",
+              "html": "In the simplest version (<b>outcome supervision</b>), the reward model gives one score $r_i$ to the whole answer $o_i$ — correct final answer, good reasoning, etc. GRPO normalizes each reward against the group's own statistics and assigns that single number to every token of that answer:"
+            },
+            {
+              "type": "math",
+              "tex": "\\hat{A}_{i,t} = \\tilde{r}_i = \\frac{r_i - \\text{mean}(\\{r_1, r_2, \\dots, r_G\\})}{\\text{std}(\\{r_1, r_2, \\dots, r_G\\})}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $r_i$ is the raw reward for output $i$; we subtract the <b>mean</b> reward across the $G$ sampled outputs and divide by their <b>standard deviation</b>. The result $\\tilde{r}_i$ is a z-score — positive if this answer beat its peers, negative if it lagged. Because outcome supervision gives one reward for the whole sequence, every token $t$ in output $i$ shares the same advantage $\\hat{A}_{i,t}=\\tilde{r}_i$. The mean-subtraction is exactly the baseline a value network would have provided; the std-division auto-scales the step size so easy and hard questions contribute comparably."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why std-normalize, not just subtract the mean?</b> A question where the group scores $\\{0.9, 1.0, 0.95\\}$ has tiny spread — the differences are noise, and dividing by the small std would blow them up, but the clip and the fact that all are near-correct keeps it stable; meanwhile a question with spread $\\{0,1,0,1\\}$ gives clean $\\pm 1$ signal. Normalizing puts every question on the same footing so no single prompt dominates the batch gradient. The paper also describes a <b>process supervision</b> variant that places rewards at the end of each reasoning step and sums normalized rewards from each step onward — finer-grained credit for long derivations."
+            },
+            {
+              "type": "h2",
+              "text": "The unbiased KL estimator"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbb{D}_{KL}\\!\\left[ \\pi_\\theta \\,\\|\\, \\pi_{ref} \\right] = \\frac{\\pi_{ref}(o_{i,t}\\mid q, o_{i,<t})}{\\pi_\\theta(o_{i,t}\\mid q, o_{i,<t})} - \\log \\frac{\\pi_{ref}(o_{i,t}\\mid q, o_{i,<t})}{\\pi_\\theta(o_{i,t}\\mid q, o_{i,<t})} - 1"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: let $x = \\frac{\\pi_{ref}}{\\pi_\\theta}$ be the ratio of reference to current probability for the chosen token. The estimator is $x - \\log x - 1$. Why this odd form? It is the <b>k3 unbiased estimator</b> (Schulman): for any $x>0$ it is always $\\geq 0$ (it equals 0 only when $x=1$, i.e. when the policy matches the reference), and its expectation equals the true KL. The naive estimator $\\log\\frac{\\pi_\\theta}{\\pi_{ref}}$ can go negative on individual samples, which is noisy and can let the policy drift; $x-\\log x - 1$ is guaranteed non-negative, giving a cleaner, lower-variance leash back to $\\pi_{ref}$."
+            },
+            {
+              "type": "p",
+              "html": "<b>Putting it together (the algorithm):</b> for each batch — sample $G$ outputs per question from $\\pi_{\\theta_{old}}$, score them with the reward model, compute group-normalized advantages, then take several gradient steps on $\\mathcal{J}_{GRPO}$ with the clip and the KL term. Periodically the reference/old policies are refreshed. No critic is ever instantiated, so memory roughly halves versus PPO."
+            }
+          ]
+        },
+        {
+          "title": "Why GRPO works — the design trade-offs",
+          "subtitle": "What you gain, what you give up, and why it fits LLMs specifically",
+          "pdfPages": [12, 13],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Step back from the equations. Why is replacing a learned critic with a sample average not a downgrade? The honest answer: in the LLM-reasoning setting, the critic was poorly suited to the job, and the group baseline happens to match exactly what the reward model is built to compare."
+            },
+            {
+              "type": "p",
+              "html": "<b>The memory win.</b> PPO's value network is typically the same size as the policy. For a 7B policy, that is a second 7B network to hold, run, and train. GRPO deletes it. The authors note the comparison baseline is exactly this: the value model in PPO is comparable in size to the policy model, bringing a substantial memory burden."
+            },
+            {
+              "type": "quote",
+              "html": "GRPO foregoes the critic model, instead estimating the baseline from group scores, significantly reducing training resources."
+            },
+            {
+              "type": "p",
+              "html": "<b>The 'right baseline' argument.</b> Reward models in RLHF are trained on <i>comparisons</i> — answer A is better than answer B for the same prompt. Their scores are only meaningful <i>relative to other answers to the same question</i>, not on an absolute scale. A value network tries to predict an absolute number; the group baseline instead compares answers within a question — the exact comparative setting the reward model was trained for. So the relative advantage is arguably a more natural signal here than an absolute critic estimate."
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks without the group / what you trade away.</b> The cost is sampling: you must generate $G$ (here 64) full answers per question every step instead of 1, so generation compute goes up. And with a tiny group, the mean/std estimate of the baseline is high-variance — you need a reasonably large $G$ for the average to be a trustworthy baseline. GRPO trades <b>critic training cost and memory</b> for <b>more sampling at rollout time</b> — a good trade when generation is cheap relative to holding a second large network, which is exactly the LLM regime."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why the explicit KL term matters.</b> Without a critic absorbing some of the variance, an aggressive policy could collapse onto whatever the reward model over-rewards (reward hacking). The separate KL leash to the frozen SFT reference $\\pi_{ref}$ keeps the policy fluent and on-distribution while it chases reward — the thing standing between 'better at math' and 'degenerate text that fools the reward model'."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "What GRPO buys: the before-and-after numbers",
+          "subtitle": "RL on top of the instruct model, measured on real benchmarks",
+          "pdfPages": [1, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The clean test of GRPO: take the supervised-fine-tuned model (DeepSeekMath-Instruct 7B) and run GRPO on it to get DeepSeekMath-RL 7B. Everything else held fixed. Did the value-network-free RL actually move the needle on hard math? It did, and notably it improved <i>both</i> the in-domain task it was trained on and out-of-domain tasks it was not."
+            },
+            {
+              "type": "table",
+              "headers": ["Model (7B)", "GSM8K", "MATH"],
+              "rows": [
+                ["DeepSeekMath-Instruct (SFT)", "82.9%", "46.8%"],
+                ["DeepSeekMath-RL (GRPO)", "88.2%", "51.7%"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "GRPO lifts MATH from <b>46.8% to 51.7%</b> and GSM8K from <b>82.9% to 88.2%</b>. The paper's emphasis: DeepSeekMath-RL was further trained using only chain-of-thought GSM8K and MATH data, yet it improves on the SFT model across <i>all</i> benchmarks — including ones it never saw in RL. The relative-advantage signal generalized rather than overfitting the training distribution."
+            },
+            {
+              "type": "quote",
+              "html": "DeepSeekMath-RL 7B beats all open-source models from 7B to 70B, as well as the majority of closed-source models."
+            },
+            {
+              "type": "p",
+              "html": "Against the field: DeepSeekMath-RL's 51.7% on MATH approaches Gemini-Ultra and GPT-4 territory and crushes prior open models (which sat in the teens to low-30s). With tool-integrated reasoning (writing and running code), the RL model reaches <b>58.8%</b> on MATH and <b>88.2%</b>/<b>86.7%</b> class numbers on Chinese benchmarks — surpassing the open 7B–70B field and most closed models on these tasks."
+            },
+            {
+              "type": "p",
+              "html": "<b>The takeaway the paper draws:</b> GRPO is not just 'PPO but cheaper'. It is a unified, simpler way to do reasoning RL that delivers PPO-level (or better) gains while halving the model memory and removing the critic-tuning headache. The benefit shows up as real accuracy on real competition math, not just lower loss."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "The RL behind R1 — and why this paper traveled",
+          "subtitle": "From a math model to the standard recipe for reasoning RL",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "DeepSeekMath looked, at first, like a domain paper: 'we made a good math model.' Its lasting importance is the algorithm buried in Section 4. <b>GRPO became the reinforcement-learning method used to train DeepSeek-R1</b>, the reasoning model that, a year later, showed you could elicit long chain-of-thought 'thinking' almost entirely through RL. The whole 'reasoning model' wave rests on the group-relative trick introduced here."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it spread so fast.</b> GRPO is easy to adopt: if you already have a reward model (or even a simple correctness check that returns 0/1), you can drop in GRPO without building, training, or hosting a separate critic. That lowered the barrier to doing RLHF/RLVR enormously — small labs could run reasoning RL on a single model in memory where PPO demanded two. Verifiable rewards (math answers, passing unit tests) pair perfectly with the group baseline, which is why GRPO became the default for 'RL with verifiable rewards'."
+            },
+            {
+              "type": "p",
+              "html": "<b>Where it sits in the lineage.</b> PPO (Schulman 2017) → RLHF/InstructGPT (the critic-based recipe behind ChatGPT) → GRPO (this paper: delete the critic, normalize within a group) → DeepSeek-R1 (use GRPO at scale to grow reasoning). Conceptually GRPO also rhymes with older critic-free policy-gradient ideas (REINFORCE with a baseline) — the group mean is just an unusually good, on-the-fly baseline."
+            },
+            {
+              "type": "p",
+              "html": "<b>Two contributions, one durable.</b> The data engine (iterative classifier mining of Common Crawl for 120B math tokens, with decontamination) is a strong, reproducible recipe for building a domain corpus. But the idea that left the building is GRPO. If you remember one thing: <i>you don't need a value network — sample a group, normalize the rewards within it, and the group becomes your baseline.</i>"
+            },
+            {
+              "type": "list",
+              "items": [
+                "GRPO = PPO minus the critic, plus within-group reward normalization and a direct KL term.",
+                "Halves RL memory (no value network) and removes critic-training instability.",
+                "Pairs naturally with verifiable rewards (math, code), enabling RLVR at small scale.",
+                "Became the RL algorithm behind DeepSeek-R1 and the broader reasoning-model wave."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

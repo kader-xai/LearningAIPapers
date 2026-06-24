@@ -1,0 +1,340 @@
+{
+  "title": "DeepSeek-V3 Technical Report",
+  "authors": "DeepSeek-AI",
+  "year": "2024",
+  "venue": "arXiv:2412.19437",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "A frontier model for the price of a starter home",
+          "subtitle": "671B parameters, 37B active, trained for ~$5.6M",
+          "pdfPages": [1, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "By late 2024 the open-source community had a frustrating problem: the strongest open models still trailed closed giants like GPT-4o and Claude-3.5-Sonnet, and the obvious way to close the gap was to spend more money on bigger models and more compute. But compute budgets for frontier training had ballooned into the tens of millions of dollars. <b>DeepSeek-V3 answers a sharper question: can you reach the frontier without the frontier price tag?</b> The answer here is a 671-billion-parameter model trained on 14.8 trillion tokens for roughly <b>$5.6 million</b> of GPU time."
+            },
+            {
+              "type": "p",
+              "html": "The trick is that DeepSeek-V3 is a <b>Mixture-of-Experts (MoE)</b> model. Of its 671B total parameters, only <b>37B are activated for each token</b>. Think of it like a hospital with 256 specialists on staff: when a patient (a token) walks in, you don't wake up all 256 doctors, you route them to the 8 most relevant ones. The model has the <i>knowledge capacity</i> of a 671B network but the <i>per-token compute cost</i> of a much smaller ~37B one."
+            },
+            {
+              "type": "p",
+              "html": "Three engineering ideas make this practical, and they are the heart of the paper: <b>Multi-head Latent Attention (MLA)</b> to shrink the memory cache during inference, an <b>auxiliary-loss-free strategy</b> to keep the experts evenly loaded without the usual performance penalty, and an <b>FP8 mixed-precision training</b> pipeline that halves memory and speeds up the math. A fourth idea, <b>Multi-Token Prediction (MTP)</b>, sharpens the training signal and doubles as a speedup at inference."
+            },
+            {
+              "type": "quote",
+              "html": "We present DeepSeek-V3, a strong Mixture-of-Experts (MoE) language model with 671B total parameters with 37B activated for each token. [...] Despite its excellent performance, DeepSeek-V3 requires only 2.788M H800 GPU hours for its full training."
+            },
+            {
+              "type": "table",
+              "headers": ["Quantity", "Value"],
+              "rows": [
+                ["Total parameters", "671B"],
+                ["Activated per token", "37B"],
+                ["Pre-training tokens", "14.8T"],
+                ["Total training cost", "2.788M H800 GPU-hours (~$5.6M)"],
+                ["Headline claim", "Best open-source model; rivals GPT-4o / Claude-3.5-Sonnet"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "At an assumed rental price of <code>$2 per H800 GPU-hour</code>, the 2.788M-hour total works out to about $5.576M. The authors are careful to note this counts only the official training runs, not the research, ablations, and failed experiments that came before, so it is not the true total cost of the project. Still, it reframes what 'frontier-class' has to cost. The rest of the paper is the recipe."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Multi-head Latent Attention",
+      "pages": [
+        {
+          "title": "Multi-head Latent Attention: shrinking the KV cache",
+          "subtitle": "Compress keys and values into a tiny latent vector",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem: attention has a memory tax that grows with every word.</b> During generation, a Transformer caches the <i>key</i> and <i>value</i> vectors of every previous token so it never recomputes them, this is the famous <b>KV cache</b>. For long contexts and big models this cache becomes the bottleneck: it eats GPU memory and the bandwidth to read it dominates inference latency. Standard Multi-Head Attention caches a full key and value for every head of every token, which is enormous."
+            },
+            {
+              "type": "p",
+              "html": "<b>The intuition: don't store the bulky keys and values, store a compressed summary you can re-expand on demand.</b> Imagine instead of keeping a full photograph of every page you've read, you keep a tiny thumbnail, and you've memorized how to blow each thumbnail back up into the parts you actually need. MLA caches a small <b>latent vector</b> per token and reconstructs the per-head keys and values from it when needed. The cache shrinks dramatically while the model behaves almost exactly like full attention."
+            },
+            {
+              "type": "h2",
+              "text": "Compressing keys and values"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{c}_t^{KV} = W^{DKV}\\, \\mathbf{h}_t"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\mathbf{h}_t \\in \\mathbb{R}^{d}$ is the input hidden vector for token $t$ (dimension $d$, the model width). $W^{DKV}$ is a <i>down-projection</i> matrix that squeezes it into $\\mathbf{c}_t^{KV} \\in \\mathbb{R}^{d_c}$, the <b>compressed latent</b> for keys and values, where $d_c \\ll d_h n_h$ (much smaller than the full key/value size: head dimension $d_h$ times number of heads $n_h$). <b>This little $\\mathbf{c}_t^{KV}$ is the only thing the KV cache stores.</b>"
+            },
+            {
+              "type": "math",
+              "tex": "[\\mathbf{k}_{t,1}^{C}; \\mathbf{k}_{t,2}^{C}; \\dots; \\mathbf{k}_{t,n_h}^{C}] = \\mathbf{k}_t^{C} = W^{UK}\\, \\mathbf{c}_t^{KV}"
+            },
+            {
+              "type": "p",
+              "html": "At use time, an <i>up-projection</i> $W^{UK}$ re-expands the latent back into per-head keys $\\mathbf{k}_{t,i}^{C}$ (one per head $i$). The value side is symmetric: $\\mathbf{v}_t^{C} = W^{UV}\\mathbf{c}_t^{KV}$. A separate decoupled key $\\mathbf{k}_t^{R}$ carries the <b>RoPE</b> rotary positional information, kept apart so position encoding survives the compression. The point: you cache the small $\\mathbf{c}_t^{KV}$ (plus the tiny shared RoPE key), and regenerate the big per-head keys/values from it on the fly."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works.</b> MLA compresses the <i>queries</i> too (cutting activation memory during training), but the real prize is inference: the KV cache per token drops to roughly the size of the latent plus one RoPE key. DeepSeek-V2 already showed MLA matches full attention quality while slashing the cache, so V3 inherits it. The trade-off is two extra matrix multiplies (down then up) per token, cheap compared to the memory and bandwidth saved. Compared with alternatives like Grouped-Query Attention (which shares keys/values across heads) or Multi-Query Attention (one shared key/value), MLA keeps more expressive power because every head still gets its own reconstructed key and value, just regenerated from a shared compact code."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Mixture-of-Experts and Load Balancing",
+      "pages": [
+        {
+          "title": "DeepSeekMoE: many small experts, a few per token",
+          "subtitle": "Fine-grained experts plus always-on shared experts",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem MoE solves: you want a model that knows a lot without paying to run all of it every time.</b> A dense Transformer runs its entire feed-forward network on every token. MoE replaces that one big network with many smaller <b>experts</b> and a <b>router</b> (a gate) that, per token, picks just a handful to run. You get the storage capacity of a huge model at the running cost of a small one."
+            },
+            {
+              "type": "p",
+              "html": "DeepSeek-V3 uses the <b>DeepSeekMoE</b> design: a large pool of <i>routed experts</i> plus a small set of <i>shared experts</i> that are always active. The shared experts learn common, general-purpose computation every token needs; the routed experts specialize. For each token the router selects the top-$K_r$ routed experts by a gating score and adds them to the shared ones."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{h}_t' = \\mathbf{u}_t + \\sum_{i=1}^{N_s} \\text{FFN}_i^{(s)}(\\mathbf{u}_t) + \\sum_{i=1}^{N_r} g_{i,t}\\, \\text{FFN}_i^{(r)}(\\mathbf{u}_t)"
+            },
+            {
+              "type": "p",
+              "html": "$\\mathbf{u}_t$ is the token's input to the MoE layer. The first sum runs the $N_s$ <b>shared experts</b> $\\text{FFN}_i^{(s)}$ (always on). The second sum runs the $N_r$ <b>routed experts</b> $\\text{FFN}_i^{(r)}$, each weighted by a gate $g_{i,t}$. Crucially $g_{i,t}=0$ for all but the top-$K_r$ experts, so most of that second sum is zeros and is never computed. The residual $\\mathbf{u}_t$ is added back. That sparsity, most gates being zero, is exactly why only 37B of 671B parameters fire per token."
+            },
+            {
+              "type": "math",
+              "tex": "g_{i,t} = \\frac{g'_{i,t}}{\\sum_{j=1}^{N_r} g'_{j,t}}, \\qquad g'_{i,t} = \\begin{cases} s_{i,t}, & s_{i,t} \\in \\text{Topk}(\\{s_{j,t}\\}, K_r) \\\\ 0, & \\text{otherwise} \\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "$s_{i,t}$ is the affinity score between token $t$ and expert $i$ (how much the router likes that expert for that token), computed as $s_{i,t} = \\sigma(\\mathbf{u}_t^\\top \\mathbf{e}_i)$ with $\\mathbf{e}_i$ the expert's learned <i>centroid</i> vector and $\\sigma$ the sigmoid. $\\text{Topk}(\\cdot, K_r)$ keeps only the $K_r$ highest scores and zeros the rest; the surviving gates are then normalized to sum to one. <b>So a token's output is a weighted blend of its few best-matched experts.</b>"
+            },
+            {
+              "type": "p",
+              "html": "<b>Context.</b> 'Fine-grained' means DeepSeek slices the FFN into many <i>small</i> experts rather than a few large ones, which gives the router finer control and lets each expert specialize more sharply, an idea from the earlier DeepSeekMoE paper. The shared-expert idea echoes the observation that some computation is universal and shouldn't be re-learned in every expert. This whole family descends from the Switch Transformer and GShard line of sparse-MoE work, but with far more, far smaller experts."
+            }
+          ]
+        },
+        {
+          "title": "Auxiliary-loss-free load balancing",
+          "subtitle": "Nudge a per-expert bias instead of fighting the main loss",
+          "pdfPages": [9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem: experts collapse into popularity contests.</b> If you just let the router pick freely, it quickly favors a few experts; they get all the training signal, get even better, and get picked even more, a rich-get-richer spiral. The unpopular experts starve, and worse, on real hardware each expert lives on a different GPU, so an overloaded expert becomes a traffic jam that stalls the whole batch. You <i>must</i> balance the load."
+            },
+            {
+              "type": "p",
+              "html": "<b>The old fix and its cost.</b> The standard remedy is an <b>auxiliary loss</b>: add a penalty term that punishes imbalance, forcing tokens to spread out. But this auxiliary loss fights the main objective, it pushes tokens toward experts that aren't actually the best fit, which quietly degrades model quality. DeepSeek-V3's insight: <b>get the balancing without the penalty.</b>"
+            },
+            {
+              "type": "p",
+              "html": "Instead of penalizing the loss, they add a <b>per-expert bias term</b> $b_i$ that is used <i>only for the routing decision</i>, not for the gate weight that scales the expert's output:"
+            },
+            {
+              "type": "math",
+              "tex": "g'_{i,t} = \\begin{cases} s_{i,t}, & s_{i,t} + b_i \\in \\text{Topk}(\\{s_{j,t} + b_j\\}, K_r) \\\\ 0, & \\text{otherwise} \\end{cases}"
+            },
+            {
+              "type": "p",
+              "html": "The bias $b_i$ shifts <i>who gets selected</i> ($s_{i,t}+b_i$ decides the top-$K_r$) but the actual blend weight still uses the unbiased affinity $s_{i,t}$. So the bias steers traffic without distorting how much each chosen expert contributes. The model adjusts $b_i$ by a simple feedback rule after each step: if an expert was <b>overloaded</b> this batch, lower its bias by $\\gamma$ so it gets picked less next time; if it was <b>underloaded</b>, raise it by $\\gamma$. Here $\\gamma$ is a small <i>bias update speed</i>."
+            },
+            {
+              "type": "quote",
+              "html": "Through the dynamic adjustment, DeepSeek-V3 keeps balanced expert load during training, and achieves better performance than models that encourage load balance through pure auxiliary losses."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works, and the analogy.</b> It's a thermostat, not a tax. A thermostat nudges the heating up or down based on the current temperature without changing what 'comfortable' means; the bias nudges routing toward balance without changing what the model thinks the best expert is. A tiny <i>complementary sequence-wise</i> auxiliary loss is kept with a very small weight just to prevent extreme imbalance within any single sequence, but the heavy lifting is done by the bias. This is one of the paper's most cited contributions, balancing for free."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Multi-Token Prediction",
+      "pages": [
+        {
+          "title": "Multi-Token Prediction: look further ahead while training",
+          "subtitle": "Predict the next D tokens, not just the next one",
+          "pdfPages": [10, 11],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem: predicting only the very next token is a weak teacher.</b> Standard language models are trained to guess one token at a time. That works, but it gives the model a myopic objective, it never has to plan past the immediate next word during training. <b>MTP</b> asks the model to also predict the next <i>several</i> tokens at each position, which densifies the learning signal and encourages it to pre-plan its representations."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete picture.</b> At position for the word 'the', instead of only predicting 'cat', the model is also asked to predict 'sat' and 'on'. Each future depth gets its own lightweight prediction module that reuses the main model's hidden state, so the model learns representations that already encode a few steps of the future. Unlike earlier MTP schemes that predict the extra tokens in parallel, DeepSeek-V3 keeps the <b>causal chain</b> intact, predicting depth by depth so each future prediction is conditioned on the previous one."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{h}_i'^{k} = M_k\\,[\\,\\text{RMSNorm}(\\mathbf{h}_i^{k-1});\\ \\text{RMSNorm}(\\text{Emb}(t_{i+k}))\\,]"
+            },
+            {
+              "type": "p",
+              "html": "For the $k$-th MTP module, $\\mathbf{h}_i^{k-1}$ is the representation of token $i$ coming from the previous depth ($k{-}1$), and $\\text{Emb}(t_{i+k})$ is the embedding of the token $k$ steps ahead. Both are normalized with RMSNorm, concatenated, and merged by a projection $M_k$ into a combined vector $\\mathbf{h}_i'^{k}$. This is then run through a Transformer block to produce the depth-$k$ prediction, conditioned on the actual future token, which is what keeps the chain causal."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{MTP}} = \\frac{\\lambda}{D} \\sum_{k=1}^{D} \\mathcal{L}_{\\text{MTP}}^{k}"
+            },
+            {
+              "type": "p",
+              "html": "The total MTP loss averages the cross-entropy losses $\\mathcal{L}_{\\text{MTP}}^{k}$ over the $D$ prediction depths and scales them by a weight $\\lambda$. $D$ is how many future tokens you predict (a small number); $\\lambda$ balances this auxiliary objective against the main next-token loss. At inference the MTP modules can simply be discarded, the extra cost was only paid during training."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it pays off twice.</b> First, denser supervision: every position now contributes $D$ predictions of signal, improving the main model even after the MTP heads are thrown away. Second, a free <b>speculative decoding</b> path: the kept MTP heads can propose the next few tokens, which the main model then verifies in one pass, the authors report the second token is accepted around 85-90% of the time, giving roughly a <b>1.8x</b> throughput boost. So a training-time idea becomes an inference-time speedup, an unusually clean two-for-one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "FP8 Training & Infrastructure",
+      "pages": [
+        {
+          "title": "FP8 training and DualPipe: making the dollars stretch",
+          "subtitle": "8-bit math plus near-zero pipeline bubbles",
+          "pdfPages": [5, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The problem: the $5.6M number isn't an architecture trick, it's an engineering one.</b> Two costs dominate large-model training: the precision you compute in (more bits = more memory and slower math) and the time GPUs sit idle waiting for each other. DeepSeek-V3 attacks both, and these systems choices are what actually buy the low price tag."
+            },
+            {
+              "type": "h2",
+              "text": "FP8 mixed precision"
+            },
+            {
+              "type": "p",
+              "html": "Most large models train in 16-bit (BF16). DeepSeek-V3 runs the heavy matrix multiplies in <b>FP8</b>, 8-bit floating point, which roughly halves memory and doubles throughput on the math units. The danger is that 8 bits has tiny dynamic range, so a few outlier values can wreck a whole tile of numbers. Their fix is <b>fine-grained quantization</b>: scale in small groups (per 1x128 tile for activations, per 128x128 block for weights) so one outlier only spoils its own little group, and <b>accumulate in higher precision</b> by periodically promoting partial sums to FP32. Sensitive pieces (like the embeddings, the output head, and normalization) stay in higher precision."
+            },
+            {
+              "type": "quote",
+              "html": "We design an FP8 mixed precision training framework and, for the first time, validate the feasibility and effectiveness of FP8 training on an extremely large-scale model."
+            },
+            {
+              "type": "h2",
+              "text": "DualPipe: hiding the communication"
+            },
+            {
+              "type": "p",
+              "html": "Spreading 256 experts across many GPUs means tokens constantly fly between machines (all-to-all communication), and pipeline parallelism leaves 'bubbles' where stages wait. <b>DualPipe</b> overlaps the forward and backward passes so that computation and the cross-GPU communication happen at the same time, nearly eliminating those bubbles. Combined with efficient all-to-all kernels tuned to the InfiniBand and NVLink bandwidth, the communication is almost fully hidden behind useful compute."
+            },
+            {
+              "type": "table",
+              "headers": ["Training stage", "H800 GPU-hours", "Cost (@ $2/hr)"],
+              "rows": [
+                ["Pre-training", "2.664M", "$5.328M"],
+                ["Context extension", "0.119M", "$0.238M"],
+                ["Post-training", "0.005M", "$0.01M"],
+                ["Total", "2.788M", "$5.576M"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>The payoff in one line:</b> pre-training 14.8T tokens cost 2.664M GPU-hours, and the whole pipeline came to 2.788M. The authors stress training was <b>remarkably stable</b>, no unrecoverable loss spikes, no rollbacks across the entire run, which for a 671B FP8 model is itself a notable result. This is the practical lesson of the paper: frontier quality came less from a bigger model and more from squeezing every drop out of the hardware."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Results: the strongest open model of its day",
+          "subtitle": "Beating open rivals, rivaling GPT-4o and Claude-3.5-Sonnet",
+          "pdfPages": [1, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>Does the cheap recipe actually compete?</b> The benchmarks say yes. DeepSeek-V3 outperforms every other open-source model evaluated, and on knowledge, reasoning, math, and code it lands in the same league as the leading closed models GPT-4o and Claude-3.5-Sonnet. It is especially strong on math and code, where it tops the board among the compared systems."
+            },
+            {
+              "type": "p",
+              "html": "<b>Concrete highlights.</b> The paper reports standout scores on hard reasoning and math sets, MATH-500 in the 90% range and strong results on MMLU, GPQA, and competition-style coding benchmarks, where DeepSeek-V3 leads the open field and trades blows with the frontier closed models. The general pattern: it clearly beats open peers like Qwen2.5-72B and Llama-3.1-405B on most evaluations, and matches or approaches the closed leaders on many."
+            },
+            {
+              "type": "quote",
+              "html": "Comprehensive evaluations reveal that DeepSeek-V3 outperforms other open-source models and achieves performance comparable to leading closed-source models."
+            },
+            {
+              "type": "table",
+              "headers": ["Capability", "Where DeepSeek-V3 lands"],
+              "rows": [
+                ["Knowledge (MMLU, GPQA)", "Best among open models; near GPT-4o / Claude-3.5"],
+                ["Math (MATH-500, AIME)", "Top of the compared field, incl. closed models"],
+                ["Code (LiveCodeBench, etc.)", "Leads open models; competitive with closed"],
+                ["Long context", "Extended to 128K via context extension stage"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Where the post-training gains come from.</b> A large part of DeepSeek-V3's reasoning ability is <i>distilled from DeepSeek-R1</i>, the team's reasoning model: R1's long chain-of-thought solutions are used to teach V3 better reasoning patterns during supervised fine-tuning and reinforcement learning (with Group Relative Policy Optimization, GRPO). So the strong math and code numbers reflect both the base model and a deliberate reasoning-transfer step."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why these numbers mattered.</b> The headline wasn't just the scores, it was the scores <i>per dollar</i>. A model rivaling GPT-4o trained for ~$5.6M, with open weights, reset expectations about how much frontier capability really costs and how close the open ecosystem could get. That combination, frontier-adjacent quality at a fraction of the assumed cost, is exactly why DeepSeek-V3 landed the way it did."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why DeepSeek-V3 mattered",
+          "subtitle": "The efficiency frontier, not just the capability frontier",
+          "pdfPages": [1, 5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "<b>The big idea to carry away:</b> DeepSeek-V3 didn't reach the frontier by spending the most, it reached it by wasting the least. Every headline choice, MLA, the auxiliary-loss-free MoE, FP8, MTP, DualPipe, is an efficiency lever. The model is large in <i>capacity</i> (671B) but cheap in <i>compute</i> (37B active, FP8 math, overlapped communication). That decoupling of capacity from cost is the paper's central thesis."
+            },
+            {
+              "type": "list",
+              "items": [
+                "MLA: caches a compressed latent instead of full keys/values, so long-context inference fits in memory and runs fast.",
+                "Auxiliary-loss-free balancing: a per-expert bias keeps GPUs evenly loaded without the quality tax of a balancing penalty.",
+                "FP8 training: first validated at this scale, halving memory and roughly doubling math throughput, while staying stable.",
+                "Multi-Token Prediction: denser training signal that also enables ~1.8x speculative-decoding speedup at inference.",
+                "DualPipe + tuned all-to-all: nearly hides cross-GPU communication, so expensive accelerators stay busy."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>How it connects to the lineage.</b> MLA and DeepSeekMoE came from DeepSeek-V2 and the DeepSeekMoE paper; the sparse-MoE idea traces back to Shazeer's mixtures, GShard, and Switch Transformer. The reasoning gains tie directly to DeepSeek-R1, whose chain-of-thought is distilled into V3. And V3 became the base for later DeepSeek systems, the efficient backbone that the reasoning work was built on top of."
+            },
+            {
+              "type": "p",
+              "html": "<b>What it influenced.</b> The release crystallized a turning point in the open-vs-closed debate: a model trading blows with GPT-4o, with open weights and a published ~$5.6M training cost, made 'frontier capability is necessarily a tens-of-millions, closed-doors endeavor' a much harder claim to defend. It pushed the field's attention from raw scale toward <b>training and inference efficiency</b> as the real competitive axis."
+            },
+            {
+              "type": "p",
+              "html": "<b>The honest caveats.</b> The authors are upfront that the $5.6M covers only the official training runs, not the prior research and failed attempts, and that the recipe leans on a specific hardware setup (H800 clusters, custom kernels). FP8 at this scale still demands careful precision engineering. The contribution isn't 'frontier models are now trivially cheap', it's a concrete, reproducible demonstration that the gap between open and closed, and between expensive and affordable, was far smaller than most assumed."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

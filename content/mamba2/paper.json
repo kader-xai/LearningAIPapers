@@ -1,0 +1,162 @@
+{
+  "title": "Transformers are SSMs: Mamba-2 and State Space Duality",
+  "authors": "Dao, Gu",
+  "year": "2024",
+  "venue": "arXiv:2405.21060",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Two families, one equation",
+          "subtitle": "Attention and state-space models are two views of the same matrix multiplication.",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "By 2024 there were two rival recipes for sequence modeling. <b>Transformers</b> (attention) dominated everything — language, vision, audio — but their core operation costs $O(T^2)$ in sequence length $T$, so doubling the context quadruples the compute. <b>State space models (SSMs)</b> like Mamba had just shown you could match Transformer quality at small-to-medium scale while running in <i>linear</i> time and constant memory per step. The two camps used totally different math, different code, different intuitions. It felt like a fork in the road." },
+            { "type": "p", "html": "This paper's claim is that the fork is an illusion. The authors prove that a broad class of SSMs and a broad class of attention variants are the <i>same function</i>, written two ways. They call the connecting theory <b>Structured State Space Duality (SSD)</b>. One side is a recurrence (good for inference, $O(T)$); the other side is a matrix multiply (good for training on GPUs). They are duals — like the recurrent and convolutional views of an RNN, but now spanning the SSM/attention divide." },
+            { "type": "quote", "html": "We show that these models can be vastly related to each other through the framework of structured semiseparable matrices, allowing us to develop a framework of theoretical connections between SSMs and variants of attention..." },
+            { "type": "p", "html": "The payoff is engineering, not just elegance. Because the SSD layer can be cast as a matrix multiply, it runs on the same Tensor Cores that make attention fast. The authors build <b>Mamba-2</b>, whose core layer is <span class=\"pill\">2-8x faster</span> than Mamba's hand-written selective-scan kernel, while staying competitive with Transformers in quality." },
+            { "type": "p", "html": "<b>Why this matters.</b> Mamba (the prior paper) was fast but lived outside the well-optimized matmul ecosystem — it needed a bespoke CUDA scan that did not use Tensor Cores and was awkward to scale across GPUs. SSD drags SSMs back into matmul-land, so all the systems work poured into Transformers (tensor parallelism, sequence parallelism, mixed precision) transfers over for free." },
+            { "type": "p", "html": "<b>Authors & lineage.</b> Tri Dao (FlashAttention) and Albert Gu (S4, Mamba) — the two people most responsible for, respectively, making attention fast and making SSMs viable. This paper is them shaking hands: a theory that says their two lines of work were the same thing all along." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. The Problem",
+      "pages": [
+        {
+          "title": "Why bridge attention and SSMs at all",
+          "subtitle": "Each side has a strength the other lacks.",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "Start with what each model is good and bad at, because the whole paper is about borrowing strengths across the divide." },
+            { "type": "table", "headers": ["", "Transformer (attention)", "SSM (Mamba)"], "rows": [["Training", "Fast: one big matmul, uses Tensor Cores", "Slow-ish: custom scan, no Tensor Cores"], ["Inference / step", "$O(T)$ per token, KV-cache grows with $T$", "$O(1)$ per token, fixed-size state"], ["Long context", "Quadratic memory, expensive", "Linear, cheap"], ["Ecosystem", "Huge: every systems trick targets matmul", "Bespoke kernels, hard to scale"]] },
+            { "type": "p", "html": "<b>The concrete pain.</b> Mamba's recurrence is sequential by nature ($h_t$ depends on $h_{t-1}$), so to train it efficiently the authors of the original Mamba wrote a special <i>selective scan</i> kernel. It was clever, but it did not use the GPU's matrix-multiply units (Tensor Cores), which on an A100 do ~16x more FLOP/s than the general-purpose cores. So Mamba left most of the hardware idle during training." },
+            { "type": "p", "html": "<b>The bet.</b> If you could rewrite the SSM recurrence as a structured matrix multiplication, you would (1) get to use Tensor Cores and (2) inherit the entire distributed-training toolbox built for Transformers. That is exactly what SSD delivers. The conceptual key is to stop thinking of the SSM as a loop and start thinking of it as <b>one big matrix that maps the input sequence to the output sequence</b> — a matrix with special structure that makes it cheap to apply." },
+            { "type": "p", "html": "<b>Analogy.</b> A convolution can be written as a sliding loop or as a single Toeplitz-matrix multiply — same answer, different cost profile. SSD generalizes that duality: the SSM's loop and a masked-attention matmul are two factorizations of one structured matrix, and you pick whichever is cheaper for the job in front of you (matmul for training, loop for autoregressive generation)." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. State Space Models",
+      "pages": [
+        {
+          "title": "The SSM as a recurrence",
+          "subtitle": "The model Mamba uses, written as a per-step loop.",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "A <b>structured state space model (SSM)</b> processes a sequence one step at a time, carrying a hidden state $h_t$ that summarizes everything seen so far. At each step it updates the state from the previous state plus the new input, then reads out the output from the state. It is exactly the form of a linear RNN." },
+            { "type": "math", "tex": "h_t = A_t\\, h_{t-1} + B_t\\, x_t" },
+            { "type": "math", "tex": "y_t = C_t^{\\top} h_t" },
+            { "type": "p", "html": "Reading the recurrence term by term. $x_t \\in \\mathbb{R}$ is the scalar input at step $t$ (in practice the model runs this independently across many channels). $h_t \\in \\mathbb{R}^{N}$ is the hidden state, a vector of size $N$ — the <b>state size</b>, the model's working memory. $A_t \\in \\mathbb{R}^{N \\times N}$ is the state-transition matrix that decides how much old memory to keep. $B_t \\in \\mathbb{R}^{N}$ writes the new input into the state; $C_t \\in \\mathbb{R}^{N}$ reads the output out of it. $y_t \\in \\mathbb{R}$ is the scalar output." },
+            { "type": "p", "html": "<b>What makes it \"selective\" (Mamba-style).</b> The matrices $A_t, B_t, C_t$ carry a time subscript: they depend on the current input. That input-dependence is what lets the model choose to remember or forget on the fly — the difference between a dumb fixed filter and a content-aware one. The price is that the recurrence is no longer a plain convolution, which is why the original Mamba needed its custom scan." },
+            { "type": "p", "html": "<b>The simplification SSD makes.</b> In this paper $A_t$ is restricted to be a <i>scalar times the identity</i>, $A_t = a_t I$. So the whole transition is one number $a_t$ per step — a single gate that scales the entire state. This sounds like a big sacrifice, but it is exactly the restriction that unlocks the matmul form. Empirically the lost expressivity is negligible at scale, and you get the duality plus a much faster kernel in return." },
+            { "type": "p", "html": "<b>Concrete mini-example.</b> Say $N=2$, and over three steps the gates are $a_1, a_2, a_3$. Then $h_3 = a_3 a_2 B_1 x_1 + a_3 B_2 x_2 + B_3 x_3$ — each past input survives into the present scaled by the <i>product</i> of all the gates since. Those cumulative products of $a$'s are the seed of the structured matrix on the next page." }
+          ]
+        },
+        {
+          "title": "The SSM as a matrix: semiseparable structure",
+          "subtitle": "Unroll the loop and the whole layer becomes one matrix multiply.",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "Here is the trick at the heart of the paper. Instead of running the recurrence step by step, <i>unroll</i> it: write the output of every position as an explicit weighted sum of every input. Because the recurrence is linear, this is always possible, and it collapses the entire layer into a single matrix multiply $y = M x$, where $M$ is $T \\times T$." },
+            { "type": "math", "tex": "y_t = \\sum_{s \\le t} C_t^{\\top} \\left( \\prod_{k=s+1}^{t} A_k \\right) B_s \\, x_s" },
+            { "type": "p", "html": "Reading it: the output at position $t$ is a sum over all earlier positions $s \\le t$. Each earlier input $x_s$ is multiplied by the entry $M_{ts} = C_t^{\\top} \\left( A_t \\cdots A_{s+1} \\right) B_s$ — write input with $B_s$, propagate through every transition between $s$ and $t$, read out with $C_t$. The sum stops at $t$ (causality): the future cannot affect the past, so $M$ is <b>lower-triangular</b>." },
+            { "type": "p", "html": "<b>The key property.</b> This matrix $M$ is <b>$N$-semiseparable</b>: every submatrix you can carve out of its lower-triangular part has rank at most $N$ (the state size). Intuitively, the only thing that passes from the past to the future is the $N$-dimensional state $h$ — so all the influence of the first $k$ tokens on the last $T-k$ tokens has to squeeze through an $N$-wide channel. Rank $\\le N$ is the mathematical fingerprint of \"the state is the bottleneck.\"" },
+            { "type": "quote", "html": "We show that state space models are equivalent to a particular family of structured matrices called semiseparable matrices..." },
+            { "type": "p", "html": "<b>Why this is the whole game.</b> A general $T \\times T$ matmul costs $O(T^2 N)$. But a semiseparable matrix can be applied in $O(T N)$ via the recurrence — that <i>is</i> the linear-time SSM. So \"SSM\" and \"semiseparable matrix transformation\" are literally the same object. The recurrence is the fast way to multiply by $M$; the dense form is the conceptual way to see it. Choosing between them per task is the duality." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Structured Masked Attention",
+      "pages": [
+        {
+          "title": "Attention is a structured matrix too",
+          "subtitle": "Rewrite masked attention and the same semiseparable structure appears.",
+          "pdfPages": [5, 12],
+          "blocks": [
+            { "type": "p", "html": "Now approach from the attention side and watch the two halves meet. Standard masked self-attention computes, for each pair of positions, a score from query-key similarity, masks out the future, then mixes the values. Strip away the softmax (study <i>linear</i> attention) and the layer is:" },
+            { "type": "math", "tex": "y = (L \\circ (Q K^{\\top}))\\, V" },
+            { "type": "p", "html": "Term by term. $Q, K, V \\in \\mathbb{R}^{T \\times N}$ are the queries, keys, and values — $T$ positions, $N$ features each. $Q K^{\\top} \\in \\mathbb{R}^{T \\times T}$ is the full table of pairwise scores. $L \\in \\mathbb{R}^{T \\times T}$ is the <b>mask</b>, and $\\circ$ is elementwise (Hadamard) product: $L$ zeroes out the disallowed entries. For causal attention $L$ is the lower-triangular matrix of ones. The result times $V$ is the output." },
+            { "type": "p", "html": "<b>The generalization.</b> The authors ask: what if $L$ is not just ones-below-the-diagonal, but any <i>structured</i> lower-triangular matrix? They call this <b>Structured Masked Attention (SMA)</b>. The mask $L$ stops being a binary on/off and becomes a learned decay pattern over relative position." },
+            { "type": "p", "html": "<b>The punchline.</b> Choose $L$ to be the <i>1-semiseparable</i> matrix whose entries are the cumulative products of scalars $a_t$ — i.e. $L_{ts} = a_t a_{t-1} \\cdots a_{s+1}$. Then this attention computation is <i>identically equal</i> to the scalar-$A$ SSM from the previous section. Same matrix $M = L \\circ (Q K^{\\top})$, same outputs, with $Q \\leftrightarrow C$, $K \\leftrightarrow B$. That is the duality made concrete: <b>an SSM is masked attention with a structured-decay mask.</b>" },
+            { "type": "quote", "html": "Structured masked attention generalizes linear attention by replacing the causal mask with any structured matrix..." },
+            { "type": "p", "html": "<b>Why this is more than a coincidence.</b> Linear attention was already known to have a recurrent form. SSD shows the recurrent form is an SSM and the masked-matmul form is attention — and pins down <i>exactly</i> which mask structure ($L$ being semiseparable) makes the two coincide. It explains why both families work and lets ideas cross over: attention's stable training and SSMs' cheap inference become options on a single dial." }
+          ]
+        },
+        {
+          "title": "The SSD algorithm: chunked block decomposition",
+          "subtitle": "Split into blocks — matmuls inside, recurrence across.",
+          "pdfPages": [8, 9, 10],
+          "blocks": [
+            { "type": "p", "html": "Knowing the SSM is a semiseparable matrix gives two extreme algorithms. Apply $M$ as a dense masked matmul: fast Tensor Cores but $O(T^2)$ work. Apply it as the recurrence: $O(T)$ work but a serial scan that wastes the hardware. SSD takes the best of both with a <b>block (chunked) decomposition</b>." },
+            { "type": "list", "items": [
+              "Cut the sequence into chunks of length $Q$ (e.g. 64 or 256).",
+              "<b>Diagonal blocks</b> — interactions <i>within</i> a chunk — are computed as small dense masked matmuls. Quadratic, but only in the tiny chunk size, and they run on Tensor Cores.",
+              "<b>Off-diagonal blocks</b> — interactions <i>across</i> chunks — are low-rank (rank $\\le N$, the semiseparable property). They are handled by passing a single $N$-dimensional state between chunks, exactly the SSM recurrence, but now over $T/Q$ chunks instead of $T$ steps."
+            ] },
+            { "type": "p", "html": "<b>The cost.</b> Pick the chunk size so the two parts balance. The whole layer comes out to $O(T N^2)$ training FLOPs — <b>linear in sequence length $T$</b> — while doing the heavy arithmetic as matmuls. You get the SSM's linear scaling AND attention's Tensor-Core utilization in one kernel." },
+            { "type": "p", "html": "<b>Mental picture.</b> Think of a block-lower-triangular matrix. The blocks on the diagonal are dense little attention matrices (handle local, fine-grained interactions). Everything below the diagonal is summarized by one running state handed chunk-to-chunk (handles the long-range part cheaply). Local detail by matmul, global memory by recurrence — the chunk size is the knob that trades between them." },
+            { "type": "p", "html": "<b>Why chunking is the right design.</b> Pure matmul wastes work on a quadratic that long contexts cannot afford; pure scan wastes the hardware. Chunking confines the quadratic to a length you control and uses the cheap recurrence only for the cross-chunk part where it is genuinely low-rank. It also maps naturally onto GPU memory hierarchy — a chunk fits in fast SRAM, echoing the IO-aware idea behind FlashAttention." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Mamba-2 & Results",
+      "pages": [
+        {
+          "title": "The Mamba-2 architecture",
+          "subtitle": "What changes when you build a real model on SSD.",
+          "pdfPages": [2, 9],
+          "blocks": [
+            { "type": "p", "html": "The SSD layer drops into a block much like the original Mamba block, with a few deliberate changes that the duality enables." },
+            { "type": "list", "items": [
+              "<b>Scalar-times-identity $A$.</b> The transition is one gate $a_t$ per step (not a full $N \\times N$ matrix). This is the restriction that makes the matmul form possible — and it barely costs quality.",
+              "<b>Bigger state, for free.</b> Because the kernel is matmul-bound rather than scan-bound, Mamba-2 can use a much larger state size $N$ — up to <span class=\"pill\">256</span>, roughly 8-16x larger than typical Mamba — which improves quality, at little extra wall-clock cost.",
+              "<b>Multi-head / grouped structure.</b> $B$ and $C$ are shared across head-groups exactly like grouped-query attention, so Transformer parallelism tricks port directly.",
+              "<b>Parallel projections.</b> The $A, B, C, X$ projections are produced together at the start of the block (rather than after a sequential step), which makes the block tensor-parallel-friendly across GPUs."
+            ] },
+            { "type": "p", "html": "<b>Why these choices.</b> Each one trades a sliver of the original Mamba's generality for compatibility with the matmul/distributed ecosystem. The bet — borne out by the experiments — is that a slightly less expressive layer you can scale efficiently beats a more expressive layer you cannot." },
+            { "type": "p", "html": "<b>Trivia.</b> The state size $N$ was a hard ceiling for Mamba precisely because the scan kernel's cost grew with it; a state of 256 was impractical. SSD removes that coupling, so a knob that was effectively frozen becomes a tuning dial — one of the quieter but most consequential wins of the rewrite." }
+          ]
+        },
+        {
+          "title": "Results: faster, and just as good",
+          "subtitle": "Headline speed and quality numbers.",
+          "pdfPages": [1, 11],
+          "blocks": [
+            { "type": "p", "html": "The two questions: did the SSD kernel actually get faster, and did the quality survive the scalar-$A$ simplification? Both answers are yes." },
+            { "type": "h2", "text": "Speed" },
+            { "type": "p", "html": "The SSD layer is <span class=\"pill\">2-8x faster</span> than Mamba's optimized selective-scan kernel, because it runs as matmuls on Tensor Cores. At the larger state sizes Mamba-2 prefers, it also leaves attention behind: for long sequences SSD is dramatically faster than FlashAttention-2, since its cost is linear in $T$ while attention's is quadratic — the crossover happens around sequence length 2K and the gap widens from there." },
+            { "type": "h2", "text": "Quality" },
+            { "type": "p", "html": "Trained on the Pile, Mamba-2 matches or beats Mamba and a strong Transformer++ baseline on standard language-modeling perplexity and zero-shot downstream tasks at matched parameters and data. A <b>2.7B-parameter Mamba-2 trained on 300B tokens</b> outperforms a 2.8B Mamba and the Pythia / Transformer++ baselines of comparable size — so the scalar-$A$ restriction cost essentially nothing." },
+            { "type": "p", "html": "<b>The associative-recall lens.</b> On synthetic multi-query associative-recall (MQAR) tasks — the kind attention is supposed to be uniquely good at — the larger state size that SSD unlocks lets Mamba-2 close most of the historical gap to attention, directly demonstrating that \"bigger state\" is what was holding SSMs back, not a fundamental limitation." },
+            { "type": "p", "html": "<b>Bottom line.</b> SSD lets Mamba-2 keep Transformer-level quality and the long-context efficiency of an SSM, while training inside the well-optimized matmul ecosystem instead of a one-off kernel." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Significance",
+      "pages": [
+        {
+          "title": "Why this paper mattered",
+          "subtitle": "A theory that turned a rivalry into a spectrum.",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "<b>The lasting idea.</b> Attention and SSMs are not competing paradigms but two factorizations of the same structured-matrix transform. SSD makes the choice between them a continuous engineering decision — matmul form when you want Tensor-Core throughput, recurrent form when you want $O(1)$-per-token generation — rather than a commitment to a whole research lineage." },
+            { "type": "p", "html": "<b>Systems impact.</b> By recasting the SSM as a matmul, Mamba-2 inherited the Transformer toolbox wholesale: tensor parallelism, sequence parallelism, mixed-precision training, and the IO-aware chunking that powers FlashAttention. This is what made large-scale SSM training practical and is a big reason hybrid SSM/attention models became a serious option for production LLMs." },
+            { "type": "p", "html": "<b>Connections to landmark work.</b> It unifies three threads from the same two authors and their collaborators: <i>S4</i> (structured SSMs), <i>Mamba</i> (selective SSMs), and <i>FlashAttention</i> (IO-aware attention kernels). It also formalizes the long-suspected tie between <i>linear attention</i> (Katharopoulos et al., 2020) and recurrent models, pinning down the exact mask structure that makes them identical." },
+            { "type": "p", "html": "<b>What it influenced.</b> SSD became the backbone of subsequent hybrid architectures (e.g. Jamba-style and other attention-SSM mixtures) and reframed how the field talks about efficient sequence layers — not \"attention vs. SSM\" but \"where on the SSD spectrum, with what state size and chunk length.\"" },
+            { "type": "p", "html": "<b>The one-sentence takeaway.</b> Show that two things are secretly one equation, and every optimization built for either one suddenly works for both — that is the entire return on this paper, and it is a large one." }
+          ]
+        }
+      ]
+    }
+  ]
+}

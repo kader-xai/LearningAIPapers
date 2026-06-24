@@ -1,0 +1,291 @@
+{
+  "title": "Efficient Streaming Language Models with Attention Sinks",
+  "authors": "Xiao, et al.",
+  "year": "2023",
+  "venue": "arXiv:2309.17453",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Making an LLM stream forever",
+          "subtitle": "The problem of infinite-length deployment",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Imagine a chatbot that you never restart. You talk to it for days, feeding it message after message. Each new token the model generates has to attend back to <i>every</i> token it has ever seen. Two things break. First, <b>memory</b>: a Transformer caches the Key and Value vectors of every past token (the <code>KV cache</code>), so cost grows without bound. Second, <b>quality</b>: the model was trained on sequences of, say, 4K tokens, and the moment your conversation exceeds that length its predictions fall apart. This paper asks one deployment question."
+            },
+            {
+              "type": "quote",
+              "html": "Can we deploy an LLM for infinite-length inputs without sacrificing efficiency and performance?"
+            },
+            {
+              "type": "p",
+              "html": "The naive fix is a <b>sliding window</b>: only keep the KV of the most recent $L$ tokens and drop the rest. Memory is now bounded and constant. But the authors observe something startling: the instant the very first tokens slide out of the window, perplexity <b>explodes</b> &mdash; the model becomes gibberish. The recent tokens are still there; only the oldest few are gone. Why should losing tokens the model barely seems to read destroy it?"
+            },
+            {
+              "type": "p",
+              "html": "The answer is the paper's central discovery: those initial tokens are <b>attention sinks</b>. The model dumps a large, near-constant share of its attention onto the first few positions &mdash; not because they carry meaning, but because SoftMax forces every attention row to sum to one and the model needs somewhere to put the 'leftover' probability. Remove the sink and the math breaks."
+            },
+            {
+              "type": "p",
+              "html": "The fix is almost embarrassingly simple: keep the KV of just the <b>first 4 tokens</b> as permanent sinks, plus a rolling window of recent tokens. This is <b>StreamingLLM</b>. With it, Llama-2, MPT, Falcon and Pythia stream stably over <b>more than 4 million tokens</b> with no fine-tuning, and the streaming setup runs up to <b>22.2&times; faster</b> than the sliding-window-with-recomputation baseline."
+            },
+            {
+              "type": "quote",
+              "html": "StreamingLLM enables Llama-2, MPT, Falcon, and Pythia to perform stable and efficient language modeling with up to 4 million tokens and more."
+            },
+            {
+              "type": "p",
+              "html": "Crucially, this is <b>not</b> a way to extend a model's context window. StreamingLLM never lets the model use information from more than its window-many recent tokens. What it buys is the ability to keep <i>running</i> indefinitely on a stream without collapsing or running out of memory &mdash; the right tool for multi-round dialogue and always-on assistants."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. The Problem",
+      "pages": [
+        {
+          "title": "Four ways to attend, and why three of them fail",
+          "subtitle": "Dense vs. window vs. sliding-recompute vs. StreamingLLM",
+          "pdfPages": [2, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before the fix, it helps to see the four strategies the paper lines up side by side (its Figure 1). Each handles a stream of incoming tokens differently, and the trade-off is always the same triangle: <b>memory</b>, <b>speed</b>, and <b>does it actually work past the training length</b>."
+            },
+            {
+              "type": "table",
+              "headers": ["Strategy", "What it caches", "Memory", "Works past training length?"],
+              "rows": [
+                ["(a) Dense attention", "every past token", "grows as O(T) and blows up", "No — perplexity explodes once length exceeds pre-training size"],
+                ["(b) Window attention", "only the last L tokens (evict the oldest)", "constant, O(L)", "No — collapses the moment the first tokens are evicted"],
+                ["(c) Sliding window w/ re-compute", "rebuild the L-token cache from scratch each step", "constant, O(L)", "Yes, but quadratic per step — painfully slow"],
+                ["(d) StreamingLLM (this paper)", "4 sink tokens + last L recent tokens", "constant, O(L)", "Yes — stable and O(1) per token"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Strategy (a), <b>dense</b>, is what a vanilla Transformer does at inference: keep everything. It is accurate up to the pre-training length, then degrades badly because the model has never seen attention over so many positions. And the KV cache keeps growing, so latency and memory rise without limit."
+            },
+            {
+              "type": "p",
+              "html": "Strategy (b), <b>window attention</b>, is the obvious efficiency hack: hold a fixed cache of the last $L$ tokens, evict the oldest as new ones arrive. Memory is flat and decoding is fast. But the paper's headline failure lives here &mdash; as soon as the earliest tokens are pushed out, perplexity spikes by orders of magnitude. Figure 1 reports window attention sitting at a perplexity around <b>5158</b> on the long-text test, versus dense at <b>5.40</b>."
+            },
+            {
+              "type": "p",
+              "html": "Strategy (c), <b>sliding window with re-computation</b>, restores quality by rebuilding the KV cache for the $L$ most recent tokens at every step, so there is never a 'stale' cache. It works, and it is a strong quality baseline (perplexity <b>5.43</b>). But re-encoding $L$ tokens every single step is quadratic in the window &mdash; this is the slow baseline StreamingLLM later beats by 22.2&times;."
+            },
+            {
+              "type": "p",
+              "html": "Strategy (d) is the contribution. StreamingLLM keeps the same cheap, constant-size cache as window attention, but reserves a handful of slots at the front for the <b>first few tokens of the whole stream</b> &mdash; the attention sinks &mdash; and never evicts them. That tiny change recovers the quality of the re-compute baseline (perplexity <b>5.40</b>) at the speed of plain window attention. The rest of the lesson explains why those four tokens matter so much."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. The Discovery",
+      "pages": [
+        {
+          "title": "Why removing the first tokens is fatal",
+          "subtitle": "The SoftMax denominator and the birth of attention sinks",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the puzzle the authors had to explain. In window attention the recent tokens &mdash; the ones that obviously matter for predicting the next word &mdash; are all still in the cache. Only the oldest tokens were dropped. Those old tokens are far away and seem semantically irrelevant. So why does dropping them detonate the model?"
+            },
+            {
+              "type": "p",
+              "html": "They visualized attention maps across layers and heads (Figure 2) and found a strikingly consistent pattern: beyond the bottom couple of layers, a <b>huge fraction of every token's attention points back at the first few tokens</b>, regardless of what those tokens actually are. The first tokens act as a magnet for attention. The authors name this the <b>attention sink</b>."
+            },
+            {
+              "type": "p",
+              "html": "Why would a model learn to do this? The cause is baked into the SoftMax that turns attention scores into weights:"
+            },
+            {
+              "type": "math",
+              "tex": "\\text{SoftMax}(x)_i = \\frac{e^{x_i}}{e^{x_1} + \\sum_{j=2}^{N} e^{x_j}}, \\qquad x_1 \\gg x_j, \\; j \\in 2, \\ldots, N"
+            },
+            {
+              "type": "p",
+              "html": "Read it term by term. $x \\in \\mathbb{R}^N$ is the vector of raw attention scores from one query token to all $N$ keys it can see; $x_i$ is the score against the $i$-th key. The output $\\text{SoftMax}(x)_i$ is the attention weight on key $i$, a number in $[0,1]$. The denominator $e^{x_1} + \\sum_{j=2}^{N} e^{x_j}$ is the normalizer that forces all $N$ weights to <b>sum to exactly 1</b>. The condition $x_1 \\gg x_j$ says the first key's score has grown much larger than the others &mdash; the model has learned to make token 1 a sink."
+            },
+            {
+              "type": "p",
+              "html": "The key insight: SoftMax weights are required to sum to one, but a token often has <i>no</i> relevant context to attend to and would prefer to attend to almost nothing. There is no 'attend to nothing' option &mdash; the leftover probability mass has to land <i>somewhere</i>. So the model dumps that unwanted mass onto a fixed, always-visible dumping ground. The first tokens are perfect for the job: under autoregressive (causal) attention, <b>every</b> later token can see them, so they are visible to all queries. The model learns to route excess attention there."
+            },
+            {
+              "type": "quote",
+              "html": "Due to the sequential nature of autoregressive language modeling, initial tokens are visible to all subsequent tokens, while later tokens are only visible to a limited set of subsequent tokens. As a result, initial tokens are more easily trained to serve as attention sinks."
+            },
+            {
+              "type": "p",
+              "html": "Now the failure makes sense. Evict the first tokens and you delete the sink. All that excess attention mass that used to drain harmlessly into token 1 now has to redistribute over the genuine context tokens, scrambling their weights. The SoftMax-Off-by-One discussion (Miller, 2023) proposes the same diagnosis from the other direction: give SoftMax a 'free' slot so it does not need a sink. StreamingLLM instead just keeps the sink the pre-trained model already built."
+            }
+          ]
+        },
+        {
+          "title": "How many sink tokens, and where to put them",
+          "subtitle": "The 'keep 4 initial tokens' rule and rolling position IDs",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "If the first tokens are the cure, the next question is purely empirical: how many do we need to keep? The authors prepend recent tokens with a varying number of <b>re-introduced initial tokens</b> and measure perplexity on Llama-2, MPT and Pythia. The result is sharp."
+            },
+            {
+              "type": "table",
+              "headers": ["Sink tokens kept", "0 (window only)", "1", "2", "4"],
+              "rows": [
+                ["Llama-2-13B perplexity", "3359.95", "11.88", "10.51", "9.59"],
+                ["MPT-7B perplexity", "460.29", "14.99", "15.00", "14.99"],
+                ["Pythia-12B perplexity", "21.62", "11.95", "12.09", "12.09"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading the table: with <b>zero</b> sinks (pure window attention) Llama-2-13B sits at a useless perplexity of 3359.95. Adding back a <b>single</b> initial token already rescues it to 11.88. Most of the recovery comes from the first token, and by <b>4 tokens</b> the perplexity is fully stabilized at 9.59 &mdash; matching the much more expensive dense/recompute baselines. Adding more than four barely helps. That is why StreamingLLM standardizes on $4$ sink tokens."
+            },
+            {
+              "type": "p",
+              "html": "There is a second, easy-to-miss detail that matters just as much: <b>which positions you assign</b>. StreamingLLM caches the sink KVs and the recent-window KVs, but it does <i>not</i> use their original positions in the stream. Position is assigned <b>within the current cache</b>, not in the original text."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, suppose the cache holds sink tokens at slots $[0,1,2,3]$ and the rolling window currently spans original tokens $[6,7,8]$. StreamingLLM does <b>not</b> encode them as positions $6,7,8$; it encodes the cached tokens with contiguous positions $[0,1,2,3,4,5,6,7,8]$ as if the gap never existed. For RoPE, it caches Keys <i>before</i> applying the rotary transform and re-applies the rotation at the assigned in-cache position each step; for ALiBi it applies the linear bias over the contiguous cache positions. This keeps the model inside the relative-position range it was trained on, which is why decoding stays stable token after token."
+            },
+            {
+              "type": "p",
+              "html": "The combination &mdash; a few permanent sink tokens at the front, a rolling recent window, and positions assigned within the cache &mdash; is the entire StreamingLLM inference recipe. No weights change. It is a pure inference-time KV-cache management trick that you can bolt onto any already-trained Transformer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The Method",
+      "pages": [
+        {
+          "title": "Pre-training with a dedicated sink token",
+          "subtitle": "An optional one-token tweak that makes streaming even cleaner",
+          "pdfPages": [6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "StreamingLLM works on off-the-shelf models with zero retraining. But the authors ask a sharper question: if attention sinks are this important, what if a model were <b>trained from the start</b> to have one clean, dedicated sink instead of accidentally co-opting whatever its first few real tokens happened to be?"
+            },
+            {
+              "type": "p",
+              "html": "Their proposal is to prepend a single <b>learnable placeholder token</b> &mdash; a dedicated 'Sink Token' &mdash; to every training example. Now the model has an explicit, content-free slot built for dumping excess attention, instead of having to spread the sink role across the first several real tokens."
+            },
+            {
+              "type": "p",
+              "html": "They test this by pre-training two 160M-parameter models from scratch, one vanilla and one with the dedicated sink token, and then comparing how many sink tokens each needs at streaming time."
+            },
+            {
+              "type": "table",
+              "headers": ["Pre-training recipe", "Sink tokens needed for stable streaming", "Streaming perplexity"],
+              "rows": [
+                ["Vanilla model", "needs several (≈ 4) initial tokens as sinks", "comparable, but messier"],
+                ["+ dedicated learnable Sink Token", "just 1 — the dedicated sink alone suffices", "comparable or slightly better"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The payoff is clean: a model pre-trained with the dedicated sink token only ever needs that <b>single</b> token at streaming time, and its zero-shot accuracy on standard benchmarks is <i>unchanged</i> from the vanilla model. So the sink token is essentially free to add and it simplifies deployment."
+            },
+            {
+              "type": "p",
+              "html": "Why does this work better? With a vanilla model, the sink behavior is smeared across several arbitrary opening tokens, so you must keep several of them. A purpose-built sink concentrates all that excess-attention mass into one designed slot &mdash; cleaner, more predictable, and it frees the genuine first tokens of the text to carry meaning instead of doubling as garbage collectors."
+            },
+            {
+              "type": "p",
+              "html": "This is a recommendation for the future, not a requirement for today. The headline StreamingLLM results all use existing public models with the 4-sink rule and no retraining &mdash; the dedicated sink token is the bonus you get if you control pre-training."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Results",
+      "pages": [
+        {
+          "title": "Streaming over 4 million tokens, 22x faster",
+          "subtitle": "Stable perplexity at extreme length, at window-attention speed",
+          "pdfPages": [3, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The headline experiment stress-tests language modeling over absurdly long streams. The authors concatenate texts and run the model across them, plotting perplexity as a function of how many tokens have streamed by. A good streaming method should keep a <b>flat</b> perplexity line out to the horizon; a broken one spikes."
+            },
+            {
+              "type": "p",
+              "html": "Across Llama-2-7B/13B/70B, Falcon, Pythia and MPT, StreamingLLM holds a <b>stable, low perplexity over more than 4 million tokens</b> (20K tokens are shown in the Figure 3 plots, and 4M+ in the long-run experiments) &mdash; far beyond any of these models' training lengths. Dense attention blows up the moment the input exceeds the cache size; window attention collapses the moment the first tokens are evicted. Only StreamingLLM and the slow re-compute baseline stay flat &mdash; and StreamingLLM matches the re-compute baseline's quality."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, on a long-text segment the four strategies land at roughly: dense <b>5.40</b>, sliding window with re-compute <b>5.43</b>, plain window attention <b>5158</b>, and StreamingLLM <b>5.40</b>. StreamingLLM is statistically tied with the expensive baselines while being orders of magnitude better than the cheap one."
+            },
+            {
+              "type": "p",
+              "html": "The efficiency story is the other half. The re-compute baseline (strategy c) gives the same quality, so the question is purely speed. Because StreamingLLM never re-encodes the window &mdash; it just appends one token and evicts one token per step &mdash; its per-token cost is constant. Measured against the sliding-window-with-recomputation baseline, StreamingLLM delivers up to a <b>22.2&times; speedup</b> in decoding latency while using a comparable, constant amount of memory."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Stability: flat perplexity past 4M tokens on Llama-2, MPT, Falcon, Pythia — no fine-tuning.",
+                "Quality: matches the dense and sliding-recompute baselines (≈ 5.40 perplexity) instead of the 5000+ of plain window attention.",
+                "Speed: up to 22.2× faster decoding than the sliding-window-with-recomputation baseline.",
+                "Memory: constant cache (4 sinks + L recent), independent of how long the stream runs."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "One honest caveat the authors stress: StreamingLLM does <b>not</b> expand the context window. The model still only conditions on the tokens currently in its cache, so it cannot recall a fact stated millions of tokens ago. The win is <i>endurance</i> &mdash; the model keeps producing fluent, correct next-token predictions forever &mdash; not <i>memory</i>. For tasks needing genuine long-range recall, you still need a longer context window; StreamingLLM and context extension are complementary."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why a four-token fix mattered so much",
+          "subtitle": "From a debugging mystery to a standard inference trick",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "StreamingLLM is a rare paper where the <b>diagnosis</b> is as valuable as the fix. The realization that SoftMax's sum-to-one constraint forces models to manufacture an attention sink out of their first tokens reframed a lot of previously mysterious behavior &mdash; the giant, content-free attention spikes on opening tokens that researchers had noticed but not explained."
+            },
+            {
+              "type": "p",
+              "html": "The practical recipe is tiny and dependency-free: keep 4 initial KV entries plus a rolling window, assign positions within the cache. No retraining, no new architecture, works on any pre-trained Transformer. That low cost is exactly why it spread fast &mdash; it was integrated into inference engines and KV-cache managers as a default option for long-running chat, and the 'attention sink' concept became standard vocabulary in efficient-inference work."
+            },
+            {
+              "type": "p",
+              "html": "It also connects cleanly to neighbors in the literature. It is a cousin of <b>SoftMax-Off-by-One</b> (Miller, 2023), which adds a free denominator slot so a model need not invent a sink at all. It contrasts with <b>length-extrapolation</b> work like ALiBi and RoPE-scaling, which try to <i>extend</i> the usable context &mdash; StreamingLLM deliberately does not, trading recall for unbounded, cheap endurance. And the dedicated-sink-token idea anticipates 'register token' lines of work where models are given explicit scratch slots to offload bookkeeping attention."
+            },
+            {
+              "type": "p",
+              "html": "The mental model worth keeping: a Transformer is a system that must spend exactly 100% of its attention every step, even when it has nothing it wants to look at. Take away its drain and the pressure has nowhere to go. StreamingLLM's whole contribution is noticing that drain, naming it, and refusing to throw it away &mdash; four little tokens that let a model talk forever."
+            },
+            {
+              "type": "quote",
+              "html": "Once a streaming LLM has been deployed, the attention sink tokens must be preserved; dropping them is what causes the collapse, and keeping them is the entire fix."
+            },
+            {
+              "type": "p",
+              "html": "The work was done by Guangxuan Xiao (MIT) during an internship at Meta AI, with Yuandong Tian, Beidi Chen, Song Han and Mike Lewis; code and datasets are public at github.com/mit-han-lab/streaming-llm. It became one of the most-cited efficiency papers of its cycle precisely because the fix is small enough to read, understand, and ship in an afternoon."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

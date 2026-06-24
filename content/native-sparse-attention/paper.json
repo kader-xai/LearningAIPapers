@@ -1,0 +1,334 @@
+{
+  "title": "Native Sparse Attention: Hardware-Aligned, Natively Trainable Sparse Attention",
+  "authors": "Yuan, et al. (DeepSeek)",
+  "year": "2025",
+  "venue": "arXiv:2502.11089",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The long-context bottleneck nobody could train through",
+          "subtitle": "Why sparse attention had to become native",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Modern language models want to read entire books, codebases, and multi-turn conversations at once. But standard <b>attention</b> compares every token to every other token, so its cost grows as the <i>square</i> of the sequence length. At 64,000 tokens, attention alone can eat the majority of the compute in a forward pass. This page answers one question: if everyone agrees attention is mostly wasted effort, why is fast sparse attention still so hard?"
+            },
+            {
+              "type": "p",
+              "html": "The intuition behind <b>sparse attention</b> is simple and well known: for any given query, only a handful of past tokens actually matter. If a token is reading the word \"it,\" the few nouns it refers back to carry almost all the signal; the other 63,990 tokens are noise. So why compute attention over all of them? The trouble is that previous sparse methods cheated on a deadline: they ran the full, dense model during <i>training</i> and only turned on sparsity at <i>inference</i> time."
+            },
+            {
+              "type": "p",
+              "html": "<b>Native Sparse Attention (NSA)</b> from DeepSeek makes two bets that the abstract states plainly. First, sparsity must be <i>natively trainable</i> &mdash; the model learns <i>which</i> tokens to keep, end-to-end, with gradients flowing through the selection itself. Second, the sparse pattern must be <i>hardware-aligned</i> &mdash; designed so that modern GPUs (and their Tensor Cores) actually run it fast, not just in theory but in measured wall-clock time."
+            },
+            {
+              "type": "quote",
+              "html": "We present NSA, a Natively trainable Sparse Attention mechanism that integrates algorithmic innovations with hardware-aligned optimizations to achieve efficient long-context modeling."
+            },
+            {
+              "type": "p",
+              "html": "The headline result is the part people did not expect: NSA is not a quality-for-speed trade. Pretrained from scratch on a 27B-parameter model, NSA <b>matches or exceeds</b> full attention on general benchmarks, long-context tasks, and instruction-based reasoning &mdash; while delivering up to <b>11.6&times; faster decoding</b> and <b>9&times; faster forward passes</b> at 64k context. Sparsity, done natively, turned out to be a free lunch."
+            },
+            {
+              "type": "p",
+              "html": "Why this matters: NSA was released by DeepSeek in February 2025, the same lab behind DeepSeek-V3 and the R1 reasoning model. It sits at the intersection of two trends that defined that era &mdash; very long context windows and reasoning models that generate enormous chains of thought &mdash; both of which make the quadratic attention bill the dominant cost. NSA is a direct attack on that bill."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Problem",
+      "pages": [
+        {
+          "title": "Two illusions: the training gap and the speedup that wasn't",
+          "subtitle": "Why earlier sparse attention failed in practice",
+          "pdfPages": [2, 3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before NSA, dozens of sparse-attention methods existed. The paper argues they shared two fatal flaws &mdash; both <i>illusions</i> that look fine on a slide and collapse in a real training run. Understanding these two failures is the key to understanding why NSA is built the way it is."
+            },
+            {
+              "type": "h2",
+              "text": "Illusion 1: the phantom speedup"
+            },
+            {
+              "type": "p",
+              "html": "Many methods report theoretical FLOP reductions but no real speedup. The reason is that GPUs do not run sparse patterns the way the math imagines. The paper points to two mismatches. <b>Phase-restricted sparsity</b>: a method like H2O accelerates only autoregressive decoding while leaving the prefill (reading the prompt) and training phases dense &mdash; so a workload dominated by prefill sees little gain. <b>Hardware-incompatible patterns</b>: methods that select scattered, irregular tokens (for example, fine-grained per-token KV selection) destroy the contiguous memory access that modern attention kernels like FlashAttention depend on."
+            },
+            {
+              "type": "p",
+              "html": "An analogy: imagine a warehouse where it is fast to grab a whole shelf at once but slow to grab one random box at a time. A method that picks 256 boxes scattered across 256 shelves \"reads less\" on paper but takes longer than grabbing four full shelves of 64 boxes each. GPUs strongly prefer <b>contiguous, blockwise</b> memory loads; scattered sparsity throws that advantage away."
+            },
+            {
+              "type": "h2",
+              "text": "Illusion 2: the training gap"
+            },
+            {
+              "type": "p",
+              "html": "The deeper problem is that most sparse methods are <b>applied only at inference</b>, bolted onto a model that was trained with full, dense attention. The paper calls these post-hoc methods and argues they leave performance on the table for two reasons."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Non-trainable components break gradient flow.</b> Discrete operations like top-k token selection are not differentiable, so the model can never learn to make better selections &mdash; the heuristic is frozen.",
+                "<b>The model never adapts.</b> A network trained on full attention develops attention pathways that assume every token is visible. Forcing sparsity afterward fights against those learned pathways instead of letting the model build sparse-friendly ones from the start."
+              ]
+            },
+            {
+              "type": "quote",
+              "html": "Our analysis reveals that approaches with sufficient sparsity often fail to achieve genuine speedups, and methods that achieve speedups frequently lack trainable components &mdash; both limiting their practical impact."
+            },
+            {
+              "type": "p",
+              "html": "NSA's whole design follows from refusing both illusions at once: build a sparse pattern the GPU loves (blockwise, contiguous) <i>and</i> make every part of it differentiable so the model trains with sparsity from token one. The next pages show how it pulls off both."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Architecture",
+      "pages": [
+        {
+          "title": "Three branches: compress, select, and slide",
+          "subtitle": "The core idea of NSA",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is the central insight. For any query, the relevant context lives at three different scales: a <i>coarse</i> sense of the whole history, a <i>few precise</i> chunks that matter most, and the <i>immediate</i> recent tokens. NSA builds one branch for each scale, runs them in parallel, and lets the model learn how to blend them. This is the heart of the paper."
+            },
+            {
+              "type": "p",
+              "html": "Concretely, for query token $\\mathbf{q}_t$ NSA replaces the original keys and values $\\{\\mathbf{k}_{:t}, \\mathbf{v}_{:t}\\}$ with three <i>remapped</i> sets &mdash; compressed, selected, and sliding-window &mdash; and combines their attention outputs with learned gates."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{o}_t^* = \\sum_{c \\in \\{\\text{cmp}, \\text{slc}, \\text{win}\\}} g_t^c \\cdot \\text{Attn}\\left(\\mathbf{q}_t, \\tilde{K}_t^c, \\tilde{V}_t^c\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading this term by term: $\\mathbf{o}_t^*$ is the final attention output for the token at position $t$, a vector of size $d$ (the head dimension). The sum runs over the three branches $c$ &mdash; <code>cmp</code> (compression), <code>slc</code> (selection), and <code>win</code> (sliding window). For each branch, $\\tilde{K}_t^c$ and $\\tilde{V}_t^c$ are that branch's remapped keys and values, and $\\text{Attn}$ is ordinary scaled-dot-product attention restricted to them. The scalar $g_t^c \\in [0,1]$ is a <b>learned gate</b> for branch $c$ at position $t$, produced by a small MLP from $\\mathbf{q}_t$ and squashed by a sigmoid &mdash; it is how the model learns how much to trust each scale."
+            },
+            {
+              "type": "h2",
+              "text": "Branch 1 — Compression (the coarse summary)"
+            },
+            {
+              "type": "p",
+              "html": "The first branch squeezes blocks of consecutive keys/values into single summary vectors, giving the query a cheap, low-resolution view of the <i>entire</i> history. Each block of length $l$ is mapped to one compressed token, and consecutive blocks slide by a stride $d$."
+            },
+            {
+              "type": "math",
+              "tex": "\\tilde{K}_t^{\\text{cmp}} = f_K^{\\text{cmp}}(\\mathbf{k}_{:t}) = \\left\\{ \\varphi\\!\\left( \\mathbf{k}_{id+1 : id+l} \\right) \\;\\Big|\\; 0 \\le i \\le \\left\\lfloor \\tfrac{t-l}{d} \\right\\rfloor \\right\\}"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $\\tilde{K}_t^{\\text{cmp}}$ is the set of compressed keys available at position $t$. The function $\\varphi$ is a learnable MLP (with positional encoding) that maps a whole block of $l$ keys into one summary vector of size $d$. The block length is $l$ (the paper uses $l=32$) and the sliding stride is $d$ (the paper uses $d=16$, so blocks overlap, smoothing the summary). The index $i$ runs over $\\lfloor (t-l)/d \\rfloor + 1$ blocks. Values are compressed the same way. This branch is cheap because it attends to roughly $t/d$ summaries instead of $t$ raw tokens."
+            },
+            {
+              "type": "p",
+              "html": "Why compression alone is not enough: averaging a block into one vector blurs fine detail. A specific fact buried in token 4,012 gets smeared together with its neighbors. That is exactly the job of the second branch."
+            }
+          ]
+        },
+        {
+          "title": "Selection: keeping the few blocks that matter — differentiably",
+          "subtitle": "The branch that makes sparsity trainable",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The selection branch is where NSA earns the word \"native.\" It picks a small number of <b>fine-grained blocks</b> of raw keys/values to attend to at full resolution &mdash; and crucially, it picks them in a way the model can <i>learn</i> through gradient descent. The elegant trick: the importance scores for selection are read for free out of the compression branch's attention."
+            },
+            {
+              "type": "p",
+              "html": "The intuition: the compression branch already computed, as a side effect, how much the query attends to each coarse block. A block whose <i>summary</i> got a high attention weight probably contains the tokens worth looking at in detail. So NSA reuses those softmax weights as block-importance scores &mdash; no extra scoring network needed."
+            },
+            {
+              "type": "math",
+              "tex": "\\mathbf{p}_t^{\\text{cmp}} = \\text{Softmax}\\!\\left( \\mathbf{q}_t^\\top \\tilde{K}_t^{\\text{cmp}} \\right)"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\mathbf{p}_t^{\\text{cmp}}$ is a vector of attention probabilities over the compressed blocks for query $\\mathbf{q}_t$; entry $j$ says how much the query attended to compressed block $j$. Because the compression blocks and the selection blocks use related geometry, these probabilities can be re-aggregated into importance scores $\\mathbf{p}_t^{\\text{slc}}$ over the (larger) selection blocks &mdash; with a small summation when the block sizes differ. The model never trains a separate selector; it reuses signal it already had."
+            },
+            {
+              "type": "p",
+              "html": "From those scores NSA keeps the <b>top-$n$</b> selection blocks and gathers their raw, uncompressed keys/values:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{I}_t = \\{\\, i \\;\\mid\\; \\text{rank}\\big(\\mathbf{p}_t^{\\text{slc}}[i]\\big) \\le n \\,\\}, \\qquad \\tilde{K}_t^{\\text{slc}} = \\big\\{\\, \\mathbf{k}_{il'+1 : (i+1)l'} \\;\\mid\\; i \\in \\mathcal{I}_t \\,\\big\\}"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $\\mathcal{I}_t$ is the set of indices of the chosen blocks &mdash; the ones whose importance score $\\mathbf{p}_t^{\\text{slc}}[i]$ ranks in the top $n$ (the paper uses block size $l'=64$ and keeps $n=16$ blocks, of which a few are always-included \"initial\" and local blocks). $\\tilde{K}_t^{\\text{slc}}$ then collects the full $l'$ raw keys from each selected block. Because selection happens at the granularity of whole contiguous blocks, the resulting memory loads are <b>contiguous</b> &mdash; this is the hardware-alignment payoff, designed in from the start."
+            },
+            {
+              "type": "h2",
+              "text": "Branch 3 — Sliding window (the recent past)"
+            },
+            {
+              "type": "p",
+              "html": "Local context is overwhelmingly important &mdash; the previous few hundred tokens usually dominate the next-token prediction. If the compression and selection branches had to also learn local patterns, those strong local gradients would swamp everything and the model would never learn to use the long-range branches. So NSA gives recent tokens their own dedicated branch: a plain sliding window $\\tilde{K}_t^{\\text{win}} = \\mathbf{k}_{t-w+1:t}$ over the last $w$ tokens (the paper uses $w=512$). This isolates the easy local signal so the harder long-range branches can learn their own jobs cleanly."
+            },
+            {
+              "type": "p",
+              "html": "Why three branches and not one clever heuristic: each branch is differentiable end-to-end, so backprop shapes all of them &mdash; the compression MLP $\\varphi$, the gates $g_t^c$, and (via the reused scores) the selection &mdash; jointly with the rest of the network. The model does not inherit a sparse pattern; it <i>grows</i> one."
+            }
+          ]
+        },
+        {
+          "title": "Kernel design: making the GPU actually go fast",
+          "subtitle": "The hardware-aligned half of the name",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "A clever algorithm that the GPU runs slowly is worthless &mdash; that was Illusion 1. So NSA ships with a custom attention kernel (written in Triton) co-designed with the selection branch. This page is about the engineering that turns the theoretical FLOP savings into real wall-clock speedups."
+            },
+            {
+              "type": "p",
+              "html": "The starting point is a modern fact about attention hardware: NSA's models use <b>Grouped-Query Attention (GQA)</b>, where many query heads share one set of keys/values. FlashAttention's standard kernel loads KV blocks into fast on-chip SRAM and reuses them across the query positions in a block. NSA's kernel flips the loop nest to exploit GQA: instead of grouping by query position, it groups by <i>head</i>."
+            },
+            {
+              "type": "h2",
+              "text": "Group-centric data loading"
+            },
+            {
+              "type": "p",
+              "html": "For each query position, NSA loads <i>all</i> the query heads in one GQA group at once &mdash; together with the list of selected block indices $\\mathcal{I}_t$ those heads share. Because heads in a group share the same KV, they also share the same selected blocks, so one KV load serves the whole group. The kernel then fetches only the selected KV blocks into SRAM in a single contiguous sweep, computes attention, and moves on."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Group-Centric Data Loading:</b> for each inner-loop step, load all heads of a GQA group plus their shared selected-block indices, so KV is fetched once per group, not once per head.",
+                "<b>Shared KV Fetching:</b> load the selected (contiguous) key/value blocks into SRAM together, eliminating the redundant, scattered memory traffic that kills naive sparse kernels.",
+                "<b>Outer-loop scheduling on the grid:</b> keep the query/group loop on Triton's grid scheduler so the work balances evenly across GPU streaming multiprocessors."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why this is the linchpin: a query may pick 16 different blocks, but those blocks are each 64 <i>contiguous</i> tokens, so each load is a clean burst the memory system loves. And because all heads in the group share one KV load, the kernel reaches high arithmetic intensity &mdash; it does enough math per byte fetched to keep the Tensor Cores busy. This is precisely the property scattered per-token selection can never have."
+            },
+            {
+              "type": "p",
+              "html": "The reward, measured on an A100 at 64k context, is large in <i>both</i> directions of training and inference: the forward pass runs up to <b>9.0&times;</b> faster and the backward pass up to <b>6.0&times;</b> faster than FlashAttention-2, because NSA accelerates training too &mdash; not just decoding. The next page turns to whether all this speed costs any accuracy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Faster and better — the numbers",
+          "subtitle": "Quality, long-context, and the speedups",
+          "pdfPages": [10, 11, 12, 13],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The make-or-break question for any sparse method is: how much accuracy did you give up for the speed? NSA's surprising answer is <i>none &mdash; and often it gains</i>. The authors pretrained a 27B-parameter MoE model (3B active parameters) on 270B tokens, comparing an NSA model against an identical full-attention model trained the same way."
+            },
+            {
+              "type": "h2",
+              "text": "General benchmarks: a sparse model that wins"
+            },
+            {
+              "type": "p",
+              "html": "Across nine general benchmarks spanning knowledge (MMLU, MMLU-PRO, CMMLU), reasoning (BBH, GSM8K, DROP), and coding (MBPP, HumanEval), NSA matched or beat full attention. On the average across all tasks, NSA scored <b>0.456</b> versus full attention's <b>0.443</b>, outperforming on 7 of the 9 individual metrics."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Avg (9 benchmarks)", "DROP (reasoning)", "GSM8K"],
+              "rows": [
+                ["Full Attention", "0.443", "0.612", "0.529"],
+                ["NSA", "0.456", "0.622", "0.520"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Why a sparse model would <i>beat</i> dense: the authors argue that pretraining with sparsity acts like a useful inductive bias &mdash; it forces the model to focus on the highest-signal tokens and filters out noise from irrelevant context, which especially helps on reasoning-heavy tasks like DROP and GSM8K."
+            },
+            {
+              "type": "h2",
+              "text": "Long context: perfect needle retrieval"
+            },
+            {
+              "type": "p",
+              "html": "On the <b>needle-in-a-haystack</b> test at 64k context, NSA achieved <b>perfect retrieval accuracy across all positions</b> in the context window. On the LongBench suite it averaged <b>0.469</b>, beating full attention (0.437) and every sparse baseline tested (H2O, InfLLM, Quest, Exact-Top). The hierarchical design &mdash; coarse compression to scan plus fine selection to zoom in &mdash; is what lets it both <i>find</i> the needle and <i>read</i> it precisely."
+            },
+            {
+              "type": "p",
+              "html": "After supervised fine-tuning, NSA also transferred to long chain-of-thought reasoning: distilled from DeepSeek-R1 and evaluated on the AIME 2024 math competition, the NSA-R model scored <b>0.121</b> at 16k generation length versus <b>0.046</b> for full-attention-R &mdash; better reasoning at long generation, not just better retrieval."
+            },
+            {
+              "type": "h2",
+              "text": "Speed: where it all pays off"
+            },
+            {
+              "type": "table",
+              "headers": ["Context length", "Decoding speedup vs Full Attn", "Forward (training)", "Backward (training)"],
+              "rows": [
+                ["8k", "~1.2x", "—", "—"],
+                ["32k", "~5x", "—", "—"],
+                ["64k", "11.6x", "9.0x", "6.0x"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The speedup <i>grows</i> with context length, which is exactly what you want: the longer the sequence, the more tokens NSA skips, and the bigger the win. Decoding is memory-bound &mdash; it is dominated by loading the KV cache &mdash; so NSA's decoding gain (11.6&times; at 64k) comes from loading far fewer KV entries per step, roughly the ratio of total tokens to the few hundred NSA actually attends to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why NSA mattered",
+          "subtitle": "From a free lunch to a building block",
+          "pdfPages": [1, 13, 14],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "NSA's lasting contribution is a proof of concept that the field had been waiting for: <b>sparsity does not have to cost quality</b>. By making the sparse pattern both trainable end-to-end and aligned to GPU memory hardware, NSA removed the two excuses that had kept sparse attention a niche, inference-only trick."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Native, not bolted-on.</b> Training with sparsity from scratch closed the train/inference gap that crippled post-hoc methods &mdash; and even acted as a beneficial inductive bias.",
+                "<b>Hardware-first algorithm design.</b> NSA is a case study in co-designing the algorithm (blockwise selection) and the kernel (group-centric GQA loading) together, so the FLOP savings become real wall-clock savings.",
+                "<b>Symmetric speed.</b> Because it accelerates the forward and backward passes, not just decoding, NSA makes long-context models cheaper to <i>train</i>, not only to serve."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Context and lineage: NSA came from DeepSeek in early 2025, alongside their DeepSeek-V3 and R1 reasoning systems. It descends directly from the FlashAttention line of IO-aware kernel work and the Grouped-Query Attention line of KV-cache reduction &mdash; NSA combines both ideas and adds learned, blockwise selection on top. Its sibling in spirit is Mixture-of-Experts: where MoE makes the feed-forward layers sparse and learned, NSA does the analogous thing for attention."
+            },
+            {
+              "type": "p",
+              "html": "The release landed at the exact moment reasoning models began generating tens of thousands of chain-of-thought tokens per answer &mdash; the workload where quadratic attention hurts most. The AIME result (0.121 vs 0.046 at 16k) hints at the bigger story: cheaper attention is not just an efficiency win, it unlocks longer reasoning that was previously too expensive to run."
+            },
+            {
+              "type": "quote",
+              "html": "NSA achieves perfect retrieval accuracy across all positions in 64k-context needle-in-a-haystack evaluation through its hierarchical sparse attention design."
+            },
+            {
+              "type": "p",
+              "html": "The one-sentence takeaway: NSA showed that you can read a hundred-thousand-token context an order of magnitude faster <i>and</i> get a slightly better model &mdash; if you stop treating sparsity as an afterthought and instead train it natively, blockwise, and in lockstep with the GPU."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

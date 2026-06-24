@@ -1,0 +1,354 @@
+{
+  "title": "RWKV: Reinventing RNNs for the Transformer Era",
+  "authors": "Peng, et al.",
+  "year": "2023",
+  "venue": "arXiv:2305.13048",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Two architectures, two curses",
+          "subtitle": "Why we have been forced to choose between parallel training and cheap inference",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Every modern sequence model lives under one of two curses. <b>Transformers</b> train beautifully in parallel — every position attends to every other position at once — but at inference time the cost of generating one new token grows with how much text already exists. <b>RNNs</b> are the mirror image: they generate each token in a fixed amount of work no matter how long the history, but they are stubbornly <i>sequential</i> to train, so they never scaled to the billions of parameters that made Transformers magical."
+            },
+            {
+              "type": "p",
+              "html": "RWKV (pronounced <i>RwaKuv</i>, from its four core signals R, W, K, V) is the paper's answer: an architecture you can <b>train like a Transformer</b> (fully parallel over the sequence) but <b>run like an RNN</b> (constant work and constant memory per token). It is the first time anyone scaled an RNN to <b>14 billion parameters</b> — the largest dense RNN ever trained at the time — and got it to match similarly-sized Transformers."
+            },
+            {
+              "type": "quote",
+              "html": "We propose a novel model architecture, Receptance Weighted Key Value (RWKV), that combines the efficient parallelizable training of Transformers with the efficient inference of RNNs."
+            },
+            {
+              "type": "h2",
+              "text": "A concrete picture of the cost asymmetry"
+            },
+            {
+              "type": "p",
+              "html": "Suppose you have already generated a 4,000-token essay and want the next word. A Transformer must, for that single word, look back at all 4,000 previous tokens — its self-attention cost grows linearly in the context just to take one step, and the memory it must keep (the KV cache) grows with the text too. An RNN, by contrast, has compressed everything it has seen into a small fixed-size <i>state</i>; producing the next word costs the same whether the history is 40 tokens or 40,000. RWKV keeps that RNN-style constant cost while removing the RNN's training penalty."
+            },
+            {
+              "type": "p",
+              "html": "The headline trade is summarized by the paper's complexity table. For a sequence of length $T$ and model width $d$, attention is quadratic in $T$; RWKV is linear."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Time (per sequence)", "Inference memory"],
+              "rows": [
+                ["Transformer", "$O(T^2 d)$", "$O(T)$ KV cache, grows"],
+                ["RWKV", "$O(T d)$", "$O(1)$ state, constant"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The trick that makes this possible is replacing dot-product attention with a <b>linear attention</b> mechanism called <code>WKV</code>, which has the rare property of being expressible <i>both</i> as a parallel formula over the whole sequence (for training) <i>and</i> as a step-by-step recurrence (for inference). The rest of this lesson unpacks how."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Big Idea",
+      "pages": [
+        {
+          "title": "The same computation, two faces",
+          "subtitle": "Why a model that is secretly an RNN can still be trained in parallel",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The whole paper hinges on one insight: <b>if your recurrence is linear, you can unroll it into a parallel formula.</b> A vanilla RNN like an LSTM has a nonlinearity wrapped around its hidden state at every step (a tanh, a gate that depends on the previous hidden state), so step $t$ truly cannot be computed until step $t-1$ is done. RWKV is engineered so that the state update is a <i>weighted sum</i> — no nonlinearity tangling consecutive states together — which means the whole sum can be computed at once during training, then replayed one step at a time during inference."
+            },
+            {
+              "type": "h2",
+              "text": "An analogy: a decaying running average"
+            },
+            {
+              "type": "p",
+              "html": "Imagine you are tracking the 'mood' of a conversation. Each new message nudges your estimate, but older messages should count less. You could compute today's mood as a decaying weighted average of every past message — that is a single formula over the whole history (parallel). Or you could keep a single 'mood so far' number and just blend in each new message as it arrives (recurrent). <b>Both give the identical answer</b> because the operation is a weighted sum. RWKV's attention is exactly this kind of decaying average, with the weights learned per channel."
+            },
+            {
+              "type": "p",
+              "html": "RWKV stacks <b>residual blocks</b>, each containing a <b>time-mixing</b> sub-block (the recurrent, sequence-aware part, RWKV's analogue of attention) and a <b>channel-mixing</b> sub-block (a position-wise feed-forward analogue). Both are built from four learned projections of the input: <b>R</b>eceptance, <b>W</b>eight (the time-decay), <b>K</b>ey, and <b>V</b>alue."
+            },
+            {
+              "type": "h2",
+              "text": "Step 1: token shift, the cheapest possible recurrence"
+            },
+            {
+              "type": "p",
+              "html": "Before any projection, RWKV mixes each token's embedding with the <i>previous</i> token's embedding using a learned per-channel blend $\\mu$. This is the simplest way to give the model a one-step memory for free, and the projections R, K, V each get their own $\\mu$."
+            },
+            {
+              "type": "math",
+              "tex": "r_t = W_r \\cdot (\\mu_r \\odot x_t + (1 - \\mu_r) \\odot x_{t-1})"
+            },
+            {
+              "type": "math",
+              "tex": "k_t = W_k \\cdot (\\mu_k \\odot x_t + (1 - \\mu_k) \\odot x_{t-1})"
+            },
+            {
+              "type": "math",
+              "tex": "v_t = W_v \\cdot (\\mu_v \\odot x_t + (1 - \\mu_v) \\odot x_{t-1})"
+            },
+            {
+              "type": "p",
+              "html": "Reading these term by term: $x_t \\in \\mathbb{R}^{d}$ is the input vector at position $t$ and $x_{t-1}$ is the position just before it (both of width $d$, the model dimension). The symbol $\\odot$ is elementwise (per-channel) multiplication. The vector $\\mu_r \\in \\mathbb{R}^{d}$ is a <i>learned</i> mixing ratio between 0 and 1 for each channel; where $\\mu$ is near 1 the channel uses mostly the current token, near 0 it uses mostly the previous token. $W_r, W_k, W_v \\in \\mathbb{R}^{d \\times d}$ are the learned projection matrices. The outputs $r_t, k_t, v_t \\in \\mathbb{R}^{d}$ are the receptance, key, and value at position $t$."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works:</b> token shift lets each channel decide whether it is a 'now' feature or a 'just before' feature, giving every layer a tiny convolutional window into the past at essentially zero cost — no extra parameters beyond the $\\mu$ vectors. Stacked across many layers, these one-step shifts compose into a surprisingly long effective receptive field."
+            }
+          ]
+        },
+        {
+          "title": "WKV: linear attention with a memory dial",
+          "subtitle": "The operator that replaces softmax dot-product attention",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now the heart of the model. Classic attention asks: <i>how much should token $t$ attend to every earlier token $i$?</i> and answers with a softmax over dot products — powerful but quadratic. RWKV replaces this with <b>WKV</b>, which says: <i>blend all earlier values together, weighting each by how relevant its key is AND how long ago it happened.</i> The 'how long ago' part is a learned exponential decay, which is what turns the whole thing into a recurrence."
+            },
+            {
+              "type": "h2",
+              "text": "A worked mini-example"
+            },
+            {
+              "type": "p",
+              "html": "Say a channel has decay $w$ such that influence halves every step, and we are at position $t = 3$ with keys all equal (so weighting is purely by recency). The values $v_0, v_1, v_2$ from the past get weights proportional to $e^{-2w}, e^{-w}, 1$ — recent tokens dominate, ancient tokens fade. The current token $v_3$ gets a <i>special</i> boost $u$ so the model never ignores 'right now'. That separation of 'history decays' from 'now is special' is the key design detail."
+            },
+            {
+              "type": "math",
+              "tex": "wkv_t = \\frac{\\sum_{i=1}^{t-1} e^{-(t-1-i)\\,w + k_i}\\, v_i \\;+\\; e^{\\,u + k_t}\\, v_t}{\\sum_{i=1}^{t-1} e^{-(t-1-i)\\,w + k_i} \\;+\\; e^{\\,u + k_t}}"
+            },
+            {
+              "type": "p",
+              "html": "Term by term: $wkv_t \\in \\mathbb{R}^{d}$ is the attention output at position $t$. The sums run over all earlier positions $i$. $k_i, v_i \\in \\mathbb{R}^{d}$ are the key and value from position $i$ (everything is per-channel, so read each symbol as one channel's scalar). The factor $e^{-(t-1-i)\\,w}$ is the <b>time decay</b>: $w \\in \\mathbb{R}^{d}$ is a learned per-channel decay rate, and $(t-1-i)$ is how many steps ago position $i$ was — so older tokens are exponentially discounted. $e^{k_i}$ weights by key strength (this plays the role of attention scores). The separate term $e^{\\,u + k_t}\\,v_t$ handles the <i>current</i> token, where $u \\in \\mathbb{R}^{d}$ is a learned <b>bonus</b> that rewards attending to the present moment. The denominator normalizes, exactly like softmax does, so $wkv_t$ is a convex blend of values."
+            },
+            {
+              "type": "p",
+              "html": "Compare this to ordinary attention $\\text{Attn}(Q,K,V)_t = \\frac{\\sum_i e^{q_t^\\top k_i} v_i}{\\sum_i e^{q_t^\\top k_i}}$. RWKV drops the <i>query-key interaction</i> $q_t^\\top k_i$ — which is what makes attention quadratic — and replaces it with $k_i$ alone plus the position-only decay $-(t-1-i)w$. Removing the pairwise term is precisely the sacrifice that buys linear cost: each position no longer needs to compare itself against every other."
+            },
+            {
+              "type": "h2",
+              "text": "The recurrent form: the same WKV, computed in O(1) per step"
+            },
+            {
+              "type": "p",
+              "html": "Because the numerator and denominator are both decaying sums, you never need to re-add the whole history. You keep two running accumulators, a numerator state $a$ and a denominator state $b$, and update them with the decay each step:"
+            },
+            {
+              "type": "math",
+              "tex": "a_t = e^{-w}\\, a_{t-1} + e^{k_t}\\, v_t, \\qquad b_t = e^{-w}\\, b_{t-1} + e^{k_t}"
+            },
+            {
+              "type": "p",
+              "html": "Here $a_t, b_t \\in \\mathbb{R}^{d}$ are the state carried from token to token. Each step multiplies the old state by the decay $e^{-w}$ (forgetting) and adds the new contribution (remembering) — constant work, constant memory, no dependence on $t$. The output is then $wkv_t = (a_{t-1} + e^{u+k_t} v_t)/(b_{t-1} + e^{u+k_t})$, applying the present-moment bonus $u$ at read-out. <b>This is the punchline of the whole paper:</b> the parallel formula above and this recurrence are mathematically identical, so you train with one and deploy with the other. (In practice the implementation tracks the running maximum exponent for numerical stability, but the idea is exactly this.)"
+            },
+            {
+              "type": "p",
+              "html": "<b>What breaks without the decay being linear:</b> if you inserted any nonlinearity between $a_{t-1}$ and $a_t$ (as an LSTM does), this clean carry-forward would collapse and you would be back to a strictly sequential, untrainable-in-parallel model. The exponential decay is special because exponentials turn 'multiply by the decay every step' into 'the closed-form sum above' — the bridge between the two faces."
+            }
+          ]
+        },
+        {
+          "title": "Gating, channel mixing, and the full block",
+          "subtitle": "How receptance controls the flow and how the FFN analogue works",
+          "pdfPages": [4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "WKV decides <i>what</i> to read from the past. But the model also needs to decide <i>whether</i> to let that information through at each channel — a learned valve. That valve is the <b>R</b> in RWKV: the <b>receptance</b>. It is squashed by a sigmoid into a 0-to-1 gate and multiplied into the WKV output."
+            },
+            {
+              "type": "math",
+              "tex": "o_t = W_o \\cdot \\big(\\sigma(r_t) \\odot wkv_t\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $\\sigma(\\cdot)$ is the sigmoid, mapping each channel of $r_t \\in \\mathbb{R}^{d}$ to a gate in $(0,1)$ — the model's learned 'how receptive am I to this signal right now?' knob. $\\odot$ multiplies that gate elementwise into the attention output $wkv_t \\in \\mathbb{R}^{d}$, so a channel with receptance near 0 suppresses incoming information and one near 1 passes it through. $W_o \\in \\mathbb{R}^{d \\times d}$ is the output projection and $o_t \\in \\mathbb{R}^{d}$ is the time-mixing block's output, added back to the residual stream."
+            },
+            {
+              "type": "h2",
+              "text": "Channel mixing: the feed-forward analogue, also gated"
+            },
+            {
+              "type": "p",
+              "html": "Where the Transformer block follows attention with a position-wise feed-forward network, RWKV follows time-mixing with <b>channel mixing</b>. It again token-shifts the input, projects to a key and a receptance, applies a squared-ReLU nonlinearity to the key, and gates the result with the receptance:"
+            },
+            {
+              "type": "math",
+              "tex": "r'_t = W_r \\cdot (\\mu'_r \\odot x_t + (1-\\mu'_r) \\odot x_{t-1})"
+            },
+            {
+              "type": "math",
+              "tex": "o'_t = \\sigma(r'_t) \\odot \\big(W_v \\cdot \\max(W_k \\cdot x'_t,\\, 0)^2\\big)"
+            },
+            {
+              "type": "p",
+              "html": "Here $x'_t$ is the token-shifted input for the channel-mixing block, $\\max(\\cdot,0)^2$ is the squared-ReLU (a ReLU whose output is squared, giving a smoother, stronger nonlinearity), and $\\sigma(r'_t) \\in (0,1)^d$ again gates the output channel by channel. $W_k, W_v$ here are this block's own projections — typically $W_k$ projects up to a larger hidden width and $W_v$ projects back down, like an FFN. The output $o'_t \\in \\mathbb{R}^{d}$ rejoins the residual stream."
+            },
+            {
+              "type": "h2",
+              "text": "Why receptance gating instead of plain attention"
+            },
+            {
+              "type": "p",
+              "html": "The sigmoid receptance is the architecture's pressure valve. Because WKV is a soft running average that <i>always</i> mixes in the past, without a gate every channel would be forced to absorb history whether useful or not. The receptance lets each channel learn to be selectively forgetful — effectively a per-channel, per-token attention on/off switch. The authors trace the name and the gating idea back to the <i>Attention Free Transformer</i> (AFT, Zhai et al., 2021), which RWKV generalizes: AFT used a single position-decay matrix; RWKV makes the decay a learned per-channel <i>vector</i> $w$ plus the present-moment bonus $u$, which is what gives it the clean recurrent form."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Training at Scale",
+      "pages": [
+        {
+          "title": "Scaling an RNN to 14 billion parameters",
+          "subtitle": "The recipe, the data, and the engineering that made it train",
+          "pdfPages": [5],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Knowing the architecture is one thing; getting an RNN to train stably at Transformer scale is another. The paper trains a family of RWKV models from 169M up to <b>14B parameters</b> on <b>the Pile</b> (a roughly 825GB open-source corpus), making the 14B model the <i>largest dense RNN trained to date</i> at publication."
+            },
+            {
+              "type": "p",
+              "html": "The models share a uniform stack of identical residual blocks (each with the time-mixing + channel-mixing pair from the previous pages). The architecture is intentionally regular so that depth and width scale cleanly, the same property that let Transformers ride scaling laws."
+            },
+            {
+              "type": "table",
+              "headers": ["Hidden dim $d$", "Layers", "Parameters"],
+              "rows": [
+                ["768", "12", "169M"],
+                ["2048", "24", "1.5B"],
+                ["2560", "32", "3B"],
+                ["4096", "32", "7B"],
+                ["5120", "40", "14B"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Custom CUDA kernel.</b> The WKV recurrence is sequential along time, which a naive implementation would run slowly. The authors write a dedicated CUDA kernel for WKV so that the time-mixing operation is fast on GPU during both the parallel (training) and recurrent (inference) passes. This is the engineering that turns the math's elegance into actual throughput."
+            },
+            {
+              "type": "h2",
+              "text": "The two stability tricks that mattered"
+            },
+            {
+              "type": "p",
+              "html": "Scaling deep RNNs exposed numerical landmines that the paper fixes with small but essential interventions:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Custom initialization</b> that keeps the residual stream well-conditioned from step one, so early training does not blow up — the model starts near an identity-like map and learns away from it.",
+                "<b>Small embedding init plus an extra LayerNorm right after the embedding</b>, which the authors found accelerates convergence in the first phase of training and lets the model escape the poorly-conditioned initial embedding regime quickly.",
+                "<b>Running-maximum rescaling inside the WKV kernel</b>: because $wkv_t$ sums exponentials, the kernel tracks the largest exponent seen and subtracts it (the log-sum-exp trick), preventing overflow when keys or decays grow large."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why these are not optional:</b> without the embedding LayerNorm and careful init, the authors report the deep RWKV stack trains slowly or diverges; the WKV rescaling is what keeps the exponential sums finite at fp16. These are the kind of unglamorous details that decide whether a clean idea survives contact with a 14B-parameter run."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "Competitive with Transformers, at a fraction of the inference cost",
+          "subtitle": "Benchmark parity, and the linear-scaling payoff",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "The make-or-break question: does an RNN, even a clever one, give up too much quality to be worth the efficiency? The paper's answer is no. Across standard NLP benchmarks, RWKV models are <b>competitive with classic Transformers of the same parameter count</b> — trained on the same Pile data and compared head-to-head against Pythia, GPT-Neo, and OPT models at matched sizes."
+            },
+            {
+              "type": "p",
+              "html": "On the suite of zero-shot tasks the paper evaluates (including <b>LAMBADA</b>, <b>PIQA</b>, <b>HellaSwag</b>, <b>WinoGrande</b>, <b>ARC-Easy/Challenge</b>, <b>OpenBookQA</b>, and <b>SciQ</b>), RWKV tracks the Transformer baselines closely at every scale from 169M to 14B — the accuracy-vs-parameters curves for RWKV and Pythia sit essentially on top of each other. The headline message is <b>parity, not a trade-off:</b> you keep Transformer-class quality."
+            },
+            {
+              "type": "h2",
+              "text": "The efficiency payoff, in numbers"
+            },
+            {
+              "type": "p",
+              "html": "This is where RWKV pulls ahead. Because inference is the recurrent form, generation cost is flat in context length:"
+            },
+            {
+              "type": "table",
+              "headers": ["Metric", "Transformer", "RWKV"],
+              "rows": [
+                ["Time per generated token", "grows with context length", "constant $O(1)$"],
+                ["Memory during generation", "$O(T)$ KV cache, grows", "$O(1)$ fixed state"],
+                ["Total time for a sequence", "$O(T^2 d)$", "$O(T d)$, linear"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "The paper measures text-generation speed and shows RWKV's per-token latency stays flat as the context grows, while a Transformer's climbs — so the longer the document, the larger RWKV's advantage. Memory is the more dramatic win: a Transformer serving long contexts must hold a KV cache that scales with sequence length, whereas RWKV holds a single fixed-size state regardless of how much it has read. That is what makes RWKV attractive for long-context or memory-constrained deployment."
+            },
+            {
+              "type": "h2",
+              "text": "The honest limitations"
+            },
+            {
+              "type": "p",
+              "html": "The authors are candid about the cost of compressing the past into a fixed state. RWKV cannot freely look back at an exact earlier token the way attention can re-read any position; information must survive the running decay. So tasks demanding precise <b>recall over very long contexts</b> — or careful prompt engineering that relies on the model re-attending to a specific distant instruction — can favor full attention. The fixed-size state is both the source of RWKV's efficiency and the boundary of its capacity."
+            },
+            {
+              "type": "quote",
+              "html": "The main limitation of RWKV is that its linear attention may limit the model's performance on tasks that require recalling minutiae information over very long contexts."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why RWKV mattered",
+          "subtitle": "Reopening the RNN question for the scaling era",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "For years the field treated 'RNN vs Transformer' as settled — attention had won because it trained in parallel and scaled. RWKV's contribution is to show the dichotomy was false: with a carefully linearized recurrence, you can have <b>both</b> parallel training and constant-cost inference in one model, and scale it to 14B parameters without losing the quality race."
+            },
+            {
+              "type": "h2",
+              "text": "Where it sits in the lineage"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Ancestry:</b> RWKV grows directly out of the <i>Attention Free Transformer</i> (AFT, Zhai et al., 2021), generalizing its single decay matrix into a learned per-channel decay vector $w$ and present-moment bonus $u$ — the change that unlocks the recurrent form.",
+                "<b>Siblings:</b> it belongs to the same wave as linear-attention and state-space models — Linear Transformers, Performer, S4, and later Mamba — all chasing sub-quadratic sequence modeling. RWKV's distinctive bet is staying explicitly RNN-shaped with a tiny, interpretable two-state recurrence.",
+                "<b>Openness:</b> RWKV was developed in the open as a community effort and released with weights, code, and the custom CUDA kernel, which is part of why it spread quickly into downstream projects."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Practical impact.</b> The constant-memory, constant-time-per-token profile makes RWKV especially suited to edge and on-device deployment, streaming generation, and very long contexts where a growing KV cache is the bottleneck. It demonstrated that the RNN family was not a dead end but an underexplored design space, and it directly motivated continued work on efficient recurrent and state-space alternatives to attention."
+            },
+            {
+              "type": "p",
+              "html": "<b>The one idea to keep.</b> If you remember nothing else: <i>a linear recurrence has two faces.</i> Write your sequence operation as a decaying weighted sum, and the very same math gives you a parallel formula to train fast and a step-by-step recurrence to run cheap. RWKV is the proof that you do not have to choose."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

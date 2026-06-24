@@ -1,0 +1,332 @@
+{
+  "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models",
+  "authors": "Touvron, Martin, Stone, et al. (Meta AI)",
+  "year": "2023",
+  "venue": "arXiv:2307.09288",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "An open chatbot you can actually inspect",
+          "subtitle": "What Llama 2 set out to do and why it mattered",
+          "pdfPages": [1],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "In mid-2023 the best chat models in the world (ChatGPT, Claude, Bard) were all <b>closed</b>: you could send them text and get text back, but you could not see the weights, the training data, or the recipe. Researchers could not study them, companies could not run them privately, and nobody could verify safety claims. The question this paper answers is: <b>can an openly released model match a closed product like ChatGPT on the things people actually use chatbots for?</b>"
+            },
+            {
+              "type": "p",
+              "html": "The answer Meta gives is yes, mostly. They release <b>Llama 2</b> (pretrained base models) and <b>Llama 2-Chat</b> (fine-tuned for dialogue) at <b>7B, 13B, and 70B</b> parameters, with weights available for research and commercial use. The headline: Llama 2-Chat is preferred over open-source chat models on the vast majority of benchmarks, and is roughly <b>on par with ChatGPT (GPT-3.5)</b> in human evaluations of helpfulness and safety."
+            },
+            {
+              "type": "quote",
+              "html": "In this work, we develop and release Llama 2, a collection of pretrained and fine-tuned large language models (LLMs) ranging in scale from 7 billion to 70 billion parameters. Our fine-tuned LLMs, called Llama 2-Chat, are optimized for dialogue use cases. Our models outperform open-source chat models on most benchmarks we tested, and based on our human evaluations for helpfulness and safety, may be a suitable substitute for closed-source models."
+            },
+            {
+              "type": "p",
+              "html": "The real contribution is not just weights, it is the <b>recipe written down in detail</b>. The paper documents how raw web-scraped text becomes a safe, helpful assistant: pretrain on 2 trillion tokens, collect human demonstrations and preference comparisons, train two separate reward models, and run iterative RLHF. Earlier open models (the first LLaMA, Falcon) released base models but said little about how to turn them into a good chatbot. Llama 2 closes that gap."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Scale:</b> three base models (7B, 13B, 70B) pretrained on 2T tokens, a context length of 4096, and Grouped-Query Attention (GQA) on the largest model for faster inference.",
+                "<b>Alignment recipe:</b> supervised fine-tuning (SFT) on ~27,540 high-quality dialogues, then five rounds of RLHF using rejection sampling and PPO.",
+                "<b>Two reward models:</b> one trained for <i>helpfulness</i> and a separate one for <i>safety</i>, because optimizing both at once with a single model causes a tug-of-war.",
+                "<b>Ghost Attention (GAtt):</b> a simple training trick that makes the model remember a system instruction (\"always reply in French\") across many turns of conversation."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Why this page matters:</b> Llama 2 became the foundation of the open-source LLM ecosystem. Thousands of fine-tunes, the Code Llama family, and most early local-LLM tooling are built on these weights. It made the alignment pipeline that powered closed chatbots reproducible by anyone with a GPU cluster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Pretraining",
+      "pages": [
+        {
+          "title": "Two trillion tokens and an architecture that scales",
+          "subtitle": "How the base model is built before any chat tuning",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Before a model can be a helpful assistant it has to learn language, facts, and reasoning from raw text. This is <b>pretraining</b>: predict the next token, billions of times, over a giant corpus. Everything later (chat, safety, instruction-following) is a thin layer of polish on top of whatever the base model learned here. So the base model's quality is the ceiling."
+            },
+            {
+              "type": "p",
+              "html": "Concrete numbers: Llama 2 is trained on <b>2 trillion tokens</b> of publicly available data, a 40% increase over the original LLaMA's 1.4T. To picture 2 trillion tokens, that is roughly the text of about 15 million books. The team deliberately <b>up-sampled the most factual sources</b> and removed data from sites known to contain large amounts of personal information, trading a bit of raw scale for cleaner knowledge and less privacy risk."
+            },
+            {
+              "type": "h2",
+              "text": "The architecture: a Transformer with three upgrades"
+            },
+            {
+              "type": "p",
+              "html": "Llama 2 keeps the standard decoder-only Transformer but carries over three choices from LLaMA-1 plus one new one. The three carried over: <b>RMSNorm</b> for pre-normalization (normalize the input to each sub-layer, which stabilizes deep training), the <b>SwiGLU</b> activation (a gated nonlinearity that outperforms plain ReLU in the feed-forward block), and <b>Rotary Position Embeddings (RoPE)</b> (encode token position by rotating the query and key vectors, so relative position falls out of the dot product)."
+            },
+            {
+              "type": "p",
+              "html": "The new ingredient is <b>Grouped-Query Attention (GQA)</b>, used on the 34B and 70B models. In standard multi-head attention every query head has its own key and value head, which makes the KV-cache huge at inference time. GQA lets several query heads <i>share</i> one key/value head, shrinking the cache and speeding up generation with almost no quality loss. This is why the 70B can serve long conversations affordably."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "Params", "Context", "GQA", "Tokens"],
+              "rows": [
+                ["Llama 2 7B", "7B", "4096", "no", "2.0T"],
+                ["Llama 2 13B", "13B", "4096", "no", "2.0T"],
+                ["Llama 2 34B", "34B", "4096", "yes", "2.0T"],
+                ["Llama 2 70B", "70B", "4096", "yes", "2.0T"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Note the <b>context length doubled to 4096 tokens</b> versus LLaMA-1's 2048, letting the model read and remember about twice as much text at once. Training used the AdamW optimizer with a cosine learning-rate schedule, a peak learning rate of $3 \\times 10^{-4}$ for the smaller models, a warmup of 2000 steps, and a batch of 4M tokens."
+            },
+            {
+              "type": "p",
+              "html": "<b>Design rationale and trivia:</b> almost nothing here is novel architecturally, and that is the point. The recipe is \"known-good components at honest scale, with cleaner data.\" The paper also reports the <b>carbon footprint</b> (about 539 tCO2eq, fully offset by Meta) and a per-model GPU-hour table, an unusual transparency move that became a norm for later open releases."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Reward Modeling",
+      "pages": [
+        {
+          "title": "Teaching a model to grade answers",
+          "subtitle": "The ranking loss, the margin term, and why two reward models",
+          "pdfPages": [11, 12],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "RLHF needs a way to score any answer the model produces, automatically, millions of times. You cannot pay a human to rate every sample during training. The <b>reward model</b> is that automatic judge: it reads a (prompt, answer) pair and outputs a single number, higher meaning \"a human would prefer this.\" Build a good judge and you can optimize the chatbot against it cheaply."
+            },
+            {
+              "type": "p",
+              "html": "But you cannot ask humans for absolute scores reliably, people disagree wildly on whether an answer deserves a 7 or an 8. They are far more consistent at <b>comparisons</b>: shown two answers to the same prompt, which is better? So Meta collected over <b>1.4 million</b> binary preference pairs. Annotators saw a prompt and two responses and picked the winner, also labeling <i>how much</i> better on a four-point scale (significantly better, better, slightly better, negligibly better)."
+            },
+            {
+              "type": "h2",
+              "text": "The ranking loss"
+            },
+            {
+              "type": "p",
+              "html": "The reward model is trained so that the chosen answer scores higher than the rejected one. This is a binary-ranking (Bradley-Terry) loss:"
+            },
+            {
+              "type": "math",
+              "tex": "\\mathcal{L}_{\\text{ranking}} = -\\log\\left(\\sigma\\left(r_\\theta(x, y_c) - r_\\theta(x, y_r) - m(r)\\right)\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it term by term: $x$ is the prompt; $y_c$ is the <b>chosen</b> (preferred) answer and $y_r$ is the <b>rejected</b> one. $r_\\theta(x, y)$ is the reward model's scalar score for a pair, a single real number in $\\mathbb{R}$, with $\\theta$ its weights. $\\sigma$ is the sigmoid, squashing the score gap into $(0,1)$. The loss is small only when $r_\\theta(x,y_c)$ comfortably exceeds $r_\\theta(x,y_r)$, so minimizing it pushes the chosen answer's score above the rejected answer's. $m(r)$ is the new <b>margin</b> term."
+            },
+            {
+              "type": "p",
+              "html": "The margin $m(r)$ is a discrete function of the human-rated preference strength $r$: it is large when the annotator said one answer was <i>significantly</i> better, and zero (or tiny) when they were nearly tied. Subtracting a large margin forces the model to separate clearly-better pairs by a wide gap, while letting near-ties stay close. Concretely it means \"don't just rank these, rank them by the amount the human cared.\" This margin measurably improved reward-model accuracy on the cases that matter most."
+            },
+            {
+              "type": "h2",
+              "text": "Why two reward models, not one"
+            },
+            {
+              "type": "p",
+              "html": "Helpfulness and safety often <b>pull in opposite directions</b>. The most helpful answer to \"how do I pick a lock\" is a detailed tutorial; the safest is a refusal. A single reward model trying to encode both objectives gets confused on exactly these tense prompts. So Meta trains <b>two separate reward models</b>: a <i>Helpfulness RM</i> (optimized on helpfulness-focused comparisons) and a <i>Safety RM</i> (on safety-focused ones). Each becomes an expert in its own dimension instead of an averaged-out generalist."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works / what breaks without it:</b> the reward models are initialized from the chat-model checkpoint itself, so they share the model's knowledge and never get blindsided by an answer the policy can produce. The paper notes reward-model accuracy keeps improving with more data and is the single most important factor in final quality, a worse judge caps how good the student can ever get. This two-model split, plus the margin, was one of Llama 2's distinctive contributions over the standard single-reward-model RLHF used by InstructGPT."
+            }
+          ]
+        },
+        {
+          "title": "Iterative RLHF: rejection sampling then PPO",
+          "subtitle": "Two ways to push the policy toward high reward, used in sequence",
+          "pdfPages": [9, 13, 14],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Now we have a base model, an SFT model that follows instructions, and reward models that grade answers. The final question: how do we actually <b>nudge the model to produce the high-scoring answers</b>? Llama 2 does this in <b>five successive rounds</b> (RLHF-V1 through RLHF-V5), each using freshly collected preference data, and combines <i>two</i> optimization methods."
+            },
+            {
+              "type": "h2",
+              "text": "Method 1: Rejection Sampling"
+            },
+            {
+              "type": "p",
+              "html": "The simplest possible idea. For each prompt, draw <b>K samples</b> from the current model (the paper uses K up to 100), score all of them with the reward model, keep only the <b>best one</b>, and fine-tune the model on these winners. It is \"generate a lot, keep the best, imitate it.\" A worked mini-example: ask the model to write a haiku, sample 20 versions, the reward model ranks them, you train on the top haiku. Repeat across thousands of prompts and the model's <i>typical</i> output drifts toward what used to be its <i>best</i> output."
+            },
+            {
+              "type": "p",
+              "html": "Crucially, <b>only the largest model (70B) runs rejection sampling</b>, then the smaller models are trained on data <i>distilled</i> from the 70B's best samples. The paper shows the gap between the mean reward and the max-of-K reward, the headroom rejection sampling exploits, widens as K grows, which is exactly why sampling more and keeping the best helps."
+            },
+            {
+              "type": "h2",
+              "text": "Method 2: PPO"
+            },
+            {
+              "type": "p",
+              "html": "Proximal Policy Optimization is the reinforcement-learning workhorse from InstructGPT. Instead of keep-the-best, it directly turns the reward gradient into a weight update. The objective:"
+            },
+            {
+              "type": "math",
+              "tex": "\\arg\\max_\\pi \\; \\mathbb{E}_{p \\sim \\mathcal{D},\\, g \\sim \\pi}\\left[ R(g \\mid p) \\right]"
+            },
+            {
+              "type": "p",
+              "html": "Here $\\pi$ is the policy (the chat model we are training), $p$ is a prompt sampled from dataset $\\mathcal{D}$, and $g$ is a generation sampled from the policy $\\pi$ given $p$. $R(g \\mid p)$ is the reward for that generation. We want the policy that maximizes expected reward. The actual reward $R$ is not the raw reward-model score, it is a shaped version:"
+            },
+            {
+              "type": "math",
+              "tex": "R(g \\mid p) = \\tilde{R}_c(g \\mid p) - \\beta\\, D_{KL}\\!\\left(\\pi_\\theta(g \\mid p) \\,\\|\\, \\pi_0(g \\mid p)\\right)"
+            },
+            {
+              "type": "p",
+              "html": "Reading it: $\\tilde{R}_c(g\\mid p)$ is the (whitened, combined) score from the reward models, where the safety reward is used when the prompt is flagged unsafe and helpfulness otherwise. The second term is a <b>KL-divergence penalty</b>: $\\pi_\\theta$ is the current policy, $\\pi_0$ is the original SFT model (frozen), and $D_{KL}$ measures how far the policy has drifted from it. The coefficient $\\beta$ controls the leash. Without this penalty the model would <b>over-optimize the reward</b>, discovering weird gibberish that fools the reward model but reads terribly to humans (reward hacking). The KL term keeps it close to fluent, sane SFT behavior."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why use both methods?</b> Rejection sampling explores <i>broadly</i> (100 independent samples cover a wide spread of answers) but only learns from the single best. PPO explores <i>narrowly</i> around the current policy but learns from the full reward signal on every sample. Llama 2 runs rejection sampling for the earlier rounds, then switches to PPO (after combining the two from RLHF-V4 onward), getting both the wide exploration and the dense gradient. Each of the five rounds also collects new preference data on the <i>current</i> model's outputs, fixing the distribution-shift problem where a judge trained on old outputs goes stale."
+            },
+            {
+              "type": "p",
+              "html": "<b>Context:</b> this iterative, multi-round, two-method pipeline is more elaborate than InstructGPT's single PPO pass and became a template for later open alignment work. The paper's Figure showing reward climbing across V1 to V5 is a clean demonstration that alignment is an iterative data-collection loop, not a one-shot training run."
+            }
+          ]
+        },
+        {
+          "title": "Ghost Attention: making the model remember its instructions",
+          "subtitle": "A training trick for multi-turn system-message consistency",
+          "pdfPages": [16],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Here is an annoying, very real failure. You tell a chatbot \"act as Napoleon\" or \"always answer in emojis,\" it obeys for a turn or two, and by turn four it has forgotten and reverted to a plain assistant. The instruction lives at the very start of the conversation, and as the dialogue grows long it gets drowned out. Standard RLHF does not fix this because the preference data rarely contains long multi-turn conversations testing instruction persistence."
+            },
+            {
+              "type": "p",
+              "html": "<b>Ghost Attention (GAtt)</b> is Meta's fix, and it is a data trick, not an architecture change. The idea: take a multi-turn dialogue, pick an instruction (e.g. \"answer in French\"), and <b>artificially prepend that instruction to every user message</b> in the conversation. Now generate the assistant turns. Then, at training time, <b>drop the instruction from all turns except the first</b> and only compute the loss on the assistant responses. The model is forced to produce instruction-consistent answers even though, after the first turn, the instruction is no longer literally in the visible context."
+            },
+            {
+              "type": "p",
+              "html": "The name comes from this: the instruction acts like a <i>ghost</i>, it shaped every response during data construction, but it is invisible in the final training context after turn one. The model learns to behave as if the instruction is still there, effectively carrying it forward in its internal state. A concrete worked example from the paper: told \"always answer with emojis,\" a GAtt-trained model keeps using emojis many turns later, while the baseline drops them almost immediately."
+            },
+            {
+              "type": "p",
+              "html": "<b>Why it works:</b> the paper visualizes attention and shows that after GAtt training the model keeps attending strongly back to the system instruction tokens across the whole conversation, the attention to the instruction does not decay with dialogue length. The instruction stays \"alive\" in the model's attention pattern. It is a remarkably cheap intervention: no new parameters, no new loss, just a clever way of constructing the fine-tuning data so that consistency is what gets rewarded."
+            },
+            {
+              "type": "p",
+              "html": "<b>Trade-offs and context:</b> GAtt is applied after RLHF-V3 and helps the model honor a <i>system message</i> (persona, format, constraints) for the full length of a chat, the kind of behavior that makes a chatbot feel reliable. It is a small, practical engineering contribution that addressed a problem every multi-turn assistant of the era struggled with, and it generalized to instructions GAtt was never explicitly trained on."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results",
+      "pages": [
+        {
+          "title": "How good is it, in real numbers",
+          "subtitle": "Base-model benchmarks and head-to-head human evaluation",
+          "pdfPages": [8, 18, 3],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Two questions decide whether all this worked. First: is the <b>base model</b> strong on standard knowledge and reasoning benchmarks? Second, and more important for a chatbot: do <b>humans actually prefer</b> Llama 2-Chat's answers over the alternatives?"
+            },
+            {
+              "type": "h2",
+              "text": "Base model benchmarks"
+            },
+            {
+              "type": "p",
+              "html": "On academic benchmarks the Llama 2 base models lead all open-source models of their size and close much of the gap to closed models. The 70B is the standout."
+            },
+            {
+              "type": "table",
+              "headers": ["Model", "MMLU", "TriviaQA", "GSM8K", "HumanEval"],
+              "rows": [
+                ["Llama 1 65B", "63.4", "84.5", "50.9", "23.7"],
+                ["Llama 2 70B", "68.9", "85.0", "56.8", "29.9"],
+                ["Falcon 40B", "55.4", "78.6", "19.6", "—"],
+                ["MPT 30B", "46.9", "71.3", "15.2", "25.0"]
+              ]
+            },
+            {
+              "type": "p",
+              "html": "Reading these: <b>MMLU</b> (57-subject multiple-choice exam) at 68.9% means broad academic knowledge; <b>TriviaQA</b> tests factual recall; <b>GSM8K</b> is grade-school math word problems; <b>HumanEval</b> is Python coding. The 70B beats the previous-generation LLaMA-1 65B on every axis despite similar size, the gains come from more and cleaner data, not a bigger model."
+            },
+            {
+              "type": "h2",
+              "text": "Human evaluation: on par with ChatGPT"
+            },
+            {
+              "type": "p",
+              "html": "This is the headline result. Humans compared Llama 2-Chat against other chat models on roughly <b>4,000 prompts</b>, judging helpfulness and safety. Llama 2-Chat 70B <b>wins or ties against ChatGPT (GPT-3.5-turbo-0301)</b>, with a win rate near 36% and a tie rate near 31.5%, meaning it is preferred-or-equal a clear majority of the time. Against open-source models (MPT, Falcon, Vicuna) it wins decisively, and against the original LLaMA-1 it is a night-and-day improvement."
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>Llama 2-Chat 70B vs ChatGPT:</b> roughly on par (win + tie a clear majority), a first for an openly released model.",
+                "<b>vs open-source chat models</b> (MPT, Falcon, Vicuna): preferred on the large majority of prompts.",
+                "<b>Safety:</b> Llama 2-Chat shows a low violation rate in human red-teaming, competitive with or better than the closed models, achieved via the separate Safety reward model and safety-focused fine-tuning."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Honest caveats the paper raises:</b> human preference evaluation is noisy and prompt-set-dependent, and the reward models were trained on Meta's own preference data, so the model is in part being graded by a judge aligned to the same taste it was tuned on. The benchmarks also do not fully capture coding or reasoning depth, where GPT-4 (not GPT-3.5) was still clearly ahead. The claim is carefully scoped: <i>a suitable substitute</i> on helpfulness and safety, not a universal win."
+            },
+            {
+              "type": "p",
+              "html": "<b>The takeaway:</b> the gap between open and closed chat models, which had looked like a chasm, turned out to be mostly a <b>recipe gap</b>, not a fundamental capability gap. With enough clean pretraining data and a careful RLHF pipeline, an open model reached parity with the product that had defined the category."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Impact",
+      "pages": [
+        {
+          "title": "Why Llama 2 reshaped the field",
+          "subtitle": "From a single release to an entire open ecosystem",
+          "pdfPages": [1, 4],
+          "blocks": [
+            {
+              "type": "p",
+              "html": "Llama 2's importance is less about any single number and more about what it <b>unlocked</b>. By releasing competitive weights <i>and</i> a detailed alignment recipe under a license permitting commercial use, it turned cutting-edge chat-model development from something three companies could do into something thousands of teams could do."
+            },
+            {
+              "type": "h2",
+              "text": "What it enabled"
+            },
+            {
+              "type": "list",
+              "items": [
+                "<b>An ecosystem of fine-tunes:</b> Llama 2 became the default base for countless instruction-tuned, domain-specific, and multilingual derivatives, and the backbone of early local-LLM tooling (llama.cpp, quantized GGUF models, LoRA adapters).",
+                "<b>Code Llama and successors:</b> Meta's own code models were built on Llama 2, and the recipe carried forward into Llama 3.",
+                "<b>A reproducible alignment template:</b> the two-reward-model split, iterative RLHF, rejection-sampling-then-PPO, and Ghost Attention became reference techniques other open projects copied and built on.",
+                "<b>Transparency norms:</b> reporting carbon footprint, GPU-hours, red-teaming methodology, and a model card set expectations for what a responsible open release should disclose."
+              ]
+            },
+            {
+              "type": "p",
+              "html": "<b>Its place in the lineage:</b> Llama 2 sits between InstructGPT (which introduced RLHF for alignment with a single reward model and one PPO pass) and the next generation of open models. It took InstructGPT's ideas, scaled and hardened them, split the reward signal, made the loop iterative, and, decisively, <b>gave the weights away</b>. Where the first LLaMA was a research artifact under restrictive terms, Llama 2 was meant to be used."
+            },
+            {
+              "type": "p",
+              "html": "<b>The lasting lesson:</b> the paper is a proof that the alignment pipeline is the product. A strong base model is necessary but not sufficient; the difference between a raw next-token predictor and a chatbot people trust is the SFT-plus-RLHF machinery documented here. By writing that machinery down in full, Llama 2 did for open chat models what AlexNet did for vision, it showed the path was walkable, and then everyone walked it."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
