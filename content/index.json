@@ -879,6 +879,150 @@
       "year": "2022",
       "venue": "arXiv:2203.15556",
       "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "gpt-2",
+      "title": "Language Models are Unsupervised Multitask Learners (GPT-2)",
+      "authors": "Radford, Wu, Child, Luan, Amodei, Sutskever (OpenAI)",
+      "year": "2019",
+      "venue": "OpenAI tech report",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "scaling-laws",
+      "title": "Scaling Laws for Neural Language Models",
+      "authors": "Kaplan, McCandlish, Henighan, Brown, Chess, Child, Gray, Radford, Wu, Amodei (OpenAI)",
+      "year": "2020",
+      "venue": "arXiv:2001.08361",
+      "category": "Foundations & Transformers"
+    },
+    {
+      "slug": "the-pile",
+      "title": "The Pile: An 800GB Dataset of Diverse Text for Language Modeling",
+      "authors": "Gao, Biderman, Black, et al. (EleutherAI)",
+      "year": "2020",
+      "venue": "arXiv:2101.00027",
+      "category": "Security & Datasets"
+    },
+    {
+      "slug": "palm",
+      "title": "PaLM: Scaling Language Modeling with Pathways",
+      "authors": "Chowdhery, Narang, Devlin, et al. (Google)",
+      "year": "2022",
+      "venue": "arXiv:2204.02311",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "opt",
+      "title": "OPT: Open Pre-trained Transformer Language Models",
+      "authors": "Zhang, Roller, Goyal, et al. (Meta AI)",
+      "year": "2022",
+      "venue": "arXiv:2205.01068",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "bloom",
+      "title": "BLOOM: A 176B-Parameter Open-Access Multilingual Language Model",
+      "authors": "BigScience Workshop (Scao, Fan, et al.)",
+      "year": "2022",
+      "venue": "arXiv:2211.05100",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "llama1",
+      "title": "LLaMA: Open and Efficient Foundation Language Models",
+      "authors": "Touvron, Lavril, Izacard, et al. (Meta AI)",
+      "year": "2023",
+      "venue": "arXiv:2302.13971",
+      "category": "Modern LLMs (2023-2026)"
+    },
+    {
+      "slug": "constitutional-ai",
+      "title": "Constitutional AI: Harmlessness from AI Feedback",
+      "authors": "Bai, Kadavath, Kundu, et al. (Anthropic)",
+      "year": "2022",
+      "venue": "arXiv:2212.08073",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "self-instruct",
+      "title": "Self-Instruct: Aligning Language Models with Self-Generated Instructions",
+      "authors": "Wang, Kordi, Mishra, et al.",
+      "year": "2022",
+      "venue": "arXiv:2212.10560",
+      "category": "Alignment & Preference Optimization"
+    },
+    {
+      "slug": "rope",
+      "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (RoPE)",
+      "authors": "Su, Lu, Pan, Murtadha, Wen, Liu",
+      "year": "2021",
+      "venue": "arXiv:2104.09864",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "alibi",
+      "title": "Train Short, Test Long: Attention with Linear Biases (ALiBi)",
+      "authors": "Press, Smith, Lewis",
+      "year": "2021",
+      "venue": "arXiv:2108.12409",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "mqa",
+      "title": "Fast Transformer Decoding: One Write-Head is All You Need (Multi-Query Attention)",
+      "authors": "Noam Shazeer",
+      "year": "2019",
+      "venue": "arXiv:1911.02150",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "speculative-decoding",
+      "title": "Fast Inference from Transformers via Speculative Decoding",
+      "authors": "Leviathan, Kalman, Matias (Google)",
+      "year": "2022",
+      "venue": "arXiv:2211.17192",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "chain-of-thought",
+      "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",
+      "authors": "Wei, Wang, Schuurmans, et al. (Google)",
+      "year": "2022",
+      "venue": "arXiv:2201.11903",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "react",
+      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+      "authors": "Yao, Zhao, Yu, Du, Shafran, Narasimhan, Cao",
+      "year": "2022",
+      "venue": "arXiv:2210.03629",
+      "category": "Reasoning, Agents & RAG"
+    },
+    {
+      "slug": "deepseekmoe",
+      "title": "DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts",
+      "authors": "Dai, Deng, Zhao, et al. (DeepSeek)",
+      "year": "2024",
+      "venue": "arXiv:2401.06066",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "kv-cache-h2o",
+      "title": "H2O: Heavy-Hitter Oracle for Efficient Generative Inference of LLMs",
+      "authors": "Zhang, Sheng, Zhou, et al.",
+      "year": "2023",
+      "venue": "arXiv:2306.14048",
+      "category": "Efficient Attention & Architectures"
+    },
+    {
+      "slug": "muon",
+      "title": "Muon: An Optimizer for the Hidden Layers of Neural Networks",
+      "authors": "Jordan, Bernstein, et al.",
+      "year": "2025",
+      "venue": "arXiv:2502.16982",
+      "category": "Efficient Attention & Architectures"
     }
   ]
 }

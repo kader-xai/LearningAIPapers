@@ -1,0 +1,189 @@
+{
+  "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (RoPE)",
+  "authors": "Su, Lu, Pan, Murtadha, Wen, Liu",
+  "year": "2021",
+  "venue": "arXiv:2104.09864",
+  "sections": [
+    {
+      "title": "Abstract & The Position Problem",
+      "pages": [
+        {
+          "title": "Why attention is blind to word order",
+          "subtitle": "The gap RoPE fills",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "A Transformer's self-attention scores every pair of tokens by a dot product between a <b>query</b> vector and a <b>key</b> vector. That dot product looks only at <i>content</i> — what the words mean — and is completely <b>permutation-invariant</b>: shuffle the words in the sentence and the raw attention scores are unchanged. To the bare attention mechanism, \"dog bites man\" and \"man bites dog\" are the same set of vectors." },
+            { "type": "p", "html": "But word order carries meaning. The paper opens by noting that RNNs get order for free (they read left to right), and CNNs get it implicitly, but the Transformer of Vaswani et al. (2017) has no recurrence — so position must be <i>injected</i> as extra numbers. The whole question of this paper is: <b>what is the right way to tell attention where each token sits?</b>" },
+            { "type": "h2", "text": "The one-sentence idea" },
+            { "type": "p", "html": "RoPE encodes a token's position by <b>rotating</b> its query/key vector by an angle proportional to that token's index. Because a dot product of two rotated vectors depends only on the <i>difference</i> of their rotation angles, the attention score between token $m$ and token $n$ ends up depending only on their <b>relative position</b> $m-n$ — even though each token was encoded using only its own <i>absolute</i> position. You get relative-position awareness for free, inside a plain dot product." },
+            { "type": "quote", "html": "the proposed RoPE encodes the absolute position with a rotation matrix and meanwhile incorporates the explicit relative position dependency in self-attention formulation." },
+            { "type": "h2", "text": "What this buys you" },
+            { "type": "list", "items": [
+              "<b>Flexibility of sequence length</b> — no learned table of positions capped at some max length; any index gives a valid rotation angle.",
+              "<b>Decaying inter-token dependency</b> — tokens far apart naturally attend less (the paper proves this long-term decay).",
+              "<b>Works with linear attention</b> — because rotation preserves vector norms, RoPE slots into efficient linear-attention variants that additive schemes cannot."
+            ]},
+            { "type": "p", "html": "The authors call the resulting model <b>RoFormer</b> and show it consistently beats its alternatives on long-text classification. RoPE went on to become the default positional scheme in <b>LLaMA</b>, <b>GPT-NeoX</b>, <b>PaLM</b>, and most modern open LLMs — arguably the most quietly influential idea in the paper's lineage." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.1 What we actually want",
+      "pages": [
+        {
+          "title": "The exact property to engineer",
+          "subtitle": "Formulating relative position as a constraint",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Before proposing a solution, the paper writes down precisely what a good position scheme must satisfy. Prior methods (sinusoidal embeddings, learned embeddings, the relative schemes of Shaw et al. and Transformer-XL) all <i>add</i> position vectors to the token embeddings and then hope relative information survives. RoPE instead demands the property by construction." },
+            { "type": "h2", "text": "The requirement" },
+            { "type": "p", "html": "Let $\\boldsymbol{x}_m$ be the word embedding of the token at position $m$. We build a position-aware query with a function $f_q(\\boldsymbol{x}_m, m)$ and a position-aware key with $f_k(\\boldsymbol{x}_n, n)$. The requirement is that their inner product depend on the two words and on their <b>relative</b> position only:" },
+            { "type": "math", "tex": "\\langle f_q(\\boldsymbol{x}_m, m),\\, f_k(\\boldsymbol{x}_n, n)\\rangle = g(\\boldsymbol{x}_m, \\boldsymbol{x}_n, m-n)" },
+            { "type": "p", "html": "Reading it term by term: $f_q$ takes the query word $\\boldsymbol{x}_m \\in \\mathbb{R}^d$ and its absolute index $m$ and returns the encoded query. $f_k$ does the same for the key at index $n$. The left side is the attention logit before softmax. The right side $g(\\cdot,\\cdot,\\,m-n)$ says: whatever comes out, it may depend on the two content vectors and on the single number $m-n$ — but <b>not</b> on $m$ or $n$ separately. Only the gap between the two tokens is allowed to matter." },
+            { "type": "p", "html": "The word <b>inner product</b> here is exactly the query-key dot product that self-attention already computes; nothing extra is bolted on. This is the whole trick: instead of altering the attention formula, we design $f_q$ and $f_k$ so the <i>existing</i> dot product automatically yields a function of $m-n$." },
+            { "type": "h2", "text": "Why this is the right target" },
+            { "type": "p", "html": "Relative position is what language actually cares about — \"the word two slots to my left\" is meaningful regardless of whether you are at position 5 or position 5000. By baking relativity into the constraint rather than adding it afterward, RoPE avoids the failure mode of absolute schemes: a learned absolute embedding never seen during training (position 5000 when you trained to 512) is undefined, whereas a relative gap of 2 is always the same. The next page shows the elegant solution the authors found — rotation." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.2.1 The 2D case",
+      "pages": [
+        {
+          "title": "Rotation is the answer",
+          "subtitle": "Solving the constraint in two dimensions",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Start with the smallest interesting case: vectors of dimension $d=2$, which live on a flat plane. Here every 2D vector can be written as a complex number, and multiplying by $e^{i\\theta}$ <b>rotates</b> it counter-clockwise by angle $\\theta$ without changing its length. That single fact solves the constraint from the previous page." },
+            { "type": "h2", "text": "The solution" },
+            { "type": "math", "tex": "f_q(\\boldsymbol{x}_m, m) = (\\boldsymbol{W}_q \\boldsymbol{x}_m)\\, e^{i m\\theta}, \\qquad f_k(\\boldsymbol{x}_n, n) = (\\boldsymbol{W}_k \\boldsymbol{x}_n)\\, e^{i n\\theta}" },
+            { "type": "p", "html": "Term by term: $\\boldsymbol{W}_q \\boldsymbol{x}_m$ is the ordinary query you would compute anyway (the learned projection of the word), viewed as a complex number. Multiplying by $e^{i m\\theta}$ rotates that query by angle $m\\theta$ — the rotation grows linearly with the token's position $m$. The key at position $n$ is rotated by $n\\theta$. Here $\\theta \\in \\mathbb{R}$ is a fixed, non-zero constant (not learned)." },
+            { "type": "p", "html": "Now take the (complex) inner product, which conjugates the key. The two rotation phases <i>subtract</i>:" },
+            { "type": "math", "tex": "g(\\boldsymbol{x}_m, \\boldsymbol{x}_n, m-n) = \\mathrm{Re}\\!\\left[ (\\boldsymbol{W}_q \\boldsymbol{x}_m)(\\boldsymbol{W}_k \\boldsymbol{x}_n)^{*}\\, e^{i(m-n)\\theta} \\right]" },
+            { "type": "p", "html": "Reading it: $\\mathrm{Re}[\\cdot]$ keeps the real part (that is what a real dot product returns); $(\\boldsymbol{W}_k \\boldsymbol{x}_n)^{*}$ is the complex conjugate of the key. The two absolute positions $m$ and $n$ have collapsed into the single phase $e^{i(m-n)\\theta}$ — <b>exactly the $g(\\ldots, m-n)$ the constraint demanded.</b> We encoded absolute positions and got relative position out." },
+            { "type": "h2", "text": "The same thing as a real 2x2 matrix" },
+            { "type": "p", "html": "Complex numbers are just bookkeeping; in real coordinates, multiplying by $e^{i m\\theta}$ is multiplying by a rotation matrix:" },
+            { "type": "math", "tex": "f_{\\{q,k\\}}(\\boldsymbol{x}_m, m) = \\begin{pmatrix} \\cos m\\theta & -\\sin m\\theta \\\\ \\sin m\\theta & \\cos m\\theta \\end{pmatrix} \\begin{pmatrix} W^{(11)} & W^{(12)} \\\\ W^{(21)} & W^{(22)} \\end{pmatrix} \\begin{pmatrix} x_m^{(1)} \\\\ x_m^{(2)} \\end{pmatrix}" },
+            { "type": "p", "html": "The rightmost factor is the 2D word vector $(x_m^{(1)}, x_m^{(2)})$; the middle $2\\times2$ is the learned query/key projection $\\boldsymbol{W}$; the leftmost $2\\times2$ is a standard rotation matrix by angle $m\\theta$. So the recipe is literally: <b>project the word as usual, then spin the resulting 2D vector by an angle proportional to its position.</b>" },
+            { "type": "h2", "text": "A concrete mini-example" },
+            { "type": "p", "html": "Suppose $\\theta = 1$ radian and a token's projected query is the vector $(1, 0)$. At position $m=0$ it stays $(1,0)$. At $m=1$ it rotates to $(\\cos 1, \\sin 1)\\approx(0.54, 0.84)$. At $m=2$ it rotates to $(\\cos 2, \\sin 2)\\approx(-0.42, 0.91)$. A key at position $n=1$ pointing the same original direction rotates to the same $(0.54, 0.84)$. The dot product of the $m=2$ query with the $n=1$ key depends only on their angular gap $ (2-1)\\theta = 1$ radian — move both tokens 100 slots down the sentence and that gap, and hence the score, is unchanged." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.2.2 General form",
+      "pages": [
+        {
+          "title": "Scaling rotation to full dimension",
+          "subtitle": "Block-diagonal rotations and multiple frequencies",
+          "pdfPages": [5],
+          "blocks": [
+            { "type": "p", "html": "Real query/key vectors are not 2D — they are $d$-dimensional (e.g. 64 or 128 per head). The generalization is beautifully simple: <b>chop the $d$ dimensions into $d/2$ pairs, and rotate each pair in its own 2D plane, each by its own frequency.</b> Because the inner product is linear, the pairs sum independently and the relative-position property still holds." },
+            { "type": "math", "tex": "f_{\\{q,k\\}}(\\boldsymbol{x}_m, m) = \\boldsymbol{R}^{d}_{\\Theta, m}\\, \\boldsymbol{W}_{\\{q,k\\}}\\, \\boldsymbol{x}_m" },
+            { "type": "p", "html": "$\\boldsymbol{R}^{d}_{\\Theta,m}$ is a $d\\times d$ <b>block-diagonal rotation matrix</b>: it is all zeros except for $d/2$ little $2\\times2$ rotation blocks down the diagonal, the $i$-th block rotating by angle $m\\theta_i$. So the projected vector $\\boldsymbol{W}\\boldsymbol{x}_m$ is split into $d/2$ pairs of coordinates and each pair is spun by its own angle." },
+            { "type": "math", "tex": "\\boldsymbol{R}^{d}_{\\Theta, m} = \\begin{pmatrix} \\cos m\\theta_1 & -\\sin m\\theta_1 & \\cdots & 0 \\\\ \\sin m\\theta_1 & \\cos m\\theta_1 & \\cdots & 0 \\\\ \\vdots & \\vdots & \\ddots & \\vdots \\\\ 0 & 0 & \\cdots & \\cos m\\theta_{d/2} \\end{pmatrix}" },
+            { "type": "h2", "text": "The frequencies" },
+            { "type": "p", "html": "Each pair gets a different rotation speed, chosen exactly like the sinusoidal frequencies of the original Transformer:" },
+            { "type": "math", "tex": "\\Theta = \\{\\, \\theta_i = 10000^{-2(i-1)/d}\\ :\\ i \\in [1, 2, \\ldots, d/2] \\,\\}" },
+            { "type": "p", "html": "Reading it: the base wavelength is $10000$. The first pair ($i=1$) rotates fast ($\\theta_1 = 1$ radian per position) and captures fine, local order; later pairs rotate ever more slowly (down to $10000^{-1}$), giving long, slow waves that stay distinguishable across thousands of tokens. This geometric spread of frequencies is what lets a single scheme resolve both \"the token right next to me\" and \"the token 2000 slots away.\"" },
+            { "type": "h2", "text": "The payoff for attention" },
+            { "type": "p", "html": "Plugging into a self-attention score gives the clean result:" },
+            { "type": "math", "tex": "\\boldsymbol{q}_m^{\\top} \\boldsymbol{k}_n = (\\boldsymbol{R}^{d}_{\\Theta, m} \\boldsymbol{W}_q \\boldsymbol{x}_m)^{\\top}(\\boldsymbol{R}^{d}_{\\Theta, n} \\boldsymbol{W}_k \\boldsymbol{x}_n) = \\boldsymbol{x}_m^{\\top} \\boldsymbol{W}_q\\, \\boldsymbol{R}^{d}_{\\Theta, n-m}\\, \\boldsymbol{W}_k \\boldsymbol{x}_n" },
+            { "type": "p", "html": "The two per-token rotations combine into a single rotation by the <b>relative</b> angle: $ (\\boldsymbol{R}^{d}_{\\Theta,m})^{\\top}\\boldsymbol{R}^{d}_{\\Theta,n} = \\boldsymbol{R}^{d}_{\\Theta,\\,n-m}$. This works because rotation matrices are <b>orthogonal</b> — their transpose is their inverse — so $m$ cancels against $n$ leaving only $n-m$. Orthogonality also means RoPE never changes a vector's length, which the authors note ensures numerical stability." },
+            { "type": "p", "html": "One practical note: you never build the full $d\\times d$ matrix. Because $\\boldsymbol{R}$ is 99% zeros, RoPE is implemented as a cheap element-wise multiply of the query/key by precomputed $\\cos$ and $\\sin$ vectors — a handful of extra FLOPs, no new parameters. Contrast this with additive embeddings: RoPE is <b>multiplicative</b>, injecting position by rotating rather than by adding a vector." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.3 Long-term decay",
+      "pages": [
+        {
+          "title": "Distant tokens attend less, provably",
+          "subtitle": "The built-in inductive bias",
+          "pdfPages": [5, 8],
+          "blocks": [
+            { "type": "p", "html": "A good position scheme should make far-apart tokens interact weakly by default — in most language, the words right around you matter more than words 300 tokens back. RoPE gets this for free: the paper proves that as the relative distance $|m-n|$ grows, the <b>upper bound on the attention contribution decays</b>. This is the property the authors call <b>long-term decay</b>." },
+            { "type": "h2", "text": "How the proof works" },
+            { "type": "p", "html": "Group the query and key coordinates into their $d/2$ pairs and write the RoPE inner product as a sum of complex terms, one per frequency:" },
+            { "type": "math", "tex": "(\\boldsymbol{R}^{d}_{\\Theta, m}\\boldsymbol{W}_q\\boldsymbol{x}_m)^{\\top}(\\boldsymbol{R}^{d}_{\\Theta, n}\\boldsymbol{W}_k\\boldsymbol{x}_n) = \\mathrm{Re}\\!\\left[ \\sum_{i=0}^{d/2-1} \\boldsymbol{q}_{[2i:2i+1]}\\, \\boldsymbol{k}^{*}_{[2i:2i+1]}\\, e^{i(m-n)\\theta_i} \\right]" },
+            { "type": "p", "html": "Here $\\boldsymbol{q}_{[2i:2i+1]}$ is the $i$-th coordinate pair of the query as a complex number, $\\boldsymbol{k}^{*}$ its conjugate for the key, and $e^{i(m-n)\\theta_i}$ is the relative-position phase for frequency $\\theta_i$. The score is a sum of these rotating phasors." },
+            { "type": "p", "html": "The authors apply <b>Abel summation</b> (summation by parts) to this sum and bound it by the maximum change between adjacent partial sums times the sum of magnitudes $|S_{i+1}|$. The key fact is that the running average $\\frac{1}{d/2}\\sum |S_i|$ <b>shrinks as $|m-n|$ increases</b> — precisely because the frequencies are set to $\\theta_i = 10000^{-2i/d}$. Figure 2 in the paper plots this bound: it starts near 20 and decays (with oscillation) toward roughly 7 as relative distance goes from 0 to 250." },
+            { "type": "quote", "html": "This property coincides with the intuition that a pair of tokens with a long relative distance should have less connection." },
+            { "type": "h2", "text": "Why it matters" },
+            { "type": "p", "html": "This decay is not enforced by a mask or a learned penalty — it falls out of the frequency choice. It gives the model a gentle, differentiable locality bias while still allowing long-range attention when the content demands it. It is also the reason RoPE tends to <b>extrapolate</b> to longer sequences than it was trained on better than a learned absolute table would: the mechanism is a smooth function of distance, not a lookup indexed by absolute position. Later work (e.g. position-interpolation and NTK-aware scaling for long-context LLaMA) tunes exactly this base of $10000$ to stretch RoPE to tens of thousands of tokens." }
+          ]
+        },
+        {
+          "title": "RoPE meets linear attention",
+          "subtitle": "The property additive schemes cannot match",
+          "pdfPages": [6],
+          "blocks": [
+            { "type": "p", "html": "Standard softmax attention costs $\\mathcal{O}(N^2)$ in sequence length $N$ because it compares every pair of tokens. <b>Linear attention</b> (Katharopoulos et al. 2020, and the Performer of Choromanski et al. 2020) rewrites attention with a feature map $\\phi(\\cdot)$ so the computation reassociates into $\\mathcal{O}(N)$ cost. The catch: most relative-position schemes cannot be dropped into linear attention, because they meddle with the softmax normalization that linear attention has thrown away." },
+            { "type": "math", "tex": "\\text{Attention}(\\boldsymbol{Q}, \\boldsymbol{K}, \\boldsymbol{V})_m = \\frac{\\sum_{n=1}^{N} \\phi(\\boldsymbol{q}_m)^{\\top}\\varphi(\\boldsymbol{k}_n)\\,\\boldsymbol{v}_n}{\\sum_{n=1}^{N} \\phi(\\boldsymbol{q}_m)^{\\top}\\varphi(\\boldsymbol{k}_n)}" },
+            { "type": "p", "html": "Reading it: $\\phi(\\cdot)$ and $\\varphi(\\cdot)$ are non-negative feature maps (Katharopoulos uses $\\phi(x)=\\varphi(x)=\\mathrm{elu}(x)+1$); $\\boldsymbol{v}_n$ is the value vector. Because there is no exponential coupling query and key, the sums can be precomputed and reused, giving linear cost." },
+            { "type": "h2", "text": "Why RoPE slots right in" },
+            { "type": "p", "html": "Because a rotation preserves vector norms and non-negativity of magnitudes, RoPE can simply rotate the <i>feature-mapped</i> queries and keys, leaving the normalizing denominator untouched:" },
+            { "type": "math", "tex": "\\text{Attention}(\\boldsymbol{Q}, \\boldsymbol{K}, \\boldsymbol{V})_m = \\frac{\\sum_{n=1}^{N} \\big(\\boldsymbol{R}^{d}_{\\Theta, m}\\phi(\\boldsymbol{q}_m)\\big)^{\\top}\\big(\\boldsymbol{R}^{d}_{\\Theta, n}\\varphi(\\boldsymbol{k}_n)\\big)\\,\\boldsymbol{v}_n}{\\sum_{n=1}^{N} \\phi(\\boldsymbol{q}_m)^{\\top}\\varphi(\\boldsymbol{k}_n)}" },
+            { "type": "p", "html": "The numerator gets relative-position awareness through the rotation product $\\boldsymbol{R}^{d}_{\\Theta,\\,m-n}$; the denominator is deliberately left as-is to avoid dividing by zero. The paper concedes the numerator can now contain negative terms — the weights are not strictly probabilistic — but argues the computation still models value importance well." },
+            { "type": "p", "html": "This compatibility is a genuine differentiator: an <i>additive</i> position embedding cannot be factored cleanly out of the linear-attention sums, so schemes like Transformer-XL's do not transfer. RoPE's multiplicative, norm-preserving nature is exactly what makes it composable with efficient attention — a big part of why it became the LLM default." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Experiments",
+      "pages": [
+        {
+          "title": "Does RoFormer actually work?",
+          "subtitle": "Translation, pre-training, and GLUE",
+          "pdfPages": [8, 9, 10],
+          "blocks": [
+            { "type": "p", "html": "The authors test RoPE by swapping it into standard models and measuring whether it helps, across several NLP tasks. All experiments ran on two cloud servers with 4x V100 GPUs each." },
+            { "type": "h2", "text": "Machine translation (WMT 2014 En-De)" },
+            { "type": "p", "html": "They modify the self-attention of a standard Transformer to use RoPE and train on the WMT 2014 English-German set (~4.5M sentence pairs), using fairseq, 37k joint BPE vocabulary, Adam, and averaging the last 5 checkpoints. RoFormer edges out the vanilla Transformer on BLEU:" },
+            { "type": "table", "headers": ["Model", "BLEU"], "rows": [
+              ["Transformer-base (Vaswani et al. 2017)", "27.3"],
+              ["RoFormer", "27.5"]
+            ]},
+            { "type": "h2", "text": "Pre-training: faster convergence" },
+            { "type": "p", "html": "They replace BERT's sinusoidal position encoding with RoPE and pre-train bert-base-uncased on BookCorpus + Wikipedia with masked-language-modeling loss, batch size 64, sequence length 512, 100k steps, AdamW at lr 1e-5. Figure 3 (left) shows RoFormer's MLM loss dropping <b>faster than vanilla BERT</b> throughout training — the relative-position signal is easier for the model to exploit. Figure 3 (right) repeats the win for the Performer (linear attention): adding RoPE speeds up its language-modeling convergence too, confirming the compatibility claim." },
+            { "type": "h2", "text": "GLUE downstream tasks" },
+            { "type": "p", "html": "Fine-tuning the pre-trained RoFormer on GLUE tasks (3 epochs, seq len 512, batch 32) versus BERT, RoFormer wins on three of six datasets, sometimes by wide margins (STS-B and QQP notably):" },
+            { "type": "table", "headers": ["Model", "MRPC", "SST-2", "QNLI", "STS-B", "QQP", "MNLI(m/mm)"], "rows": [
+              ["BERT (Devlin et al. 2019)", "88.9", "93.5", "90.5", "85.8", "71.2", "84.6/83.4"],
+              ["RoFormer", "89.5", "90.7", "88.0", "87.0", "86.4", "80.2/79.8"]
+            ]},
+            { "type": "p", "html": "The QQP jump (71.2 to <b>86.4</b>) and STS-B gain (85.8 to <b>87.0</b>) are the standout results; BERT still leads on SST-2, QNLI, and MNLI. The picture is a solid, real improvement rather than a clean sweep — RoPE's later dominance came as much from its extrapolation and efficiency properties as from raw benchmark points." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "Why RoPE became the LLM default",
+          "subtitle": "Impact and connections",
+          "pdfPages": [1, 5],
+          "blocks": [
+            { "type": "p", "html": "RoPE's modest 2021 benchmark gains undersold its eventual importance. Within two years it was the positional scheme in essentially every major open large language model — <b>LLaMA</b> and <b>LLaMA 2</b>, <b>GPT-NeoX</b>, <b>PaLM</b>, Mistral, Qwen, and more. The reasons are exactly the properties proven in this paper." },
+            { "type": "h2", "text": "The properties that won" },
+            { "type": "list", "items": [
+              "<b>No length ceiling and graceful extrapolation.</b> Position is a continuous rotation angle, not a lookup in a fixed-size table, so nothing is undefined at unseen indices — the foundation later long-context tricks build on.",
+              "<b>Long-term decay as a free inductive bias</b> — nearby tokens attend more strongly by default, matching how language works, with no hand-tuned mask.",
+              "<b>Composability with efficient attention</b> — because rotation preserves norms, RoPE drops into linear/Performer-style attention where additive embeddings cannot.",
+              "<b>Zero new parameters and near-zero cost</b> — just an element-wise multiply by precomputed sines and cosines."
+            ]},
+            { "type": "h2", "text": "How it connects to other landmark work" },
+            { "type": "p", "html": "RoPE reuses the <b>$10000$-base frequency ladder</b> straight from the sinusoidal encoding of the original Transformer (Vaswani et al. 2017) — but applies it multiplicatively by rotation rather than additively. It supersedes the additive relative schemes of Shaw et al. (2018) and Transformer-XL (Dai et al. 2019) precisely because those cannot factor through linear attention. And it set up an entire follow-on literature on <b>context-length extension</b>: Position Interpolation and NTK-aware / YaRN scaling all work by re-tuning RoPE's rotation frequencies to stretch a model trained at, say, 2k tokens out to 32k or beyond." },
+            { "type": "p", "html": "A common misconception is that RoPE is applied to the token embeddings or the value vectors — it is not. It rotates only the <b>query and key</b> vectors inside each attention head, right before the dot product; values are left untouched. That surgical placement is exactly why the relative-position phase appears cleanly in the attention logits and nowhere else. The paper notes RoFormer is already integrated into Hugging Face Transformers, which is where most practitioners first met it." }
+          ]
+        }
+      ]
+    }
+  ]
+}

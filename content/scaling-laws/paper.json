@@ -1,0 +1,176 @@
+{
+  "title": "Scaling Laws for Neural Language Models",
+  "authors": "Kaplan, McCandlish, Henighan, Brown, Chess, Child, Gray, Radford, Wu, Amodei (OpenAI)",
+  "year": "2020",
+  "venue": "arXiv:2001.08361",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The loss is a power law in scale",
+          "subtitle": "The one-sentence claim that reshaped how labs spend money",
+          "pdfPages": [1],
+          "blocks": [
+            {"type": "p", "html": "Before this paper, deciding how big to make a language model was mostly folklore. You had a GPU budget, you picked an architecture that felt right, you trained until the loss stopped dropping, and you hoped. There was no formula that said <i>given this much compute, build a model of exactly this size and stop at exactly this point</i>. This paper is that formula. It shows that the thing everyone cared about &mdash; the model's loss &mdash; is not a chaotic, architecture-dependent mess. It is a smooth, boring, predictable <b>power law</b> in three numbers: model size, dataset size, and compute."},
+            {"type": "p", "html": "A <b>power law</b> (relationship of the form $y = a\\,x^{-b}$) looks like a straight line when you plot both axes on a log scale. The headline finding is that the cross-entropy loss falls off as a straight line on log-log axes across <b>more than seven orders of magnitude</b> &mdash; from tiny 1000-parameter toys up to the largest models OpenAI could train. No bumps, no plateaus, no special sizes where things break. Just a ruler you can extrapolate along."},
+            {"type": "quote", "html": "The loss scales as a power-law with model size, dataset size, and the amount of compute used for training, with some trends spanning more than seven orders of magnitude."},
+            {"type": "p", "html": "The three scale knobs, and the symbols used for them throughout the paper:"},
+            {"type": "list", "items": [
+              "<b>$N$</b> &mdash; the number of model parameters, <i>excluding</i> all vocabulary and positional embeddings. Excluding embeddings is a deliberate trick that makes the scaling laws much cleaner (more on this later).",
+              "<b>$D$</b> &mdash; the dataset size, measured in tokens (sub-word pieces).",
+              "<b>$C$</b> &mdash; the compute used for training, measured in <b>PF-days</b> (petaflop-days): one PF-day $= 10^{15} \\times 24 \\times 3600 = 8.64 \\times 10^{19}$ floating-point operations."
+            ]},
+            {"type": "p", "html": "The most quoted practical conclusion is almost counterintuitive: for a fixed compute budget, you should train a <b>very large model</b> and <b>stop well before it converges</b>. Do not train a small model to the bitter end. Big models are more sample-efficient &mdash; they learn more per data point &mdash; so the compute-optimal move is to make the model huge and quit early."},
+            {"type": "quote", "html": "Larger models are significantly more sample-efficient, such that optimally compute-efficient training involves training very large models on a relatively modest amount of data and stopping significantly before convergence."},
+            {"type": "p", "html": "<b>Context.</b> This is the paper that made GPT-3 a rational bet rather than a gamble. It was written by an OpenAI team including Jared Kaplan, Sam McCandlish, Tom Brown, and Dario Amodei &mdash; Tom Brown would go on to lead the GPT-3 paper months later, and Dario Amodei later founded Anthropic. The core allocation rule here was famously <i>revised</i> two years later by DeepMind's Chinchilla paper, which we'll get to at the end."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Setup & definitions",
+      "pages": [
+        {
+          "title": "What exactly is being measured",
+          "subtitle": "WebText2, cross-entropy, and why embeddings are thrown out",
+          "pdfPages": [6],
+          "blocks": [
+            {"type": "p", "html": "To claim that loss is a clean power law, you first have to pin down <i>what loss</i>, <i>trained on what</i>, and <i>counting parameters how</i>. Sloppiness in any of these turns the beautiful straight lines into a smear. This page is the bookkeeping that makes the rest possible."},
+            {"type": "h2", "text": "The data and the metric"},
+            {"type": "p", "html": "The models are trained on <b>WebText2</b>, an extended version of the WebText dataset used for GPT-2, tokenized with byte-pair encoding into a vocabulary of $n_{\\text{vocab}} = 50257$ tokens. The metric is the <b>cross-entropy loss</b> (the autoregressive negative log-likelihood) averaged over a 1024-token context, measured in <b>nats</b> (natural-log units). Lower is better; a loss of $\\ln(2) \\approx 0.69$ nats per token would mean the model is effectively guessing between two options at every step."},
+            {"type": "p", "html": "The models are decoder-only <b>Transformers</b> &mdash; the same family as GPT-2. They also train some LSTMs and Universal Transformers for comparison, and (spoiler) the Transformers win at scale."},
+            {"type": "h2", "text": "Counting parameters the clean way"},
+            {"type": "p", "html": "The model size $N$ is defined as the number of <i>non-embedding</i> parameters:"},
+            {"type": "math", "tex": "N \\approx 2\\, d_{\\text{model}}\\, n_{\\text{layer}} \\left(2 d_{\\text{attn}} + d_{\\text{ff}}\\right) = 12\\, n_{\\text{layer}}\\, d_{\\text{model}}^2"},
+            {"type": "p", "html": "Reading it term by term: $n_{\\text{layer}}$ is the number of Transformer blocks (depth); $d_{\\text{model}}$ is the width of the residual stream; $d_{\\text{ff}}$ is the width of the feed-forward hidden layer; $d_{\\text{attn}}$ is the attention output dimension. Using the standard ratios $d_{\\text{attn}} = d_{\\text{ff}}/4 = d_{\\text{model}}$, the whole thing collapses to the memorable $N \\approx 12\\, n_{\\text{layer}}\\, d_{\\text{model}}^2$. The token-embedding matrix ($n_{\\text{vocab}} \\times d_{\\text{model}}$) and positional embeddings are deliberately <i>excluded</i> from $N$."},
+            {"type": "p", "html": "<b>Why exclude embeddings?</b> The embedding matrix scales with vocabulary size, which is an arbitrary choice of tokenizer, not a real measure of the model's computational muscle. Including it pollutes the trend with a vocabulary-dependent bump; excluding it produces the strikingly straight lines the paper is famous for. This is one of the paper's most important and least-appreciated methodological calls."},
+            {"type": "h2", "text": "Counting compute the cheap way"},
+            {"type": "math", "tex": "C \\approx 6\\, N B S"},
+            {"type": "p", "html": "This estimates total non-embedding training compute, where $B$ is the batch size and $S$ is the number of training steps (parameter updates). The factor of 6 is a rule of thumb: roughly $2N$ FLOPs for a forward pass (the 2 from multiply-accumulate) plus roughly $4N$ for the backward pass. So $C \\approx 6N \\times (\\text{tokens processed})$. This lets them convert any (model size, data seen) pair into a single compute number without profiling the actual hardware."},
+            {"type": "p", "html": "Two more symbols worth locking in now because they carry the whole compute-optimal story: <b>$C_{\\min}$</b> is the <i>minimum</i> compute needed to reach a given loss (what you'd spend training at a tiny batch size), and <b>$S_{\\min}$</b> is the minimum number of optimization steps to reach that loss (what you'd spend at a huge batch size). Real training sits between these two idealizations, at the <b>critical batch size</b> $B_{\\text{crit}}$."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The single-variable laws",
+      "pages": [
+        {
+          "title": "Three power laws, one for each knob",
+          "subtitle": "Equations 1.1&ndash;1.3 and the real fitted numbers",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "The cleanest experiments hold two knobs generous and starve the third. If you give a model unlimited data and unlimited compute and only vary its <i>size</i>, the loss traces one power law. If you fix everything but the <i>dataset</i>, another. If you fix everything but the <i>compute budget</i>, a third. Each is a straight line on log-log axes, and each comes with a concrete fitted exponent and scale constant."},
+            {"type": "h2", "text": "Law 1: loss vs model size N"},
+            {"type": "math", "tex": "L(N) = \\left(\\frac{N_c}{N}\\right)^{\\alpha_N}, \\quad \\alpha_N \\approx 0.076, \\quad N_c \\approx 8.8 \\times 10^{13}"},
+            {"type": "p", "html": "Here $L(N)$ is the loss of a model with $N$ non-embedding parameters, trained to convergence on plenty of data. $N_c$ is a scale constant (in parameters) and $\\alpha_N \\approx 0.076$ is the exponent that sets how steeply loss falls as the model grows. Because $\\alpha_N$ is small, gains are gradual: making the model <b>8&times; bigger</b> multiplies the loss by $8^{-0.076} \\approx 0.85$ &mdash; a modest but utterly reliable improvement, repeatable across six orders of magnitude in $N$."},
+            {"type": "h2", "text": "Law 2: loss vs dataset size D"},
+            {"type": "math", "tex": "L(D) = \\left(\\frac{D_c}{D}\\right)^{\\alpha_D}, \\quad \\alpha_D \\approx 0.095, \\quad D_c \\approx 5.4 \\times 10^{13}"},
+            {"type": "p", "html": "$L(D)$ is the best loss reachable with $D$ tokens of data (using a large model with early stopping so data, not size, is the bottleneck). $D_c$ is a scale constant in tokens and $\\alpha_D \\approx 0.095$ is the data exponent. It's slightly steeper than $\\alpha_N$, meaning more data buys a little more per doubling than more parameters do &mdash; a hint the community would seize on years later."},
+            {"type": "h2", "text": "Law 3: loss vs compute C"},
+            {"type": "math", "tex": "L(C_{\\min}) = \\left(\\frac{C_c^{\\min}}{C_{\\min}}\\right)^{\\alpha_C^{\\min}}, \\quad \\alpha_C^{\\min} \\approx 0.050, \\quad C_c^{\\min} \\approx 3.1 \\times 10^{8}\\ \\text{PF-days}"},
+            {"type": "p", "html": "This is the law that budget-holders care about: $L(C_{\\min})$ is the best loss achievable with a given amount of <i>optimally allocated</i> compute (measured in PF-days). The exponent $\\alpha_C^{\\min} \\approx 0.050$ is the shallowest of the three &mdash; unsurprising, since compute is spent on both size and data, so it converts to loss less efficiently than either alone. The superscript &ldquo;min&rdquo; matters: it's the trend with $C_{\\min}$ (small-batch idealization), which is what you extrapolate with, not the raw fixed-batch compute trend."},
+            {"type": "p", "html": "<b>A worked mini-prediction.</b> Suppose you're at loss 3.0 and want to know what 100&times; more compute buys. Multiply by $100^{-0.050} = 10^{-0.10} \\approx 0.79$: your loss would drop to about 2.4. That's the entire value proposition of scale in one multiplication &mdash; and it holds across <b>eight orders of magnitude in $C_{\\min}$</b>."},
+            {"type": "p", "html": "<b>Caveat the authors flag themselves.</b> These trends must flatten eventually &mdash; loss can't go below zero (or below the entropy of language itself). But within the tested range they see &ldquo;no signs of deviation.&rdquo; The scale constants $N_c, D_c, C_c^{\\min}$ depend on tokenizer and vocabulary and have no fundamental meaning; the <i>exponents</i> are the deep quantities."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Overfitting: N and D together",
+      "pages": [
+        {
+          "title": "How much data does a bigger model need?",
+          "subtitle": "The joint law L(N, D) and the 8x-size / 5x-data rule",
+          "pdfPages": [5, 3],
+          "blocks": [
+            {"type": "p", "html": "The single-variable laws each assumed one thing was starved and the other generous. But in real life you scale both $N$ and $D$ at once, and the question becomes: if I make my model 8&times; bigger, how much more data do I need so it doesn't just <b>overfit</b> (memorize the training set and generalize worse)? Too little data for a big model wastes the model; too much data for a small model wastes the data. The paper gives one equation that governs the trade-off exactly."},
+            {"type": "math", "tex": "L(N, D) = \\left[ \\left(\\frac{N_c}{N}\\right)^{\\frac{\\alpha_N}{\\alpha_D}} + \\frac{D_c}{D} \\right]^{\\alpha_D}"},
+            {"type": "p", "html": "Reading it: the loss is driven by two additive terms inside the bracket &mdash; a model-size term $(N_c/N)^{\\alpha_N/\\alpha_D}$ and a data term $D_c/D$ &mdash; raised to the power $\\alpha_D$. Whichever term dominates is your bottleneck. When $D \\to \\infty$ the data term vanishes and you recover Law 1, $L(N)$; when $N \\to \\infty$ you recover Law 2, $L(D)$. The single functional form smoothly interpolates between the two regimes."},
+            {"type": "p", "html": "The practical punchline drops out of the exponents. To keep the two terms balanced (neither one bottlenecking you) as you grow the model, dataset size must scale <b>sublinearly</b> with $N$:"},
+            {"type": "math", "tex": "D \\propto N^{\\frac{\\alpha_N}{\\alpha_D}} \\sim N^{0.74}"},
+            {"type": "p", "html": "Because $\\alpha_N/\\alpha_D \\approx 0.076/0.095 \\approx 0.74$, data needs to grow only as roughly the 0.74 power of model size. The paper's own rule of thumb:"},
+            {"type": "quote", "html": "The performance penalty depends predictably on the ratio $N^{0.74}/D$, meaning that every time we increase the model size 8x, we only need to increase the data by roughly 5x to avoid a penalty."},
+            {"type": "p", "html": "<b>Where 5x comes from:</b> $8^{0.74} \\approx 4.7 \\approx 5$. So an 8&times; bigger model needs only ~5&times; more data to stay overfitting-free &mdash; data grows more slowly than the model. This is exactly the reasoning that justified building enormous models on datasets that, by earlier standards, looked almost small."},
+            {"type": "p", "html": "<b>The seed of the Chinchilla correction.</b> This sublinear $N^{0.74}$ rule &mdash; grow the model faster than the data &mdash; is precisely the recommendation DeepMind's 2022 Chinchilla paper would overturn, arguing $N$ and $D$ should scale roughly <i>equally</i> (about 20 tokens per parameter). The disagreement traces largely to how the learning-rate schedule and early stopping were handled here, which we revisit at the end."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Training curves are predictable too",
+      "pages": [
+        {
+          "title": "Reading the future from the start of a run",
+          "subtitle": "L(N, S) and the critical batch size",
+          "pdfPages": [5],
+          "blocks": [
+            {"type": "p", "html": "So far the laws describe <i>final</i> loss. But there's a second, equally striking regularity: the <b>shape of the training curve itself</b> is predictable. Watch the first stretch of a run &mdash; the loss dropping step by step &mdash; and you can extrapolate what loss it would reach if you trained far longer. You don't have to finish the run to know where it's going."},
+            {"type": "p", "html": "In the infinite-data limit, after an initial transient, the loss as a function of model size $N$ and number of training steps $S$ fits:"},
+            {"type": "math", "tex": "L(N, S) = \\left(\\frac{N_c}{N}\\right)^{\\alpha_N} + \\left(\\frac{S_c}{S_{\\min}(S)}\\right)^{\\alpha_S}"},
+            {"type": "p", "html": "Term by term: the first term $(N_c/N)^{\\alpha_N}$ is the floor set by model size &mdash; the best loss this size of model could ever reach with infinite training. The second term is the <i>gap</i> still to be closed by more optimization steps, with $S_c \\approx 2.1 \\times 10^3$ and step-exponent $\\alpha_S \\approx 0.76$. Here $S_{\\min}(S)$ is the batch-adjusted step count &mdash; the effective number of updates if you'd trained at a very large batch size. As $S \\to \\infty$ the second term vanishes and you're left with the model-size floor."},
+            {"type": "p", "html": "<b>Why this is useful:</b> $\\alpha_S \\approx 0.76$ is large, so the second term shrinks fast &mdash; the run makes most of its progress early. Fit the curve on the cheap early steps, read off both terms, and you've forecast the expensive endpoint without paying for it. This is what lets the paper reason about &ldquo;stopping short of convergence&rdquo; quantitatively rather than by gut feel."},
+            {"type": "h2", "text": "The critical batch size"},
+            {"type": "p", "html": "How big should the batch be? Too small wastes serial steps; too large wastes compute per step. The sweet spot &mdash; the <b>critical batch size</b> $B_{\\text{crit}}$ &mdash; itself obeys a power law, but in the <i>loss</i>, not in $N$ or $D$:"},
+            {"type": "math", "tex": "B_{\\text{crit}}(L) = \\frac{B_*}{L^{1/\\alpha_B}}, \\quad B_* \\approx 2 \\times 10^{8}\\ \\text{tokens}, \\quad \\alpha_B \\approx 0.21"},
+            {"type": "p", "html": "So $B_{\\text{crit}}$ depends only on the current loss $L$: as loss falls, the critical batch size grows. $B_*$ sets the scale (~$2\\times10^8$ tokens) and $\\alpha_B \\approx 0.21$ the rate. Concretely, for the largest models near convergence, $B_{\\text{crit}}$ lands around <b>1&ndash;2 million tokens</b> &mdash; a number that directly informed how GPT-3-era models were batched. It's determinable by measuring the gradient noise scale (McCandlish et al. 2018)."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "6. Compute-optimal allocation",
+      "pages": [
+        {
+          "title": "Given a compute budget, how to spend it",
+          "subtitle": "The allocation exponents and why you stop early",
+          "pdfPages": [5, 16],
+          "blocks": [
+            {"type": "p", "html": "Now the payoff. You have a fixed compute budget $C$. You get to choose the model size $N$, the batch size $B$, the number of steps $S$, and therefore the data $D = B \\cdot S$. Which combination reaches the lowest loss? The paper minimizes $L(N, S)$ under the constraint $C \\approx 6NBS$ and gets clean power laws for every knob as a function of budget:"},
+            {"type": "math", "tex": "N \\propto C_{\\min}^{\\,\\alpha_C^{\\min}/\\alpha_N}, \\quad B \\propto C_{\\min}^{\\,\\alpha_C^{\\min}/\\alpha_B}, \\quad S \\propto C_{\\min}^{\\,\\alpha_C^{\\min}/\\alpha_S}, \\quad D = B \\cdot S"},
+            {"type": "p", "html": "Plugging in the fitted exponents gives the numbers that matter, which the paper reports as the empirically optimal scalings:"},
+            {"type": "math", "tex": "N \\propto C_{\\min}^{0.73}, \\quad B \\propto C_{\\min}^{0.24}, \\quad S \\propto C_{\\min}^{0.03}, \\quad D \\propto C_{\\min}^{0.27}"},
+            {"type": "p", "html": "This is the whole recipe in four exponents. Reading them: <b>model size $N$</b> should soak up almost all the extra budget (exponent 0.73). <b>Batch size $B$</b> grows moderately (0.24). <b>Steps $S$</b> barely grow at all (0.03) &mdash; nearly constant. And <b>data $D$</b> grows very slowly (0.27). The tiny $S$ exponent is the mathematical form of &ldquo;stop before convergence&rdquo;: when you get 10&times; more compute, you don't train longer, you train <i>bigger</i>."},
+            {"type": "table", "headers": ["Give it 10x more compute", "Multiply that knob by", "Interpretation"], "rows": [
+              ["Model size N", "~5x", "almost all the budget goes here"],
+              ["Batch size B", "~1.7x", "modest parallelism increase"],
+              ["Serial steps S", "~1.07x", "essentially unchanged"],
+              ["Data D = B·S", "~1.9x", "grows slowly, mostly via batch"]
+            ]},
+            {"type": "p", "html": "The optimal step exponent comes from combining the sub-laws ($B \\propto L^{-1/\\alpha_B}$ and $L \\propto C_{\\min}^{-\\alpha_C^{\\min}}$), yielding $S_{\\min} \\propto C_{\\min}^{0.03}$ &mdash; so small the authors note it &ldquo;may even be consistent with an exponent of zero.&rdquo; The optimal compute exponent itself has a tidy closed form combining the three rate constants:"},
+            {"type": "math", "tex": "\\alpha_C^{\\min} = \\frac{1}{1/\\alpha_S + 1/\\alpha_B + 1/\\alpha_N} \\approx 0.054"},
+            {"type": "p", "html": "This says the compute-efficiency exponent is a kind of harmonic blend of the step, batch, and size exponents &mdash; you can't beat the slowest link. The predicted $N(C_{\\min}) \\propto C_{\\min}^{0.71}$ from this theory matches the directly-fitted $C_{\\min}^{0.73}$ to within a few percent, so the empirical and theoretical routes agree."},
+            {"type": "quote", "html": "As the computational budget $C$ increases, it should be spent primarily on larger models, without dramatic increases in training time or dataset size. This also implies that as models grow larger, they become increasingly sample efficient."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "7. Impact & the Chinchilla correction",
+      "pages": [
+        {
+          "title": "What this predicted, and where it was wrong",
+          "subtitle": "GPT-3, the follow-on work, and Hoffmann et al. 2022",
+          "pdfPages": [3, 16],
+          "blocks": [
+            {"type": "p", "html": "The immediate legacy of this paper is that it turned model-building from art into budgeting. If loss is a predictable function of scale, then a lab can decide <i>in advance</i> how large a model to train and roughly what loss it will reach &mdash; before spending millions on GPUs. That de-risking is exactly what made the leap to a 175-billion-parameter model defensible."},
+            {"type": "h2", "text": "It predicted GPT-3"},
+            {"type": "p", "html": "Published in January 2020, this paper laid the quantitative groundwork for <b>GPT-3</b> (Brown et al., May 2020) &mdash; and Tom Brown, an author here, led that paper. The scaling laws said: keep going, bigger is predictably better, and you don't need proportionally more data. GPT-3 at 175B parameters was the direct empirical test of the &ldquo;spend it on model size&rdquo; conclusion, and its strong few-shot performance broadly vindicated the extrapolation."},
+            {"type": "h2", "text": "The Chinchilla correction (2022)"},
+            {"type": "p", "html": "Two years later, DeepMind's <b>Chinchilla</b> paper (Hoffmann et al., 2022) revisited the compute-optimal allocation and reached a sharply different answer. Where Kaplan et al. said &ldquo;spend almost all extra compute on model size&rdquo; ($N \\propto C^{0.73}$, $D \\propto C^{0.27}$), Chinchilla found that $N$ and $D$ should scale roughly <b>equally</b> ($N \\propto C^{0.50}$, $D \\propto C^{0.50}$) &mdash; about <b>20 training tokens per parameter</b>."},
+            {"type": "table", "headers": ["", "Kaplan et al. 2020", "Chinchilla 2022"], "rows": [
+              ["Model size scaling", "N ∝ C^0.73", "N ∝ C^0.50"],
+              ["Data scaling", "D ∝ C^0.27", "D ∝ C^0.50"],
+              ["Rule of thumb", "grow model >> data", "~20 tokens per parameter"],
+              ["Verdict on GPT-3 (175B)", "appropriately sized", "oversized & undertrained"]
+            ]},
+            {"type": "p", "html": "By Chinchilla's math, GPT-3 was too big for the data it saw: a smaller model trained on more tokens would have been better for the same compute. Chinchilla-70B (trained on 1.4T tokens) beat the 280B Gopher on the same budget, proving the point. The root of the discrepancy was largely methodological &mdash; Kaplan et al. used a fixed learning-rate schedule and specific early-stopping choices that biased the $D$ exponent; Chinchilla tuned the schedule to the training length. Later analyses reconciled much of the gap to these details."},
+            {"type": "p", "html": "<b>The lasting idea survives the correction.</b> The specific allocation exponent was revised, but the deeper claim &mdash; that loss follows smooth, extrapolable power laws in scale, and that you can plan training as a budgeting exercise &mdash; is now foundational. Every frontier lab runs scaling-law fits before training. This paper started that practice; Chinchilla refined a coefficient inside it."},
+            {"type": "p", "html": "<b>Connections in this collection:</b> it builds directly on the Transformer (Vaswani et al. 2017) and GPT-2 (Radford et al. 2019, whose WebText data it extends), justifies GPT-3 (Brown et al. 2020), and is corrected by Chinchilla (Hoffmann et al. 2022). The gradient-noise-scale work (McCandlish et al. 2018) supplies its critical-batch-size machinery."}
+          ]
+        }
+      ]
+    }
+  ]
+}

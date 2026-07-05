@@ -1,0 +1,159 @@
+{
+  "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+  "authors": "Yao, Zhao, Yu, Du, Shafran, Narasimhan, Cao",
+  "year": "2022",
+  "venue": "arXiv:2210.03629",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Reasoning and acting, fused into one loop",
+          "subtitle": "The idea that lets a language model think and use tools in the same breath",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"By late 2022, large language models could do two impressive things <i>separately</i>. They could <b>reason</b> out loud — <b>chain-of-thought (CoT)</b> prompting (Wei et al., 2022) coaxes a model to write intermediate steps like <i>&quot;1844 is before 1989, so...&quot;</i> before answering. And they could <b>act</b> — other work had them emit actions to control robots or browse the web. But reasoning and acting lived in different papers. This paper's one-line thesis: <b>interleave them</b>. Let the model write a thought, take an action, read the result, write the next thought, and so on, all in a single generated stream."},
+            {"type":"p","html":"Why does fusing them matter? A model reasoning alone is a <i>closed box</i>: it can only manipulate what it already believes, so if it &quot;remembers&quot; a fact wrong, the whole chain rots — this is <b>hallucination</b> (confidently stating false facts) and <b>error propagation</b> (one bad step poisoning the rest). A model acting alone is the opposite problem: it can fetch real information but has no scratchpad to plan with, so it flails. ReAct's claim is that each cures the other's disease: <b>reasoning decides which action to take next, and the action's result grounds the next round of reasoning</b>."},
+            {"type":"quote","html":"We explore the use of LLMs to generate both reasoning traces and task-specific actions in an interleaved manner, allowing for greater synergy between the two: reasoning traces help the model induce, track, and update action plans as well as handle exceptions, while actions allow it to interface with and gather additional information from external sources such as knowledge bases or environments."},
+            {"type":"p","html":"The name is a portmanteau: <b>Re</b>ason + <b>Act</b>. The authors — Shunyu Yao and colleagues at Princeton and Google Brain — tested it on four benchmarks spanning two very different regimes. On <b>knowledge tasks</b> (question answering with <b>HotpotQA</b>, fact verification with <b>Fever</b>), the model calls a simple Wikipedia API to look things up. On <b>decision-making tasks</b> (the text game <b>ALFWorld</b>, the shopping simulator <b>WebShop</b>), the model issues actions in an interactive environment over dozens of steps."},
+            {"type":"p","html":"The headline numbers, previewed right in the abstract: on ALFWorld and WebShop, ReAct beats specially-trained imitation-learning and reinforcement-learning agents by an <b>absolute 34% and 10%</b> in success rate — while being <i>prompted with only one or two examples</i>, versus baselines trained on $10^3$ to $10^5$ task instances. On HotpotQA and Fever it overcomes CoT's hallucination problem by grounding answers in real Wikipedia text. And crucially, its trajectories are <b>human-readable</b>: you can watch the model think, which makes it more interpretable and trustworthy."},
+            {"type":"p","html":"Historically this is one of the most consequential prompting papers ever written. The <b>Thought &rarr; Action &rarr; Observation</b> loop it introduced is the skeleton under essentially every modern tool-using agent — LangChain agents, AutoGPT-style systems, and the &quot;function calling / tool use&quot; loops in production LLM products all trace their lineage here. When people say &quot;an LLM agent,&quot; they usually mean something shaped like ReAct."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Motivation",
+      "pages": [
+        {
+          "title": "Cooking dinner: why humans interleave thought and action",
+          "subtitle": "The human-cognition analogy that grounds the whole method",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {"type":"p","html":"The paper opens not with equations but with a kitchen. Picture cooking a dish. You don't plan the whole meal in one shot and then execute robotically. Between physical actions you narrate to yourself: <i>&quot;now that everything is cut, I should heat up the pot of water.&quot;</i> You handle surprises: <i>&quot;I don't have salt, so let me use soy sauce and pepper instead.&quot;</i> You notice when you need outside information: <i>&quot;how do I prepare dough? Let me search the Internet.&quot;</i> Acting (chop, stir, open the fridge) and reasoning (plan, adjust, decide what to look up) are woven together so tightly you don't notice the seam."},
+            {"type":"p","html":"This <b>inner speech</b> — verbal reasoning that guides action — is a well-studied idea in cognitive science, and the paper cites Vygotsky, Luria, and work on working memory (Baddeley, 1992). The authors' bet is that language models should work the same way: reasoning to <i>act</i> (build and revise a plan) and acting to <i>reason</i> (fetch facts that inform the plan)."},
+            {"type":"h2","text":"What each half gets wrong alone"},
+            {"type":"p","html":"<b>Reasoning-only (chain-of-thought)</b> is, in the paper's words, a <i>&quot;static black box.&quot;</i> The model reasons using only its internal representations — it is <b>not grounded in the external world</b>, so it cannot update its knowledge mid-thought. If it needs the release year of a film and misremembers it, nothing corrects the error, and it compounds. Figure 1 shows exactly this: a CoT trace on a HotpotQA question confidently outputs the wrong list of devices because it hallucinated a fact it never checked."},
+            {"type":"p","html":"<b>Acting-only</b> models (like the era's web-browsing agents) predict actions from &quot;language priors&quot; but <b>don't reason abstractly about high-level goals or keep a working memory</b>. Figure 1's Act-only trace on the ALFWorld game keeps trying to take a pepper shaker from a sinkbasin that doesn't contain one — it can't step back and reason <i>&quot;this location is empty, try somewhere else,&quot;</i> so it loops uselessly, printing &quot;Nothing happens&quot; over and over."},
+            {"type":"p","html":"The gap the paper names: there had been <b>no study</b> of whether reasoning and acting, combined in a general (not task-specific) way, brings <i>systematic</i> benefits over either alone. ReAct is that study. This framing — one clean loop that fixes two well-known failure modes at once — is a big reason the paper landed so hard."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. The ReAct Method",
+      "pages": [
+        {
+          "title": "Augmenting the action space with language",
+          "subtitle": "The formal trick: thoughts are actions that only edit the model's own context",
+          "pdfPages": [3],
+          "blocks": [
+            {"type":"p","html":"Here is the whole method in one move. In a standard agent setup, at each time step $t$ the agent sees an observation $o_t$ from the environment and picks an action $a_t$ from a set of allowed actions $\\mathcal{A}$, following a policy $\\pi(a_t \\mid c_t)$ where the <b>context</b> $c_t$ is the whole history so far. ReAct changes exactly one thing: it <b>enlarges the action space</b> to also include <i>language</i>."},
+            {"type":"math","tex":"\\hat{\\mathcal{A}} = \\mathcal{A} \\cup \\mathcal{L}"},
+            {"type":"p","html":"Reading it term by term: $\\mathcal{A}$ is the original set of real actions the environment understands (e.g. <code>search[entity]</code>, or <code>go to drawer 1</code>). $\\mathcal{L}$ is the space of <b>language</b> — any free-form string the model can write. $\\hat{\\mathcal{A}}$ (&quot;A-hat&quot;) is the <b>augmented</b> action space: the model may now emit either a real action <i>or</i> a sentence of natural language. That union symbol $\\cup$ is doing all the conceptual work in the paper."},
+            {"type":"h2","text":"What a &quot;thought&quot; actually is"},
+            {"type":"p","html":"An action drawn from the language part, $\\hat{a}_t \\in \\mathcal{L}$, is called a <b>thought</b> or <b>reasoning trace</b>. Its defining property: it <b>does not touch the environment</b>, so it produces <b>no observation back</b>. It only updates the context:"},
+            {"type":"math","tex":"c_{t+1} = (c_t, \\hat{a}_t)"},
+            {"type":"p","html":"That is: the new context $c_{t+1}$ is just the old context $c_t$ with the thought $\\hat{a}_t$ appended. Compare that to a <i>real</i> action, which appends both the action and the environment's reply: $c_{t+1} = (c_t, a_t, o_{t+1})$. So a thought is a free move — the model reasons over its current context and writes something useful (a plan, a fact it extracted, a decision) that will shape its <i>next</i> action, without spending an environment step."},
+            {"type":"list","items":["<b>Decompose goals &amp; make plans:</b> <i>&quot;I need to search x, find y, then find z.&quot;</i>","<b>Inject commonsense knowledge:</b> <i>&quot;a desklamp is likely on a desk or shelf.&quot;</i>","<b>Extract key info from observations:</b> <i>&quot;the paragraph says x was started in 1844.&quot;</i>","<b>Track progress &amp; transit plans:</b> <i>&quot;now I have the shaker, next I need to put it on the drawer.&quot;</i>","<b>Handle exceptions &amp; re-plan:</b> <i>&quot;Front Row is not found, let me search &lsquo;Front Row (software)&rsquo; instead.&quot;</i>"]},
+            {"type":"p","html":"Why is this the right abstraction? Because it's <b>minimal</b>. The authors didn't design a bespoke planning module or a special &quot;reasoning head.&quot; A thought is just text the model generates — the same mechanism it uses for everything else. That's why the paper repeatedly stresses ReAct is <b>intuitive and easy to design</b>: a human annotator writing an in-context example just <i>types their thoughts in plain language on top of the actions</i>. No ad-hoc format, no thought-template engineering."}
+          ]
+        },
+        {
+          "title": "How you actually prompt it: frozen PaLM-540B, a few examples",
+          "subtitle": "In-context learning, and how QA and games use the loop differently",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type":"p","html":"ReAct is a <b>prompting</b> method — no gradient updates, no fine-tuning (the paper's main results use a <b>frozen</b> model). The engine is <b>PaLM-540B</b> (Chowdhery et al., 2022), a 540-billion-parameter language model, used purely through <b>few-shot in-context learning</b>: you paste a handful of worked examples into the prompt and the model imitates their pattern."},
+            {"type":"p","html":"Each in-context example is a <b>human-written trajectory</b> — a full sequence of thoughts, actions, and the observations that came back, showing how to solve one training instance. Few examples are needed: 6 for HotpotQA, 3 for Fever, 1&ndash;2 for the decision-making games. A footnote even notes that <b>more examples do not improve performance</b>, so they kept it lean."},
+            {"type":"h2","text":"Two rhythms for two kinds of task"},
+            {"type":"p","html":"The genius detail is that ReAct lets the <b>model decide</b> when to think versus act, and this naturally produces two rhythms:"},
+            {"type":"table","headers":["Task type","Rhythm","Why"],"rows":[["Reasoning-heavy (HotpotQA, Fever)","Strictly alternate: thought, action, observation, thought, ...","Almost every step needs fresh reasoning to decide what to look up next."],["Decision-heavy (ALFWorld, WebShop)","Sparse thoughts: act, act, act, think only when needed","Long trajectories (50+ actions); a thought is only worth spending at key junctures."]]},
+            {"type":"quote","html":"for decision making tasks that potentially involve a large number of actions ... thoughts only need to appear sparsely in the most relevant positions of a trajectory, so we let the language model decide the asynchronous occurrence of thoughts and actions for itself."},
+            {"type":"p","html":"That flexibility is why one paradigm covers a text game <i>and</i> a QA system. The paper lists four properties this buys: <b>(A) Intuitive &amp; easy to design</b> (annotators just write thoughts on top of actions); <b>(B) General &amp; flexible</b> (the free-form thought space fits any action space); <b>(C) Performant &amp; robust</b> (works from 1&ndash;6 examples, robust to which examples you pick); <b>(D) Human aligned &amp; controllable</b> — a human can read the trace and even <i>edit a thought</i> mid-run to steer the agent."},
+            {"type":"p","html":"One honest caveat the authors raise: because the language space $\\mathcal{L}$ is unlimited, learning to use it well <b>requires strong language priors</b> — which is exactly why a giant frozen model like PaLM-540B is the substrate. A small model, they later show, struggles to learn both reasoning and acting from just a couple of examples."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Knowledge Tasks: HotpotQA &amp; Fever",
+      "pages": [
+        {
+          "title": "A three-verb Wikipedia API, and the worked Apple Remote example",
+          "subtitle": "How ReAct searches its way to a grounded answer",
+          "pdfPages": [4, 2],
+          "blocks": [
+            {"type":"p","html":"To answer questions, the model needs to <i>reach outside itself</i>. The authors give it a deliberately <b>simple</b> Wikipedia web API with exactly three actions — simple on purpose, to force the model to retrieve via <i>explicit reasoning in language</i> rather than lean on a powerful search engine:"},
+            {"type":"list","items":["<code>search[entity]</code> — returns the first 5 sentences of that entity's Wikipedia page, or, if no such page exists, suggests the top-5 similar entity names.","<code>lookup[string]</code> — returns the next sentence in the current page containing that string (this simulates the browser's Ctrl+F).","<code>finish[answer]</code> — ends the task and returns the answer."]},
+            {"type":"p","html":"The two benchmarks: <b>HotpotQA</b> (Yang et al., 2018) is <b>multi-hop</b> question answering — a question needs reasoning across two or more Wikipedia passages, so you can't answer from one lookup. <b>Fever</b> (Thorne et al., 2018) is fact verification: given a claim, label it <b>SUPPORTS</b>, <b>REFUTES</b>, or <b>NOT ENOUGH INFO</b>. Both run in a <b>question-only</b> setup — the model gets no supporting paragraphs handed to it, so it must retrieve everything itself."},
+            {"type":"h2","text":"Watching the loop solve a real question"},
+            {"type":"p","html":"Figure 1's showcase question: <i>&quot;Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?&quot;</i> Watch ReAct think and act its way through it (this trace is the whole paper in miniature):"},
+            {"type":"table","headers":["Step","What the model generates / sees"],"rows":[["Thought 1","&quot;I need to search Apple Remote and find the program it was originally designed to interact with.&quot;"],["Act 1 / Obs 1","<code>search[Apple Remote]</code> &rarr; &quot;...originally designed to control the Front Row media center program...&quot;"],["Thought 2","&quot;I need to search Front Row next and find what other device can control it.&quot;"],["Act 2 / Obs 2","<code>search[Front Row]</code> &rarr; Could not find. Suggestions: [&lsquo;Front Row Seat to Earth&rsquo;, &lsquo;Front Row (software)&rsquo;, ...]"],["Thought 3","&quot;Front Row is not found. I need to search Front Row (software).&quot;"],["Act 3 / Obs 3","<code>search[Front Row (software)]</code> &rarr; &quot;...controlled by an Apple Remote or the keyboard function keys.&quot;"],["Thought 4 / Act 4","&quot;So the answer is keyboard function keys.&quot; &rarr; <code>finish[keyboard function keys]</code> &#10003;"]]},
+            {"type":"p","html":"Notice what reasoning did here that pure searching couldn't: at Thought 3 the first search <i>failed</i>, and the model <b>reasoned about the failure</b> and reformulated the query to the disambiguated title. In the same figure, the CoT-only model — with no ability to search — hallucinates the answer &quot;iPhone, iPad, iPod Touch&quot; and the Act-only model fails to synthesize a final answer. Grounding plus reasoning is what closes the loop."}
+          ]
+        },
+        {
+          "title": "Results: grounded but occasionally too rigid; the CoT hybrid wins",
+          "subtitle": "Real numbers on HotpotQA and Fever, and the failure-mode analysis",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type":"p","html":"Here are the PaLM-540B numbers (Table 1). HotpotQA is scored by <b>exact match (EM)</b>, the fraction of answers matching the gold answer exactly; Fever by accuracy."},
+            {"type":"table","headers":["Method","HotpotQA (EM)","Fever (Acc)"],"rows":[["Standard prompting","28.7","57.1"],["CoT (reason only)","29.4","56.3"],["CoT-SC (self-consistency, 21 samples)","33.4","60.4"],["Act (act only)","25.7","58.9"],["ReAct","27.4","60.9"],["CoT-SC &rarr; ReAct","34.2","64.6"],["ReAct &rarr; CoT-SC","35.1","62.0"],["Supervised state-of-the-art","67.5","89.5"]]},
+            {"type":"p","html":"Two clean takeaways. First, <b>ReAct beats Act on both tasks</b> (27.4 vs 25.7 EM; 60.9 vs 58.9 Acc) — reasoning genuinely helps acting, especially for synthesizing the final answer. Second, and more subtly: on HotpotQA <b>ReAct slightly <i>trails</i> CoT</b> (27.4 vs 29.4). Why would grounding hurt? Because the two methods fail differently."},
+            {"type":"h2","text":"The failure-mode study (Table 2)"},
+            {"type":"p","html":"The authors hand-labeled 50 correct and 50 incorrect trajectories from each of ReAct and CoT (200 total). The pattern is striking:"},
+            {"type":"table","headers":["Mode","ReAct","CoT"],"rows":[["False positive (hallucinated answer that happened to be scored right / wrong facts)","6%","14%"],["Hallucination as a failure cause","0%","56%"],["Reasoning error as a failure cause","47%","16%"],["Non-informative search derailing the run","23%","&mdash;"]]},
+            {"type":"p","html":"Read it this way: <b>hallucination is CoT's dominant disease</b> — it causes 56% of CoT's failures and near-zero of ReAct's, because ReAct's facts come from real Wikipedia text. But grounding imposes a <b>structural constraint</b>: ReAct must reason <i>within</i> what its searches returned, so a bad search (23% of its errors) can derail it, and it has a signature failure where it <b>repetitively regenerates the same thought and action, unable to break out of the loop</b>. So there's a real trade-off: ReAct is more <b>factual and trustworthy</b>, CoT is more <b>flexible in structuring reasoning</b>."},
+            {"type":"h2","text":"The fix: let the model switch methods"},
+            {"type":"p","html":"Since each method covers the other's weakness, the authors <b>combine</b> them with a simple heuristic, and it wins outright. <b>ReAct &rarr; CoT-SC</b>: run ReAct, but if it fails to return an answer within a step budget (7 steps for HotpotQA, 5 for Fever), back off to CoT with self-consistency. <b>CoT-SC &rarr; ReAct</b>: run CoT-SC, but if the majority vote among $n$ samples is shaky (fewer than $n/2$ agree, i.e. internal knowledge isn't confident), back off to ReAct to go look it up. These hybrids hit <b>35.1 EM on HotpotQA</b> and <b>64.6 Acc on Fever</b> — and Figure 2 shows they match plain CoT-SC's quality using only 3&ndash;5 samples where CoT-SC needs 21. Knowing when to trust memory versus when to go check is the real lesson."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Decision-Making: ALFWorld &amp; WebShop",
+      "pages": [
+        {
+          "title": "Long-horizon games where sparse thoughts crush trained agents",
+          "subtitle": "The headline result: +34% on ALFWorld, +10% on WebShop, from 1-2 examples",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type":"p","html":"The QA tasks show ReAct fixing hallucination. The decision-making tasks show something arguably more surprising: a <b>prompted</b> LLM beating agents specifically <b>trained</b> for the job. Both environments demand acting over <b>long horizons with sparse rewards</b> — you only find out if you won at the very end — which is where planning and exploration matter most."},
+            {"type":"h2","text":"ALFWorld: a text-based household game"},
+            {"type":"p","html":"<b>ALFWorld</b> (Shridhar et al., 2020b) is a synthetic text game mirroring the embodied ALFRED benchmark. The agent gets a high-level goal like <i>&quot;examine a paper under a desklamp&quot;</i> and must navigate a simulated house via text actions (<code>go to coffeetable 1</code>, <code>take paper 2</code>, <code>use desklamp 1</code>). A single task can span <b>50+ locations and 50+ steps</b>, and a key built-in challenge is figuring out <i>where</i> common objects live (a desklamp is likely on a desk, shelf, or dresser) — a perfect fit for an LLM's pretrained commonsense. ReAct's sparse thoughts do four jobs: decompose the goal, track subgoal completion, decide the next subgoal, and reason via commonsense about where to look."},
+            {"type":"p","html":"The baseline is <b>BUTLER</b>, an imitation-learning agent trained on <b>$10^5$ (100,000) expert trajectories per task type</b>. ReAct uses <b>2 examples</b>. The success rates (Table 3, %):"},
+            {"type":"table","headers":["Method","Training data","All-task success"],"rows":[["BUTLER (best of 8)","10^5 trajectories / task","37"],["Act (best of 6)","1-2 examples","45"],["ReAct (best of 6)","1-2 examples","71"],["ReAct (avg)","1-2 examples","57"]]},
+            {"type":"p","html":"ReAct's best trial hits <b>71% success</b> — nearly double BUTLER's 37% and well above Act's 45%. Even ReAct's <i>worst</i> trial (48%) beats the <i>best</i> trial of both other methods. The gain over Act is consistent across all six controlled trials, <b>averaging 62% relative improvement</b>. Without any thoughts, Act simply fails to decompose goals or track state; the paper notes it &quot;loses track of the current state of the environment.&quot;"},
+            {"type":"h2","text":"WebShop: shopping on a noisy real-world site"},
+            {"type":"p","html":"<b>WebShop</b> (Yao et al., 2022) is a shopping environment built from <b>1.18M real Amazon products</b> and 12k human instructions. Given a request like <i>&quot;a nightstand with drawers, nickel finish, priced under $140,&quot;</i> the agent must search, read noisy product text, choose options, and buy. It's scored by average attribute <b>score</b> and by <b>success rate (SR)</b> over 500 test instructions (Table 4):"},
+            {"type":"table","headers":["Method","Score","SR"],"rows":[["Act (1-shot)","62.3","30.1"],["ReAct (1-shot)","66.6","40.0"],["IL (imitation, 1,012 human trajectories)","59.9","29.1"],["IL+RL (10,587 training instructions)","62.4","28.7"],["Human expert","82.1","59.6"]]},
+            {"type":"p","html":"ReAct's sparse reasoning lifts success from 30.1% to <b>40.0%</b> — an <b>absolute 10% gain</b> over the previous best (IL). The reasoning bridges the gap between noisy observations and actions: e.g. reading &quot;39x18x18inch&quot; and &quot;blue&quot; options and deciding whether they match the instruction before buying. (Honest note: all methods still trail human experts at 59.6% SR, who explore and re-query far more than prompting can yet manage.)"},
+            {"type":"h2","text":"Reasoning must be flexible, not just present"},
+            {"type":"p","html":"A key ablation drives the point home. The authors built <b>ReAct-IM</b>, a variant whose thoughts are the dense, reactive &quot;inner monologue&quot; style of Huang et al. (2022b) — thoughts limited to restating the environment state and remaining subgoals. ReAct beats it <b>71 vs 53</b> on ALFWorld. Rigid, state-only reasoning isn't enough; ReAct wins because its thoughts are <b>sparse and flexible</b>, doing high-level goal decomposition and commonsense retrieval that ReAct-IM's fixed template can't. It's not that the model thinks — it's <i>what</i> and <i>when</i> it's allowed to think."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Significance",
+      "pages": [
+        {
+          "title": "Why ReAct became the template under every agent",
+          "subtitle": "Interpretability, controllability, fine-tuning, and its long shadow",
+          "pdfPages": [6, 7, 8],
+          "blocks": [
+            {"type":"p","html":"Step back from the numbers and the durable contribution is a <b>shape</b>: the <b>Thought &rarr; Action &rarr; Observation</b> loop. It is the first demonstration of combined reasoning and acting with an LLM inside a closed-loop interactive system, and it turned out to be the right abstraction to build on. Nearly every &quot;LLM agent&quot; framework that followed — LangChain's agents, AutoGPT, BabyAGI, and the tool-use / function-calling loops inside production assistants — is a ReAct loop with a richer toolset. When a chatbot &quot;decides to search the web, reads the result, then answers,&quot; that is ReAct running."},
+            {"type":"h2","text":"Interpretability and control, for free"},
+            {"type":"p","html":"Because the trace is <b>plain language</b>, a human can read exactly why the agent did what it did, and can <b>readily distinguish the model's internal knowledge from externally-retrieved information</b> — the observations are visibly separate from the thoughts. Better still, the authors show you can <b>edit a thought mid-run</b> to correct the agent on the fly (Figure 5). This human-alignment property, almost a side effect of using language as the action space, is a large part of why the paradigm was adopted so widely: you can debug an agent by reading it."},
+            {"type":"h2","text":"Fine-tuning: the small-model story flips"},
+            {"type":"p","html":"With only prompting, ReAct <b>needs a huge model</b>: on PaLM-8B/62B it's the <i>worst</i> of the four methods, because learning to both reason and act from two examples is hard for a small model. But the authors ran an initial <b>fine-tuning</b> experiment (bootstrapping ~3,000 ReAct trajectories, in the style of STaR, Zelikman et al. 2022), and the ranking <b>inverts</b>: once fine-tuned, ReAct becomes the <i>best</i> of the four, and a <b>fine-tuned PaLM-8B ReAct outperforms all 540B prompting methods</b>. The lesson they draw — that fine-tuning Standard/CoT teaches a model to <i>memorize</i> (possibly hallucinated) facts, while ReAct/Act teach the more generalizable skill of <i>going to fetch</i> information — foreshadowed the tool-use fine-tuning wave (Toolformer, and the function-calling training baked into later chat models)."},
+            {"type":"h2","text":"Honest limitations and lasting connections"},
+            {"type":"list","items":["<b>Scale gap remains:</b> even the best ReAct hybrids (35 EM on HotpotQA) trail supervised systems (67.5) and human experts — prompting is a strong floor, not a ceiling.","<b>Greedy-decoding loops:</b> ReAct can get stuck repeating a thought/action; the authors suspect better decoding (beam search) or more training data would help.","<b>Relatives:</b> it descends from chain-of-thought (Wei et al., 2022) on the reasoning side and web-agents like WebGPT (Nakano et al., 2021) on the acting side, and improves on Inner Monologue (Huang et al., 2022b) by making reasoning flexible rather than state-only.","<b>Descendants:</b> Reflexion (self-critique over ReAct traces), Tree-of-Thoughts (from the same lead author, Yao et al. 2023), and the entire tool-calling-agent ecosystem build directly on this loop."]},
+            {"type":"p","html":"The one-sentence legacy: ReAct showed that you don't need a new architecture to make a language model an <i>agent</i> — you just let it think and act in the same stream, and let each ground the other. That idea is now so standard it's easy to forget it had to be invented here."}
+          ]
+        }
+      ]
+    }
+  ]
+}

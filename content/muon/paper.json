@@ -1,0 +1,209 @@
+{
+  "title": "Muon: An Optimizer for the Hidden Layers of Neural Networks",
+  "authors": "Jordan, Bernstein, et al.",
+  "year": "2025",
+  "venue": "arXiv:2502.16982",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The big claim: 2x cheaper training than AdamW",
+          "subtitle": "Muon is Scalable for LLM Training (Moonlight)",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"For a decade, essentially every large language model has been trained with <b>Adam</b> or its cousin <b>AdamW</b> (an optimizer is the rule that decides how to nudge each weight after seeing a gradient). This paper asks a simple but expensive question: is there something better? It studies <b>Muon</b>, an optimizer that treats a weight matrix as a <i>matrix</i> rather than as a bag of independent numbers, and shows that once you fix two engineering details it beats AdamW at scale."},
+            {"type":"p","html":"The intuition in one sentence: take the ordinary momentum-SGD update and <b>orthogonalize</b> it before applying it, so that every direction the update points in gets a comparable step size instead of one or two dominant directions swamping the rest. Concretely, Muon runs a handful of cheap matrix iterations (Newton-Schulz) to replace the update matrix with its nearest orthogonal matrix."},
+            {"type":"p","html":"Why anyone should care: the paper reports that Muon reaches the same loss as a strong AdamW baseline while using only about <b>52% of the training FLOPs</b> (floating-point operations, the standard unit of compute). That is roughly a <b>2x</b> improvement in compute efficiency at compute-optimal training. When training runs cost millions of dollars, halving the compute is a headline result."},
+            {"type":"quote","html":"Scaling law experiments indicate that Muon achieves ~2x computational efficiency compared to AdamW with compute optimal training."},
+            {"type":"p","html":"This is a <b>Technical Report from Moonshot AI</b> (with UCLA), lead author Jingyuan Liu, dated 24 Feb 2025. It builds directly on Keller Jordan et al.'s original 2024 Muon and Jeremy Bernstein et al.'s work framing optimizers as steepest descent under a norm. Its concrete deliverable is <b>Moonlight</b>: a 3B-activated / 16B-total Mixture-of-Expert model trained on 5.7T tokens with Muon, which advances the Pareto frontier of MMLU score versus training FLOPs (Figure 1b)."},
+            {"type":"p","html":"The two fixes that made Muon scale, which the rest of the paper is about: (1) add <b>weight decay</b> (a small pull of every weight toward zero each step) so weights and activations don't blow past the bf16 numeric range; and (2) <b>carefully rescale the per-parameter update</b> so matrices of different shapes all move at a consistent size and can reuse AdamW's tuned learning rate. With these, Muon works out-of-the-box with no new hyperparameter tuning."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2.1 Background",
+      "pages": [
+        {
+          "title": "The core idea: orthogonalize the momentum update",
+          "subtitle": "What Muon actually computes each step",
+          "pdfPages": [2],
+          "blocks": [
+            {"type":"p","html":"Here is the problem Muon attacks. A gradient descent step on a weight matrix tends to have a <b>lopsided singular spectrum</b>: a few directions carry almost all the update's magnitude and the rest carry almost none. So the model repeatedly learns along the same handful of dominant directions and barely explores the others. Muon's fix is to flatten that spectrum, forcing all directions to receive a comparable-sized step."},
+            {"type":"p","html":"Analogy: imagine pushing a shopping cart with one wheel much bigger than the others. Every push mostly rolls you along the big wheel's direction. Orthogonalization is like swapping in four equal wheels so a push moves you evenly in whatever direction you aim. Muon does exactly this to the update matrix, every step, for every 2D hidden weight."},
+            {"type":"p","html":"Formally, at iteration $t$, given the previous weight $\\mathbf{W}_{t-1}$, momentum coefficient $\\mu$, learning rate $\\eta_t$ and loss $\\mathcal{L}_t$, the Muon update is:"},
+            {"type":"math","tex":"\\mathbf{M}_t = \\mu \\mathbf{M}_{t-1} + \\nabla \\mathcal{L}_t(\\mathbf{W}_{t-1})"},
+            {"type":"math","tex":"\\mathbf{O}_t = \\text{Newton-Schulz}(\\mathbf{M}_t)"},
+            {"type":"math","tex":"\\mathbf{W}_t = \\mathbf{W}_{t-1} - \\eta_t \\mathbf{O}_t"},
+            {"type":"p","html":"Reading it term by term: $\\mathbf{M}_t$ is the <b>momentum buffer</b>, an exponential running average of the gradient with decay $\\mu$ (set to 0.95); it starts as a zero matrix at $t=0$. $\\nabla \\mathcal{L}_t(\\mathbf{W}_{t-1})$ is the gradient of the loss with respect to the weight, a matrix the same shape as $\\mathbf{W}$. $\\mathbf{O}_t$ is the <b>orthogonalized</b> update, produced by running a Newton-Schulz iteration on $\\mathbf{M}_t$. $\\eta_t$ is the learning rate (a scalar). The final line is a plain SGD-style step, just with $\\mathbf{O}_t$ in place of the raw momentum."},
+            {"type":"p","html":"What does 'orthogonalize' mean precisely? Let $\\mathbf{U}\\mathbf{\\Sigma}\\mathbf{V}^{\\mathsf{T}} = \\mathbf{M}_t$ be the singular value decomposition of the momentum (any matrix factors this way; $\\mathbf{U},\\mathbf{V}$ are orthogonal, $\\mathbf{\\Sigma}$ is diagonal with the singular values). Muon effectively computes $(\\mathbf{M}_t\\mathbf{M}_t^{\\mathsf{T}})^{-1/2}\\mathbf{M}_t = \\mathbf{U}\\mathbf{V}^{\\mathsf{T}}$. That throws away $\\mathbf{\\Sigma}$ entirely: every singular value becomes 1. All directions now have equal weight."},
+            {"type":"quote","html":"Intuitively, orthogonalization can ensure that the update matrices are isomorphic, preventing the weight from learning along only a few dominant directions."},
+            {"type":"p","html":"Design note: computing an exact SVD every step for every matrix would be far too slow, which is why Muon never does — it approximates $\\mathbf{U}\\mathbf{V}^{\\mathsf{T}}$ with a few cheap matrix multiplies (next page). One subtlety from the footnote: in practice they feed a <b>Nesterov-style</b> momentum $\\mu\\mathbf{M}_t + \\nabla\\mathcal{L}_t$ into Newton-Schulz rather than $\\mathbf{M}_t$ itself. Muon is only used on 2D hidden weights; embeddings, the LM head, and 1D params (RMSNorm gains, biases) stay on AdamW."}
+          ]
+        },
+        {
+          "title": "Newton-Schulz: orthogonalizing without an SVD",
+          "subtitle": "Five cheap matrix multiplies replace a full decomposition",
+          "pdfPages": [3],
+          "blocks": [
+            {"type":"p","html":"The last page said Muon wants $\\mathbf{U}\\mathbf{V}^{\\mathsf{T}}$, the orthogonal factor of the momentum. Computing that via SVD is exact but expensive on a GPU. The trick is a <b>Newton-Schulz iteration</b>: a short sequence of matrix multiplications that pushes every singular value toward 1 while leaving the singular vectors alone. After five iterations you have a good enough approximation of $\\mathbf{U}\\mathbf{V}^{\\mathsf{T}}$ using nothing but matmuls, which GPUs love."},
+            {"type":"p","html":"First you normalize: set $\\mathbf{X}_0 = \\mathbf{M}_t / \\lVert \\mathbf{M}_t \\rVert_{\\mathrm{F}}$ (dividing by the Frobenius norm, the square root of the sum of all squared entries) so the singular values start in a range where the iteration converges. Then each step applies a fixed cubic polynomial to the singular values via:"},
+            {"type":"math","tex":"\\mathbf{X}_k = a\\mathbf{X}_{k-1} + b(\\mathbf{X}_{k-1}\\mathbf{X}_{k-1}^{\\mathsf{T}})\\mathbf{X}_{k-1} + c(\\mathbf{X}_{k-1}\\mathbf{X}_{k-1}^{\\mathsf{T}})^2 \\mathbf{X}_{k-1}"},
+            {"type":"p","html":"Reading it: $\\mathbf{X}_{k-1}$ is the current estimate, and each of the three terms is a matrix the same shape as $\\mathbf{X}$. Because $\\mathbf{X}\\mathbf{X}^{\\mathsf{T}}$ shares $\\mathbf{X}$'s singular vectors, this whole update is equivalent to applying the scalar polynomial $f(x) = ax + bx^3 + cx^5$ to <i>each singular value</i> $x$ independently, leaving $\\mathbf{U}$ and $\\mathbf{V}$ untouched. The coefficients are chosen so $f$ has a <b>fixed point near 1</b> — so any singular value, small or large, is dragged toward 1 after a few passes. After $N$ steps the result $\\mathbf{X}_N$ is the orthogonalized update."},
+            {"type":"p","html":"The concrete numbers, taken unchanged from Keller Jordan's original design: $a = 3.4445$, $b = -4.7750$, $c = 2.0315$. These were hand-tuned to make the iteration converge fast even when the initial singular values are tiny. The paper keeps $N = 5$; it notes that $N = 10$ gives a more accurate orthogonalization but no better final model, so five wins on cost."},
+            {"type":"h2","text":"Why this is the 'right' norm"},
+            {"type":"p","html":"Bernstein et al. (2024) reframed optimizers as <b>steepest descent under a norm constraint</b> — you descend the loss as fast as possible subject to a cap on how big the step is, and different optimizers just use different notions of 'big'. In that lens, Adam is steepest descent under a max-of-max norm, while Muon's constraint is (when orthogonalization is exact) the <b>spectral norm</b> — the largest singular value of the update."},
+            {"type":"quote","html":"Weights of neural networks are used as operators on the input space or the hidden space, which are usually (locally) Euclidean, so the norm constraint on weights should be an induced operator norm (or spectral norm for weight matrices). In this sense, the norm constraint offered by Muon is more reasonable than that offered by Adam."},
+            {"type":"p","html":"Takeaway: Muon isn't an arbitrary hack. Treating a weight matrix as a linear operator, the natural way to measure the size of an update is its spectral norm, and constraining <i>that</i> is exactly what orthogonalizing the update does. Muon is the optimizer that respects the matrix structure the other optimizers ignore."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2.2 Scaling Up Muon",
+      "pages": [
+        {
+          "title": "Fix #1: weight decay keeps training in bf16 range",
+          "subtitle": "Why plain Muon stalls on big over-trained models",
+          "pdfPages": [3,4],
+          "blocks": [
+            {"type":"p","html":"Muon looked great on small models, but the authors found its advantage <b>shrinks as you scale up</b> — bigger model, more tokens, smaller win. Debugging this is the heart of the paper. The culprit: both the weights and each layer's output RMS (root-mean-square magnitude) kept <b>growing without bound</b> during long training runs, eventually exceeding the range that <b>bf16</b> (the 16-bit float used to save memory) can represent with precision. Numbers that big lose accuracy, and the model suffers."},
+            {"type":"p","html":"The fix is the oldest trick in the book, which the original Muon had left out: <b>weight decay</b>, the same mechanism that turns Adam into AdamW. Each step, in addition to the gradient update, pull every weight a little toward zero. That caps the growth. The update rule becomes:"},
+            {"type":"math","tex":"\\mathbf{W}_t = \\mathbf{W}_{t-1} - \\eta_t (\\mathbf{O}_t + \\lambda \\mathbf{W}_{t-1})"},
+            {"type":"p","html":"Reading it: $\\mathbf{O}_t$ is the orthogonalized Muon update from before; $\\lambda$ is the <b>weight decay ratio</b> (a small scalar, e.g. 0.1 in the Moonlight runs); $\\lambda \\mathbf{W}_{t-1}$ is a force proportional to the current weight, pointing back toward the origin, so large weights get pulled harder. $\\eta_t$ scales the whole step. Set $\\lambda = 0$ and you recover vanilla Muon."},
+            {"type":"h2","text":"The experiment that proved it"},
+            {"type":"p","html":"They trained an <b>800M-parameter</b> model on roughly <b>5x</b> the compute-optimal token count (deliberately over-training, where the numeric blow-up bites) and compared three optimizers. Figure 2 shows the validation loss curves for AdamW (green), vanilla Muon without decay (red), and Muon with decay (blue)."},
+            {"type":"p","html":"The story in the curves: vanilla Muon <b>converges faster early</b> (its red curve leads at first) but some weights grow too large over time and it loses its long-term edge. AdamW and decayed Muon keep improving. In the over-trained regime, <b>Muon-with-decay ends lowest</b> of the three, beating both vanilla Muon and AdamW."},
+            {"type":"quote","html":"Adding weight decay addressed this issue - the results demonstrate that Muon with weight decay outperforms both vanilla Muon and AdamW, achieving lower validation loss in the over-train regime."},
+            {"type":"p","html":"Trivia: this mirrors the AdamW story exactly. Loshchilov & Hutter (2019) showed decoupled weight decay fixed Adam's implicit-decay bug; here the same decoupled decay rescues Muon at scale. The footnote notes Muon's original implementation omitted decay and a concurrent community fix (a GitHub commit and discussion) reached the same conclusion independently."}
+          ]
+        },
+        {
+          "title": "Fix #2: making every matrix update the same size",
+          "subtitle": "The update-RMS lemma and matching AdamW",
+          "pdfPages": [3,4],
+          "blocks": [
+            {"type":"p","html":"Adam has a quietly convenient property: its update RMS (the typical magnitude of a single weight change) stays near 1 regardless of the parameter's shape. That's why one learning rate works for every layer. Muon <b>does not</b> have this property out of the box — the size of its update depends on the matrix's shape, which means a single learning rate over- or under-steps different layers. The paper pins this down with a lemma."},
+            {"type":"h2","text":"Lemma 1: update RMS depends on shape"},
+            {"type":"quote","html":"For a full-rank matrix parameter of shape [A, B], its theoretical Muon update RMS is sqrt(1 / max(A, B))."},
+            {"type":"math","tex":"\\text{RMS}(\\mathbf{O}_t) \\approx \\sqrt{\\frac{1}{\\max(A, B)}}"},
+            {"type":"p","html":"Reading it: $A$ and $B$ are the two dimensions of the weight matrix (say rows and columns). Because orthogonalization sets all singular values to 1, the total energy of the update is fixed, so spreading it over a bigger matrix makes each individual entry smaller — hence the $1/\\max(A,B)$. A big dense MLP matrix therefore gets <b>tiny</b> per-entry updates (its capacity is under-used), while a small matrix — e.g. treating each KV head in GQA or MLA as its own parameter — gets <b>huge</b> updates that destabilize training."},
+            {"type":"list","items":[
+              "<b>max(A,B) too large</b> (dense MLP): updates too small, wasting representational capacity.",
+              "<b>max(A,B) too small</b> (per-head GQA/MLA params): updates too large, causing instabilities."
+            ]},
+            {"type":"p","html":"The fix is to <b>rescale</b> each matrix's update to cancel the shape dependence, and to target the same 0.2-0.4 RMS band AdamW naturally sits in so Muon can reuse AdamW's tuned $\\eta$ and $\\lambda$. The combined update rule they adopt:"},
+            {"type":"math","tex":"\\mathbf{W}_t = \\mathbf{W}_{t-1} - \\eta_t \\left( 0.2 \\cdot \\mathbf{O}_t \\cdot \\sqrt{\\max(A, B)} + \\lambda \\mathbf{W}_{t-1} \\right)"},
+            {"type":"p","html":"Reading it: the $\\sqrt{\\max(A,B)}$ factor exactly cancels the $1/\\sqrt{\\max(A,B)}$ from Lemma 1, so every matrix's update RMS becomes shape-independent; the constant $0.2$ then lands that RMS in AdamW's usual range. $\\lambda \\mathbf{W}_{t-1}$ is the weight decay from Fix #1. Net effect: one shared learning rate now behaves consistently across all layers."},
+            {"type":"p","html":"Two other knobs are set and forgotten: Newton-Schulz steps $N = 5$ (accuracy plateaus, cost matters) and momentum $\\mu = 0.95$ (no consistent gain from tuning it, matching Keller Jordan). The reward for all this care, stated bluntly by the authors:"},
+            {"type":"quote","html":"With this adjustment, Muon can directly reuse the learning rate and weight decay tuned for AdamW."},
+            {"type":"p","html":"Design payoff: no separate hyperparameter search for Muon. You take the recipe you already tuned for your AdamW baseline and swap the optimizer on the 2D weights. Keller Jordan's original used $\\sqrt{\\max(1, A/B)}$, equivalent up to a global scale; Pethick et al. (2025) and You (2025) hit the same update-scaling issue concurrently, a sign the community was converging on this."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2.3 Distributed Muon",
+      "pages": [
+        {
+          "title": "Making Muon work under ZeRO-1 sharding",
+          "subtitle": "Gathering the full matrix without paying full memory",
+          "pdfPages": [4,5],
+          "blocks": [
+            {"type":"p","html":"Real LLM training shards optimizer state across GPUs with <b>ZeRO-1</b> (Rajbhandari et al. 2020): each GPU stores only $1/DP$ of the master weights and momentum ($DP$ = number of data-parallel workers), which is what makes billion-parameter training fit in memory. ZeRO-1 works beautifully for AdamW because AdamW's update is <b>element-wise</b> — each weight's update needs only that weight's own gradient and state, so a shard can update its own slice in isolation."},
+            {"type":"p","html":"Muon breaks that assumption. Orthogonalization is a <b>whole-matrix</b> operation — Newton-Schulz multiplies the entire momentum matrix by itself, so you cannot compute a shard's update from that shard alone; you need the full matrix. Vanilla ZeRO-1 is therefore not directly applicable, and this is the engineering gap Distributed Muon closes."},
+            {"type":"p","html":"The solution adds exactly two operations on top of a ZeRO-1 AdamW skeleton:"},
+            {"type":"list","items":[
+              "<b>DP Gather</b>: before computing the update, gather the sharded gradients into a full gradient matrix on each worker that needs it.",
+              "<b>Calculate Full Update</b>: run Newton-Schulz on that full matrix — then <b>discard</b> all of the result except the local shard, since a worker only applies its own slice."
+            ]},
+            {"type":"h2","text":"Algorithm 1, in plain terms"},
+            {"type":"list","items":[
+              "<code>reduce_scatter(G)</code> the gradients so each worker owns a correct slice.",
+              "Apply momentum locally: <code>g' = update_with_momentum(g, m, mu)</code>.",
+              "<b>gather</b> the momentum slices into the full matrix G (the extra step).",
+              "<code>U = Newton-Schulz(G)</code> — the whole-matrix orthogonalization.",
+              "Keep only the local partition <code>u</code> of U, apply the update to get <code>p'</code>.",
+              "<b>all-gather</b> the updated parameters into P; return sqrt(mean(u^2)) as the update RMS for logging."
+            ]},
+            {"type":"p","html":"Why it stays cheap. Memory: Muon keeps <b>one</b> momentum buffer versus AdamW's two, so its extra optimizer memory is <i>half</i> AdamW's. Communication: the extra gather touches only the parameters, and Newton-Schulz runs in bf16 (halving its bytes versus fp32), so the total comm bound is at most <b>1.25x</b> Distributed AdamW's and in practice closer to 1x. Latency: only ~5 Newton-Schulz steps are needed, and optimizer time is 1-3% of the forward-backward pass anyway, so it hides."},
+            {"type":"quote","html":"When training large-scale models in our distributed cluster, Distributed Muon has no noticeable latency overhead compared to its AdamW counterparts."},
+            {"type":"p","html":"Practical upshot: Muon is a genuine drop-in replacement in a modern Megatron-LM-style stack (TP/PP/EP/DP parallelism), not a research toy. The authors say they will upstream a Distributed Muon implementation to open-source Megatron-LM."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Experiments",
+      "pages": [
+        {
+          "title": "The 2x compute win, measured by scaling laws",
+          "subtitle": "Fitting loss-vs-FLOPs curves for both optimizers",
+          "pdfPages": [6,7],
+          "blocks": [
+            {"type":"p","html":"The headline claim — Muon halves the compute — has to be measured fairly, and the honest way is a <b>scaling law</b>: train a ladder of models of increasing size under each optimizer, fit how loss falls as compute grows, and compare the two curves. Crucially they didn't sandbag AdamW: they grid-searched AdamW's hyperparameters at compute-optimal settings (Kaplan et al. 2020 style) to build a genuinely strong baseline, then — because Muon's update RMS was matched to AdamW — reused those same hyperparameters for Muon."},
+            {"type":"p","html":"The ladder (Table 2) spans six dense Llama-architecture models from 399M to 1.5B non-embedding parameters, each trained on its compute-optimal token budget:"},
+            {"type":"table","headers":["Params (no embed)","Layers","Hidden","Tokens","Learning rate"],"rows":[
+              ["399M","12","1536","8.92B","9.503e-4"],
+              ["545M","14","1792","14.04B","9.143e-4"],
+              ["822M","16","2048","20.76B","8.825e-4"],
+              ["1.1B","18","2304","28.54B","8.561e-4"],
+              ["1.5B","20","2560","38.91B","8.305e-4"]
+            ]},
+            {"type":"p","html":"Fitting a power law $\\text{loss} = k \\cdot C^{-\\alpha}$ (loss as a function of compute $C$ in PFLOP/s-days) gives two nearly parallel lines, with Muon's sitting below AdamW's everywhere (Figure 3):"},
+            {"type":"table","headers":["Optimizer","Fitted LM loss (seqlen=8K)"],"rows":[
+              ["Muon","2.506 x C^(-0.052)"],
+              ["AdamW","2.608 x C^(-0.054)"]
+            ]},
+            {"type":"p","html":"Reading the curves: because Muon's curve is lower, to reach any target loss you can slide left to less compute. The paper quantifies it directly — matching AdamW's compute-optimal performance takes Muon only about <b>52% of the training FLOPs</b>, i.e. the ~2x efficiency from the abstract. Figure 1a annotates this as the '0.519x FLOPs' gap."},
+            {"type":"quote","html":"As shown in Figure 1a, Muon only requires about 52% training FLOPs to match the performance of AdamW under compute-optimal setting."},
+            {"type":"p","html":"Why trust a scaling-law result over a single lucky run: the near-identical exponents ($-0.052$ vs $-0.054$) mean the two optimizers scale the same <i>way</i>; Muon just starts from a better constant. That's the strongest evidence the win persists rather than washing out at larger scale — the exact failure mode the weight-decay fix was designed to prevent."}
+          ]
+        },
+        {
+          "title": "Why consistent update-RMS matters (ablation)",
+          "subtitle": "Table 1 — the two rescaling schemes both beat baseline",
+          "pdfPages": [6],
+          "blocks": [
+            {"type":"p","html":"Before the big scaling runs, the authors ran a small ablation (removing or swapping one component to isolate its effect) to prove the update-RMS rescaling from Fix #2 actually helps. They used an 800M model, deliberately swapped its SwiGLU MLP for a plain 2-layer MLP to <b>exaggerate the shape disparity</b> (MLP matrices become [H, 4H] instead of [H, 2.6H]), and measured loss and per-layer weight RMS after 4B of a 20B-token schedule."},
+            {"type":"p","html":"Three schemes were compared. <b>Baseline</b> scales the update by $0.2\\cdot\\sqrt{H}$ ($H$ = hidden size), which only matches AdamW's RMS on average and ignores per-matrix shape. <b>Update Norm</b> divides each update by its own RMS so it strictly equals 0.2. <b>Adjusted LR</b> scales each matrix's learning rate by $0.2\\cdot\\sqrt{\\max(A,B)}$ — the shape-aware version they ultimately adopt."},
+            {"type":"table","headers":["Method","Training loss","Val loss","Query weight RMS","MLP weight RMS"],"rows":[
+              ["Baseline","2.734","2.812","3.586e-2","2.52e-2"],
+              ["Update Norm","2.720","2.789","4.918e-2","5.01e-2"],
+              ["Adjusted LR","2.721","2.789","3.496e-2","4.89e-2"]
+            ]},
+            {"type":"p","html":"Reading the table: both shape-aware methods <b>beat Baseline</b> (2.789 vs 2.812 val loss). Look at the MLP weight RMS: Baseline leaves it starved at 2.52e-2, while both fixes roughly double it — consistent with $\\sqrt{\\max(H,4H)}/\\sqrt{H} = 2$, so the [H,4H] MLP correctly gets about twice Baseline's update. That's the under-updated dense MLP from Lemma 1 being repaired."},
+            {"type":"p","html":"On the query matrix (shape [H,H], so $\\sqrt{\\max(H,H)}/\\sqrt{H} = 1$), Adjusted LR leaves it near Baseline while Update Norm still bumps it — the two methods agree where shapes match and differ only where they don't, exactly as the math predicts."},
+            {"type":"p","html":"Verdict, stated in the paper: they pick <b>Adjusted LR</b> for everything downstream because it delivers the same benefit at lower cost (no extra per-update RMS computation). This is the ablation that justifies the $\\sqrt{\\max(A,B)}$ factor sitting in the main update rule."}
+          ]
+        },
+        {
+          "title": "Moonlight: a 16B MoE that beats its peers",
+          "subtitle": "The real-model payoff on downstream benchmarks",
+          "pdfPages": [7,8,9],
+          "blocks": [
+            {"type":"p","html":"Scaling laws measure loss; practitioners care about benchmark accuracy on a real model. So the authors pretrained <b>Moonlight</b> from scratch with Muon: a DeepSeek-V3-Small-architecture <b>Mixture-of-Expert</b> model with <b>2.24B activated / 15.29B total</b> parameters (3B/16B including embeddings), on <b>5.7T tokens</b> at 8K context. Training ran in three stages — a warm-up to 33B tokens, a long cosine decay to 5.2T, and a high-quality math/code/reasoning 'cooldown' to 5.7T — all with weight decay 0.1."},
+            {"type":"h2","text":"The cleanest comparison: same model, only the optimizer changes"},
+            {"type":"p","html":"The most convincing evidence is <b>Moonlight-A</b>: an identical model trained with AdamW instead of Muon. At a shared 1.2T-token checkpoint, Muon wins across the board (Table 4):"},
+            {"type":"table","headers":["Benchmark","DSV3-Small (AdamW)","Moonlight-A (AdamW)","Moonlight (Muon)"],"rows":[
+              ["MMLU","53.3","60.2","60.4"],
+              ["BBH","41.4","45.3","43.2"],
+              ["TriviaQA","-","57.4","58.1"],
+              ["HumanEval","26.8","29.3","37.2"],
+              ["MBPP","36.8","49.2","52.9"],
+              ["GSM8K","31.4","43.8","45.0"],
+              ["MATH","10.7","16.1","19.8"]
+            ]},
+            {"type":"p","html":"Reading it: since Moonlight and Moonlight-A differ <i>only</i> in the optimizer, the gaps are pure Muon effect. The jumps are largest on <b>code and math</b> — HumanEval 29.3 to 37.2, MATH 16.1 to 19.8 — the reasoning-heavy tasks."},
+            {"type":"quote","html":"Moonlight performs significantly better than Moonlight-A, proving the scaling effectiveness of Muon. We observed that Muon especially excels on Math and Code related tasks."},
+            {"type":"h2","text":"Versus public models at the same scale"},
+            {"type":"p","html":"Fully trained to 5.7T tokens, Moonlight was compared to Llama3.2-3B (9T tokens), Qwen2.5-3B (18T tokens), and DeepSeek-v2-Lite (Table 5). Despite being trained on <b>fewer tokens</b> than the dense competitors, Moonlight leads on most benchmarks: MMLU <b>70.0</b>, HumanEval <b>48.1</b>, MBPP <b>63.8</b>, C-Eval <b>77.2</b>, CMMLU <b>78.2</b>. It sits on the Pareto frontier of performance versus training budget (Figure 1b)."},
+            {"type":"p","html":"Finally, a mechanistic check backs the intuition. Computing the <b>SVD entropy</b> $H(\\sigma)=-\\frac{1}{\\log n}\\sum_i \\frac{\\sigma_i^2}{\\sum_j \\sigma_j^2}\\log\\frac{\\sigma_i^2}{\\sum_j \\sigma_j^2}$ of each weight matrix (high entropy = singular values spread evenly across directions), Muon's weights show <b>higher SVD entropy than AdamW's for over 90% of matrices</b> — direct evidence that Muon really does explore more diverse directions, exactly what orthogonalizing the update was meant to do. The gap is largest in MoE router weights, hinting MoE models benefit most."},
+            {"type":"p","html":"Loose ends the paper is honest about: Muon-pretrained + Muon-SFT beats AdamW in supervised finetuning, but if the SFT optimizer differs from pretraining, Muon shows no clear SFT advantage — left as future work. Everything (distributed Muon implementation, Moonlight pretrained/instruct/intermediate checkpoints) is open-sourced, which is why Muon spread quickly through the open-model community after this report."}
+          ]
+        }
+      ]
+    }
+  ]
+}

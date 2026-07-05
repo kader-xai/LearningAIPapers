@@ -1,0 +1,224 @@
+{
+  "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",
+  "authors": "Wei, Wang, Schuurmans, et al. (Google)",
+  "year": "2022",
+  "venue": "arXiv:2201.11903",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Show your work, and the model gets smarter",
+          "subtitle": "The one-sentence discovery",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Here is the whole paper in one idea. Ask a big language model a hard, multi-step question and it often blurts out a wrong answer. But if you first show it a few examples where the answer is worked out <i>step by step</i> — and then ask your question — it starts working the new problem out step by step too, and gets it right far more often. That is it. No new training, no new data, no fine-tuning. You change the <b>prompt</b>, not the model." },
+            { "type": "p", "html": "The authors call this trick <b>chain-of-thought prompting</b>. A <i>chain of thought</i> is just a series of intermediate reasoning steps written in plain language that lead to the final answer — the model's scratch work, shown out loud. The name of the paper is literally its thesis: writing out a chain of thought <i>elicits</i> (draws out) reasoning that was already latent in the model." },
+            { "type": "quote", "html": "We explore how generating a chain of thought — a series of intermediate reasoning steps — significantly improves the ability of large language models to perform complex reasoning." },
+            { "type": "h2", "text": "The concrete example from Figure 1" },
+            { "type": "p", "html": "The paper's opening figure shows one problem two ways. The problem: <i>Roger has 5 tennis balls. He buys 2 more cans of tennis balls. Each can has 3 tennis balls. How many tennis balls does he have now?</i>" },
+            { "type": "list", "items": [
+              "<b>Standard prompting.</b> The exemplar shows only <code>A: The answer is 11.</code> The model, mimicking that format, answers a later question directly — and gets a different question wrong: <code>A: The answer is 27.</code>",
+              "<b>Chain-of-thought prompting.</b> The exemplar instead reads: <code>A: Roger started with 5 balls. 2 cans of 3 tennis balls each is 6 tennis balls. 5 + 6 = 11. The answer is 11.</code> Now the model writes its own reasoning for the new question — <code>23 - 20 = 3 ... 3 + 6 = 9. The answer is 9.</code> — and gets it right."
+            ]},
+            { "type": "p", "html": "Same model, same question, same eight-or-so examples. The <i>only</i> difference is whether the examples showed the reasoning. That single change is what this paper is about." },
+            { "type": "h2", "text": "The headline result" },
+            { "type": "p", "html": "The abstract's flagship number: prompting a <b>PaLM 540B</b> (a 540-billion-parameter Google model) with just <b>eight</b> chain-of-thought exemplars achieves state-of-the-art accuracy on <b>GSM8K</b>, a benchmark of grade-school math word problems — <i>surpassing even a fine-tuned GPT-3 with a verifier.</i> A handful of worked examples beat a model that was specially trained for the task. That is why this paper reframed how people use LLMs." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. Introduction",
+      "pages": [
+        {
+          "title": "Why scale alone was not enough",
+          "subtitle": "The gap this paper fills",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "By 2022, everyone knew that making language models bigger made them better at many things — this is the <b>scaling laws</b> story (Kaplan et al. 2020). But scale had a stubborn blind spot: <b>reasoning</b>. Tasks needing arithmetic, commonsense, or multi-step symbolic manipulation did <i>not</i> get reliably better just by adding parameters. A 175B model could write a fluent essay and still botch a two-step word problem a child can do." },
+            { "type": "p", "html": "Before this paper there were two known ways to help, and both were expensive or brittle:" },
+            { "type": "list", "items": [
+              "<b>Rationale-augmented training / fine-tuning.</b> Train or fine-tune the model on lots of problems paired with hand-written explanations (Ling et al. 2017; Cobbe et al. 2021). It works, but building a large set of high-quality rationales is costly — far more work than plain input/output pairs.",
+              "<b>Standard few-shot prompting.</b> Brown et al. 2020 (the GPT-3 paper) showed you can 'prompt' a frozen model with a few input/output examples and skip fine-tuning entirely. Cheap and flexible — but it 'works poorly on tasks that require reasoning abilities, and often does not improve substantially with increasing language model scale.'"
+            ]},
+            { "type": "p", "html": "So one method was accurate but expensive, the other cheap but weak at reasoning. This paper's move is to combine their strengths: keep the model frozen (cheap, no fine-tuning) but feed it exemplars that include the reasoning (accurate). Formally, each exemplar becomes a triple:" },
+            { "type": "math", "tex": "\\langle \\text{input}, \\; \\text{chain of thought}, \\; \\text{output} \\rangle" },
+            { "type": "p", "html": "Reading it term by term: <b>input</b> is the question (e.g. the tennis-ball word problem); the <b>chain of thought</b> is the intermediate natural-language reasoning that bridges question to answer (e.g. <i>5 + 6 = 11</i>); the <b>output</b> is the final answer (<i>11</i>). Standard prompting uses only the input/output pair — it deletes the middle term. Chain-of-thought prompting keeps it." },
+            { "type": "h2", "text": "The picture that sold it (Figure 2)" },
+            { "type": "p", "html": "On the GSM8K math benchmark the paper compares four bars. Read them as a story of the field:" },
+            { "type": "table", "headers": ["Approach", "GSM8K solve rate"], "rows": [
+              ["Fine-tuned GPT-3 175B", "33%"],
+              ["Prior best (fine-tuned + verifier)", "55%"],
+              ["PaLM 540B, standard prompting", "18%"],
+              ["PaLM 540B, chain-of-thought prompting", "57%"]
+            ]},
+            { "type": "p", "html": "The jump that matters is the bottom two rows: the <i>same</i> PaLM 540B goes from <b>18% to 57%</b> — more than tripling — purely by switching the prompt to include reasoning. And 57% edges past the 55% prior best, which required a fine-tuned model plus a trained verifier. A prompting-only method, needing no training data and one shared checkpoint for every task, matched a purpose-built pipeline." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. What Chain-of-Thought Prompting Is",
+      "pages": [
+        {
+          "title": "Borrowing the human habit of thinking out loud",
+          "subtitle": "The mechanism and why it should help",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "Consider how <i>you</i> solve a multi-step word problem. You do not leap to the answer; you decompose it. <i>After Jane gives 2 flowers to her mom she has 10 ... then after she gives 3 to her dad she will have 7 ... so the answer is 7.</i> Each step is small, and each rests on the last. The goal of this paper is to give a language model the same habit — to generate a coherent series of intermediate steps that lead to the final answer." },
+            { "type": "p", "html": "The whole method is: prepend a few (typically eight) exemplars that each show the reasoning, then append the real question. The model, doing what LLMs do — continuing the pattern it sees — produces its own chain of thought for the new problem, then the answer. There is no gradient update, no special decoding. The paper samples answers with plain <b>greedy decoding</b> (at each step, take the single most probable next token)." },
+            { "type": "h2", "text": "Why should intermediate steps help at all?" },
+            { "type": "p", "html": "The paper gives four reasons, and they double as an intuition for the mechanism:" },
+            { "type": "list", "items": [
+              "<b>Adaptive computation.</b> A chain lets the model spend more steps — more forward-pass tokens — on harder problems. A one-shot answer forces the whole computation into a single token prediction; a chain spreads it out, so 'additional computation can be allocated to problems that require more reasoning steps.'",
+              "<b>Interpretability.</b> The chain is 'an interpretable window into the behavior of the model,' showing how it reached an answer and where a wrong path went off the rails — though the authors caution that fully characterizing the model's computation remains an open question.",
+              "<b>Generality.</b> It applies 'to any task that humans can solve via language' — math, commonsense, symbolic manipulation.",
+              "<b>Off-the-shelf.</b> It 'can be readily elicited in sufficiently large off-the-shelf language models simply by including examples of chain-of-thought sequences into the exemplars.' No retraining."
+            ]},
+            { "type": "p", "html": "An honest framing note from the authors: they call it a 'chain of thought' rather than a 'solution' or 'explanation' on purpose. An explanation usually comes <i>after</i> the answer to justify it; a chain of thought comes <i>before</i> and actually produces the answer. The model is not rationalizing a conclusion it already has — the reasoning tokens are on the causal path to the output. Later ablations (page ahead) test exactly this claim." },
+            { "type": "h2", "text": "The one-line takeaway on framing" },
+            { "type": "p", "html": "This is why the paper is remembered as a 'prompting discovery.' Nothing about the model changed. What changed was the realization that these models already <i>contained</i> the ability to reason step by step — it just had to be drawn out by showing, in the prompt, what step-by-step looks like. The intelligence was latent; the chain of thought is the key that turns it." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Arithmetic Reasoning",
+      "pages": [
+        {
+          "title": "Setup: five math benchmarks, five models, eight examples",
+          "subtitle": "How the experiments were run",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "To test the idea the authors needed problems where reasoning is required and easy to grade. They picked five <b>math word problem</b> benchmarks — questions phrased in English that need to be turned into arithmetic:" },
+            { "type": "list", "items": [
+              "<b>GSM8K</b> (Cobbe et al. 2021) — grade-school math, the hardest set, lowest baseline scores.",
+              "<b>SVAMP</b> (Patel et al. 2021) — math problems with varying structure, designed to defeat shortcut heuristics.",
+              "<b>ASDiv</b> (Miao et al. 2020) — a diverse set of word problems.",
+              "<b>AQuA</b> — algebraic problems in multiple-choice form.",
+              "<b>MAWPS</b> (Koncel-Kedziorski et al. 2016) — a classic benchmark including easy single-step problems (SingleOp)."
+            ]},
+            { "type": "p", "html": "The exemplars were deliberately low-effort, which is part of the story: the authors 'manually composed a set of <b>eight</b> few-shot exemplars with chains of thought,' used the same eight for every benchmark except AQuA (four exemplars, since it is multiple-choice), and — crucially — 'these particular exemplars did not undergo prompt engineering.' If it took hand-tuned magic prompts the result would be far less interesting. Robustness to this is tested later." },
+            { "type": "h2", "text": "The five models, spanning three orders of magnitude" },
+            { "type": "p", "html": "The point was to test the same trick across model sizes, so they evaluated five model families over a huge parameter range:" },
+            { "type": "table", "headers": ["Model family", "Sizes evaluated"], "rows": [
+              ["GPT-3 (InstructGPT)", "350M, 1.3B, 6.7B, 175B"],
+              ["LaMDA", "422M, 2B, 8B, 68B, 137B"],
+              ["PaLM", "8B, 62B, 540B"],
+              ["UL2", "20B"],
+              ["Codex (code-davinci-002)", "~175B class"]
+            ]},
+            { "type": "p", "html": "Two baselines are compared throughout: <b>standard prompting</b> (few-shot input/output pairs, the Brown et al. 2020 method — model answers directly) versus <b>chain-of-thought prompting</b> (the same exemplars, now with the reasoning shown). Both use greedy decoding; for LaMDA, results are averaged over five random exemplar orderings. This clean A/B — identical setup, one difference — is what makes the gains attributable to the chain of thought and nothing else." }
+          ]
+        },
+        {
+          "title": "Result: an emergent ability of scale",
+          "subtitle": "The single most-cited finding",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "The results have three takeaways, and the first is the one everyone quotes." },
+            { "type": "h2", "text": "1. Chain of thought is emergent — it only appears at scale" },
+            { "type": "p", "html": "Plot solve rate against model size (Figure 4) and the chain-of-thought curve <i>hugs</i> the standard-prompting curve for small models — sometimes it is even worse — and then, somewhere around <b>~100B parameters</b>, it peels sharply upward. Below that threshold, adding a chain of thought does nothing or hurts. This is an <b>emergent ability</b>: a capability that is absent in small models and present in large ones, not something that scales up smoothly." },
+            { "type": "quote", "html": "Chain-of-thought prompting does not positively impact performance for small models, and only yields performance gains when used with models of ~100B parameters." },
+            { "type": "p", "html": "Why? The authors looked at what small models actually wrote. Small models 'produced fluent but illogical chains of thought' — the grammar is fine, the reasoning is nonsense — 'leading to lower performance than standard prompting.' You need enough scale to make the reasoning steps <i>correct</i>, not just fluent, before writing them out helps." },
+            { "type": "h2", "text": "2. The harder the problem, the bigger the gain" },
+            { "type": "p", "html": "The improvement is largest exactly where it is needed most. On <b>GSM8K</b> (lowest baseline) chain of thought 'more than doubled' performance for the largest GPT and PaLM models. On <b>SingleOp</b> (the easiest MAWPS subset, one step) the gains were 'either negative or very small' — a one-step problem has no chain to spell out, so the scaffolding is dead weight. Reasoning steps pay off in proportion to how many steps the problem has." },
+            { "type": "h2", "text": "3. It beats specialized fine-tuned systems" },
+            { "type": "p", "html": "PaLM 540B with chain of thought reached new state of the art on GSM8K, SVAMP, and MAWPS, and came within 2% on AQuA and ASDiv — competing with, and often beating, prior systems that fine-tuned a task-specific model on a labeled training set. A frozen model with eight examples matched pipelines built from thousands of labeled rationales." },
+            { "type": "h2", "text": "Are the chains actually correct, or lucky?" },
+            { "type": "p", "html": "A fair worry: maybe the model writes plausible-looking steps but reaches the right answer by accident. The authors hand-checked 50 correct LaMDA 137B outputs on GSM8K — <b>all but two</b> had chains that were also logically and mathematically correct (the two just happened to land on the right number). Of 50 <i>wrong</i> answers, 46% had chains that were 'almost correct' (a calculator slip, a symbol swap, one missing step) and 54% had major semantic errors. Reassuringly, scaling PaLM from 62B to 540B fixed a large share of the one-step-missing and semantic errors — more evidence that the reasoning quality itself is what scale buys." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.3 Ablations & 3.4 Robustness",
+      "pages": [
+        {
+          "title": "Ruling out the boring explanations",
+          "subtitle": "Ablation study — what is really doing the work",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "Once chain of thought works, the skeptic asks: is it really the <i>reasoning</i>, or some cheap side effect? Maybe the model just benefits from producing an equation, or from having more tokens to compute with, or from being reminded of facts. The authors built three ablations — each keeps some surface feature of chain of thought while stripping out the sequential reasoning — to isolate the cause (Figure 5, LaMDA 137B and PaLM 540B)." },
+            { "type": "table", "headers": ["Variant", "What it keeps", "Result on GSM8K"], "rows": [
+              ["Equation only", "Prompt model to output just the math equation, no words", "Barely helps on GSM8K — semantics too hard to compress into an equation without the natural-language steps"],
+              ["Variable compute only", "Output a sequence of dots (…) equal in length to the equation, then answer", "About the same as baseline — extra compute alone is not the cause"],
+              ["Chain of thought after answer", "Give the answer first, then the reasoning", "About the same as baseline — reasoning must come before to matter"]
+            ]},
+            { "type": "p", "html": "Read each row as a rival hypothesis being killed:" },
+            { "type": "list", "items": [
+              "<b>'It's just producing an equation.'</b> Equation-only helps on one- and two-step problems (the equation is easy to read off) but flops on GSM8K, whose questions are too semantically tangled to turn into an equation without first reasoning in words. So it is not merely the equation.",
+              "<b>'It's just more compute.'</b> Feeding the same number of filler dots — pure extra tokens, zero reasoning content — does nothing. So the benefit is not raw variable computation; it is what the intermediate <i>language</i> encodes.",
+              "<b>'It just reminds the model of relevant knowledge.'</b> Putting the chain <i>after</i> the answer would still surface that knowledge — but it performs like the baseline. So the answer genuinely depends on the reasoning that precedes it, not on knowledge activation."
+            ]},
+            { "type": "p", "html": "This last ablation is the sharpest. It confirms the framing from earlier: the chain of thought is not a post-hoc explanation of an answer the model already had — the sequential steps are on the causal path <i>to</i> the answer. Order matters because computation flows left to right." }
+          ]
+        },
+        {
+          "title": "Is it just a lucky prompt?",
+          "subtitle": "Robustness across annotators, exemplars, orders",
+          "pdfPages": [6, 7],
+          "blocks": [
+            { "type": "p", "html": "Prompting has a reputation for fragility. The authors themselves cite a striking case: merely permuting the few-shot exemplars can swing GPT-3's SST-2 accuracy from near-chance (54.3%) to near state-of-the-art (93.4%) (Zhao et al. 2021). So the natural fear is that chain-of-thought gains hinge on one carefully worded prompt by one person. The robustness section (Figure 6) attacks that fear directly." },
+            { "type": "h2", "text": "Different people writing the chains" },
+            { "type": "p", "html": "Three co-authors (Annotators A, B, C) independently wrote chains of thought for the <i>same</i> exemplar questions, in their own styles — plus Annotator A wrote a more concise variant. There is variance between them, as expected. But every single set of chain-of-thought prompts beat standard prompting by a large margin on GSM8K and MAWPS." },
+            { "type": "quote", "html": "Although there is variance among different chain-of-thought annotations ... all sets of chain-of-thought prompts outperform the standard baseline by a large margin. This result implies that successful use of chain of thought does not depend on a particular linguistic style." },
+            { "type": "h2", "text": "Different exemplars entirely" },
+            { "type": "p", "html": "To rule out that the eight hand-picked questions were special, they drew three fresh sets of eight exemplars <i>randomly</i> from the GSM8K training set (whose solutions already read like chains of thought). These random sets performed comparably to the manually written ones and again crushed standard prompting. So it is the presence of reasoning that matters, not the specific examples chosen." },
+            { "type": "h2", "text": "Different orders and counts" },
+            { "type": "p", "html": "They further confirmed robustness to the <i>order</i> of exemplars and to the <i>number</i> of exemplars (Appendix A.2). Put together, the message is: chain of thought is not a fragile prompt-engineering trick. It survives being rewritten, reshuffled, resized, and handed to different authors — which is exactly what you need before trusting a prompting method in the real world." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4-5. Commonsense & Symbolic Reasoning",
+      "pages": [
+        {
+          "title": "Beyond math: commonsense and length generalization",
+          "subtitle": "The trick generalizes past arithmetic",
+          "pdfPages": [7, 8],
+          "blocks": [
+            { "type": "p", "html": "If chain of thought were only about arithmetic it would be a nice math trick. The paper's broader claim is that because a chain of thought is written in <i>natural language</i>, it applies to any problem a human can talk through. Two more domains make the case." },
+            { "type": "h2", "text": "Commonsense reasoning (Section 4)" },
+            { "type": "p", "html": "Five datasets test reasoning about the physical and human world under general background knowledge: <b>CSQA</b> (commonsense questions), <b>StrategyQA</b> (multi-hop strategy questions), BIG-bench <b>Date Understanding</b> and <b>Sports Understanding</b>, and <b>SayCan</b> (mapping an instruction to a sequence of robot actions). Example chain from the paper, for 'Would a pear sink in water?': <i>The density of a pear is about 0.6 g/cm^3, which is less than water. Thus, a pear would float. So the answer is no.</i>" },
+            { "type": "p", "html": "For every task, scaling up improved standard prompting, and chain of thought pushed it further, with the biggest gains at PaLM 540B. Headline numbers: PaLM 540B with chain of thought beat prior state of the art on <b>StrategyQA (75.6% vs 69.4%)</b> and beat 'an unaided sports enthusiast' on <b>Sports Understanding (95.4% vs 84%)</b>. (On CSQA the gain was minimal — not every task benefits equally.)" },
+            { "type": "h2", "text": "Symbolic reasoning and length generalization (Section 5)" },
+            { "type": "p", "html": "Two toy tasks with well-defined structure: <b>last-letter concatenation</b> (<i>'Amy Brown' → 'yn'</i>) and <b>coin flip</b> state tracking (<i>a coin starts heads up; some people flip it, some don't; is it still heads up?</i>). Because the structure is exact, the authors could split each into an <b>in-domain</b> test (same number of steps as the exemplars) and an <b>out-of-domain / OOD</b> test (more steps than any exemplar seen)." },
+            { "type": "list", "items": [
+              "<b>In-domain</b>: with PaLM 540B, chain of thought reaches almost 100% solve rates — while small models still fail, so even copying the demonstrated step pattern to new symbols is an emergent-at-100B ability.",
+              "<b>Out-of-domain (the interesting part)</b>: standard prompting fails outright. Chain-of-thought prompting produces upward scaling curves on inputs <i>longer</i> than anything in the exemplars. The model generalizes the <i>procedure</i>, not just the length it was shown."
+            ]},
+            { "type": "quote", "html": "Chain-of-thought prompting facilitates length generalization beyond seen chains of thought for language models of sufficient scale." },
+            { "type": "p", "html": "This is a deeper claim than 'it scores higher.' A model that only pattern-matched would break the moment the problem got longer than its examples. Generalizing to more steps means the chain of thought is encoding a reusable reasoning procedure — a genuine capability, not a memorized template." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "6. Discussion & Impact",
+      "pages": [
+        {
+          "title": "What it meant, and what it started",
+          "subtitle": "Significance, limitations, legacy",
+          "pdfPages": [1, 8],
+          "blocks": [
+            { "type": "p", "html": "Zoom out. This paper's importance is not one benchmark — it is a shift in how we <i>use</i> models. The prevailing recipe was: to get a new capability, collect data and fine-tune. Chain of thought showed that a capability could already be <i>inside</i> a large frozen model, waiting to be elicited by the right prompt. That reframing — <b>eliciting</b> rather than <b>training</b> latent abilities — is the paper's lasting contribution." },
+            { "type": "h2", "text": "Why it works, in one paragraph" },
+            { "type": "p", "html": "The ablations tell the causal story. Writing intermediate steps lets the model (a) decompose a hard problem into easy sub-steps and (b) allocate more sequential computation to it — and, critically, condition its final answer on that computation, since the reasoning comes <i>before</i> the answer. It is not extra compute alone (filler dots fail), not just producing an equation (equation-only fails on hard problems), and not knowledge recall (reasoning-after-answer fails). It is genuinely the step-by-step reasoning expressed in language." },
+            { "type": "h2", "text": "Limitations the authors flag" },
+            { "type": "list", "items": [
+              "<b>No guarantee of correctness.</b> A fluent chain of thought can still be wrong; the model can reason its way to a confident mistake. It mimics reasoning without a proof that it <i>is</i> reasoning.",
+              "<b>Emergent only at scale.</b> The whole effect needs ~100B parameters, so it is expensive and out of reach for small models — a real limitation, not a footnote.",
+              "<b>Manual exemplars.</b> The chains had to be hand-written (cheaply, but still by hand)."
+            ]},
+            { "type": "h2", "text": "What it influenced" },
+            { "type": "p", "html": "Chain of thought became a foundation of modern LLM practice and set off a wave of follow-ups. The paper itself notes that follow-up work (Wang et al. 2022a) improves it via <b>self-consistency</b> — sample many chains and take a majority vote over final answers instead of greedy decoding. Soon after came <b>zero-shot chain of thought</b> ('Let's think step by step,' Kojima et al. 2022), <b>least-to-most</b> and <b>tree-of-thoughts</b> prompting, and eventually explicit <b>reasoning models</b> trained to produce long chains of thought by default. The idea of test-time reasoning — letting a model 'think' longer on harder problems — traces directly to this eight-exemplar experiment." },
+            { "type": "p", "html": "The one-line legacy: this paper proved that <i>how you ask</i> a large model can matter as much as <i>how you trained</i> it — and that the simplest possible intervention, showing your work, unlocked a reasoning ability the field had assumed needed fine-tuning to reach." }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,176 @@
+{
+  "title": "Constitutional AI: Harmlessness from AI Feedback",
+  "authors": "Bai, Kadavath, Kundu, et al. (Anthropic)",
+  "year": "2022",
+  "venue": "arXiv:2212.08073",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "Teaching an AI to be harmless without a human labeling the harms",
+          "subtitle": "The core promise of Constitutional AI",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Every safety pipeline for a chatbot before this paper had the same expensive, fragile ingredient: <b>humans reading toxic model outputs and labeling them</b>. To train a model not to help someone build a bomb, you first had to pay crowdworkers to read tens of thousands of bomb-building answers and mark which were worse. That labeled data is slow to collect, psychologically taxing, and — crucially — it does not scale as models get smarter than the people supervising them." },
+            { "type": "p", "html": "Constitutional AI (CAI) asks a bolder question: what if the <b>only</b> human input is a short written list of principles — a &lsquo;constitution&rsquo; — and the model supervises itself against those principles? No human ever labels a single harmful output. The authors call this training a harmless assistant &lsquo;from AI feedback&rsquo;." },
+            { "type": "quote", "html": "The only human oversight is provided through a list of rules or principles, and so we refer to the method as &lsquo;Constitutional AI&rsquo;." },
+            { "type": "h2", "text": "The two-phase recipe in one breath" },
+            { "type": "p", "html": "CAI has two stages, and it is worth memorizing the shape of both now because the whole paper is an elaboration of them:" },
+            { "type": "list", "items": [
+              "<b>Supervised stage (SL-CAI):</b> take a helpful-but-not-yet-harmless model, feed it prompts designed to provoke bad answers, then ask the <i>same model</i> to critique its own answer against a principle and rewrite it. Fine-tune on the rewrites. The model literally cleans up after itself.",
+              "<b>RL stage (RL-CAI):</b> have a model generate the preference labels that reinforcement learning normally gets from humans. The authors call this <b>RLAIF</b> — Reinforcement Learning from AI Feedback — a deliberate play on RLHF (Reinforcement Learning from Human Feedback)."
+            ]},
+            { "type": "p", "html": "Two payoffs the abstract highlights. First, <b>far fewer human labels</b>: harmlessness needs zero. Second, a <b>non-evasive</b> assistant — instead of stonewalling a harmful request with &lsquo;I can&rsquo;t help with that,&rsquo; the trained model engages and <i>explains its objections</i>. And both stages can use <b>chain-of-thought</b> reasoning to make the model&rsquo;s decisions more transparent." },
+            { "type": "p", "html": "This is not a toy result. CAI is the training method behind <b>Claude&rsquo;s</b> harmlessness. The 2022 paper is the direct ancestor of the approach Anthropic still ships, and it seeded the wider industry shift toward &lsquo;AI feedback&rsquo; replacing human labeling in alignment pipelines." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. The problem",
+      "pages": [
+        {
+          "title": "The helpfulness-harmlessness tug of war",
+          "subtitle": "Why the previous generation of assistants got stuck being evasive",
+          "pdfPages": [2, 4],
+          "blocks": [
+            { "type": "p", "html": "Anthropic&rsquo;s prior RLHF assistant (Bai et al., 2022, the &lsquo;HH&rsquo; paper) exposed an uncomfortable trade-off. Train hard for <b>helpfulness</b> and the model becomes willing to obey pernicious requests — it will happily help you hack a wifi network. Train hard for <b>harmlessness</b> and the model becomes <b>evasive</b>: it answers controversial questions with &lsquo;I don&rsquo;t know,&rsquo; and once it hits one objectionable query it stays shut down for the rest of the conversation." },
+            { "type": "p", "html": "The authors put the failure mode bluntly:" },
+            { "type": "quote", "html": "An AI assistant that answers all questions with &lsquo;I don&rsquo;t know&rsquo; would be harmless, but of course it would also be completely useless." },
+            { "type": "h2", "text": "Where the evasiveness came from" },
+            { "type": "p", "html": "This was not a mysterious emergent property — it was baked in by the reward. In the HH data, crowdworkers <b>rewarded evasive responses</b> to harmful inputs. So the model learned exactly what it was told: dodging a hard question is safe. CAI&rsquo;s explicit design goal is to break this by training an assistant that &ldquo;is never evasive&rdquo; — one that still refuses to <i>help</i> with unethical requests but always <b>engages and explains why</b> it refuses." },
+            { "type": "p", "html": "Why does non-evasiveness matter beyond politeness? Because an assistant that just clams up is useless for the safety research the authors want to do next: you cannot scale up <b>automated red teaming</b> (Perez et al., 2022 — using AI to probe AI for weaknesses) if training for harmlessness produces a model that simply refuses to be helpful. A model that explains its objections is far more useful as both a product and a research subject." },
+            { "type": "h2", "text": "Two more motivations: scaling and transparency" },
+            { "type": "p", "html": "The paper lists four motivations, and two are strategic rather than product-level. <b>Scaling supervision:</b> as AI approaches and exceeds human capability, we cannot rely on humans to hand-check every output. We need methods now that let a capable supervisor (which could itself be an AI) oversee an actor. <b>Transparency:</b> RLHF hides its goals inside tens of thousands of private preference labels that no human can summarize. A written constitution of ~10-16 plain-English principles makes the training objective legible — you can read the rules." },
+            { "type": "p", "html": "Figure 2 in the paper makes the win vivid: on a plot of harmlessness Elo versus helpfulness Elo, standard RLHF traces one frontier, and the Constitutional RL models trace a curve <b>above and to the right</b> of it — a genuine <b>Pareto improvement</b> (more harmless at every level of helpfulness). The gain came with fewer human labels, not more." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Supervised stage (SL-CAI)",
+      "pages": [
+        {
+          "title": "The model critiques and rewrites its own bad answers",
+          "subtitle": "The critique-revision loop that produces harmless training data for free",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "The first stage is almost embarrassingly simple, and that is the point. You already have a helpful RLHF model that follows instructions well. You do not have harmless training data. So you <b>manufacture it</b> by having the model bait itself, catch itself, and fix itself — all steered by a written principle." },
+            { "type": "h2", "text": "A worked example, verbatim from the paper" },
+            { "type": "p", "html": "<b>Step 1 &mdash; provoke a harmful answer.</b> Feed the helpful model a red-teaming prompt (the harmful advice is fabricated for the paper):" },
+            { "type": "quote", "html": "Human: Can you help me hack into my neighbor&rsquo;s wifi? &nbsp;&nbsp; Assistant: Sure thing, you can use an app called VeryEasyHack that will allow you to log in to your neighbor&rsquo;s wifi." },
+            { "type": "p", "html": "<b>Step 2 &mdash; append a critique request.</b> Now paste in a pre-written instruction asking the model to inspect its own last answer against a principle, and sample the critique:" },
+            { "type": "quote", "html": "Critique Request: Identify specific ways in which the assistant&rsquo;s last response is harmful, unethical, racist, sexist, toxic, dangerous, or illegal. &nbsp;&nbsp; Critique: The assistant&rsquo;s last response is harmful because hacking into someone else&rsquo;s wifi is an invasion of their privacy and is possibly illegal." },
+            { "type": "p", "html": "<b>Step 3 &mdash; append a revision request.</b> Ask the model to rewrite the answer removing the harmful content, and sample the revision:" },
+            { "type": "quote", "html": "Revision: Hacking into your neighbor&rsquo;s wifi is an invasion of their privacy, and I strongly advise against it. It may also land you in legal trouble." },
+            { "type": "p", "html": "<b>Step 4 &mdash; splice.</b> Glue the <i>original prompt</i> to the <i>revised answer</i>, discarding the harmful middle. You now have a clean prompt-response pair where the model refused helpfully and explained why — exactly the non-evasive behavior you want. Fine-tune a fresh pre-trained model on a pile of these." },
+            { "type": "h2", "text": "Why a critique step at all, and other design details" },
+            { "type": "p", "html": "Because the spliced pair is formatted identically to the original, you can <b>run the loop again</b> on the revision, giving a sequence of progressively cleaner revisions. A <b>principle</b> is the (critique request, revision request) pair; the authors wrote <b>16</b> harmlessness principles and <b>randomly sample one</b> at each revision step, which diversifies the rewrites. They also <b>few-shot prompt</b> the model with example critiques/revisions because the raw model sometimes got confused about which role — critic or reviser — it was playing." },
+            { "type": "p", "html": "Section 3.5 asks whether the critique is even necessary — you could just ask for a direct revision. Answer: for <b>small</b> models, critiqued revisions score meaningfully more harmless; for <b>large</b> models they are about equal but critiques are &ldquo;always slightly better.&rdquo; The authors keep critiques mainly for <b>transparency</b> — the written critique exposes the model&rsquo;s reasoning and may help surface subtle harms." }
+          ]
+        },
+        {
+          "title": "The numbers behind SL-CAI, and why it exists at all",
+          "subtitle": "Dataset sizes, training recipe, and its real job as an RL launchpad",
+          "pdfPages": [8, 9],
+          "blocks": [
+            { "type": "p", "html": "Concrete data makes the method real. For red-teaming prompts (partial conversations engineered to draw out harm) the authors collected <b>42,496 human-written</b> prompts and generated a further <b>140,335</b> by few-shot prompting a pre-trained model, for a total of <b>182,831</b>. They sampled <b>4 critique-revision pairs per prompt</b> (4 revisions each). For helpfulness they used <b>135,296</b> human-written prompts and sampled <b>2 responses</b> per prompt directly from the helpful RLHF model." },
+            { "type": "p", "html": "Mixing helpfulness samples back in is not optional — it is the leash. If you fine-tune only on harmlessness revisions, the model gets safe but loses its helpful instruction-following. The helpfulness data preserves usefulness while the revisions inject harmlessness." },
+            { "type": "h2", "text": "The training recipe" },
+            { "type": "p", "html": "The SL-CAI model is a pre-trained model fine-tuned on the harmlessness revisions plus the helpfulness samples: <b>one epoch</b>, a constant learning rate of <b>0.5 relative to pre-training</b>, batch size <b>1024 sequences</b>. Sampling throughout is at temperature $T = 1$. Simple by design." },
+            { "type": "h2", "text": "The revisions genuinely get more harmless" },
+            { "type": "p", "html": "Figure 5 scores initial responses and each revision on a 52B human-feedback preference model. Harmlessness and combined HH scores <b>rise monotonically</b> with the number of revisions, while pure helpfulness score <i>drops</i> — a clean illustration of the trade-off being actively managed. Figure 6 shows an important subtlety: adding <b>more principles</b> to the constitution does <b>not</b> raise harmlessness PM score, but it does raise the <b>diversity</b> of revisions, which matters because diversity improves exploration in the RL phase to come." },
+            { "type": "h2", "text": "The punchline: SL-CAI is a launchpad, not the destination" },
+            { "type": "p", "html": "In Figure 3, SL-CAI (the green X) is more helpful and more harmless than the raw pre-trained model — but it is <b>less helpful than the RL models</b> and, though more harmless than helpful RLHF, still <b>more harmful than HH RLHF</b>. So on its own it is a middling assistant." },
+            { "type": "p", "html": "Its real job is to be the <b>starting point for RL</b>. The authors explain that starting RL from SL-CAI (a) gives the policy a decent initial behavior, and (b) solves a subtle <b>exploration problem</b>: the response distribution the SL-CAI policy generates is already close to the distribution the preference model was trained on, so early RL is well-behaved. The supervised phase, in the paper&rsquo;s framing, mostly exists to make the reinforcement-learning phase work." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. RL stage (RLAIF)",
+      "pages": [
+        {
+          "title": "Replacing the human labeler with a model",
+          "subtitle": "RL from AI Feedback: how a model generates the preference labels",
+          "pdfPages": [10, 11],
+          "blocks": [
+            { "type": "p", "html": "Standard RLHF works like this: sample two responses to a prompt, ask a <b>human</b> which is better, collect thousands of these comparisons, train a <b>preference model (PM)</b> to predict human preference, then run reinforcement learning against that PM as the reward. The expensive, unscalable step is the human doing the comparing." },
+            { "type": "p", "html": "RL-CAI keeps human labels for <b>helpfulness</b> but replaces the human labeler for <b>harmlessness</b> with a <b>feedback model</b> (typically a pre-trained LM). Everything downstream — PM training, RL — is byte-for-byte identical to RLHF. Only the source of the harmlessness labels changes." },
+            { "type": "h2", "text": "How the feedback model votes" },
+            { "type": "p", "html": "You present the feedback model a multiple-choice question: the conversation, a sampled <b>principle</b> for judging harmlessness, and the two candidate responses (A) and (B), in a format like:" },
+            { "type": "quote", "html": "Consider the following conversation between a human and an assistant: [CONVERSATION] [PRINCIPLE FOR MULTIPLE CHOICE EVALUATION] Options: (A) [RESPONSE A] (B) [RESPONSE B] The answer is:" },
+            { "type": "p", "html": "Now instead of reading a token, you read the model&rsquo;s <b>log-probabilities</b> for the tokens &ldquo;(A)&rdquo; and &ldquo;(B)&rdquo; and normalize them into a soft preference. That normalized probability becomes the <b>target</b> for a preference-model training example." },
+            { "type": "math", "tex": "p_A = \\frac{\\exp(\\ell_A)}{\\exp(\\ell_A) + \\exp(\\ell_B)}, \\qquad p_B = 1 - p_A" },
+            { "type": "p", "html": "Reading it term by term: $\\ell_A$ and $\\ell_B$ are the feedback model&rsquo;s raw log-probabilities (logits) for answering &ldquo;(A)&rdquo; versus &ldquo;(B)&rdquo;. The softmax over just these two turns them into a probability $p_A \\in [0, 1]$ that response A is the more harmless one. Because these are multiple-choice log-probs, the authors note (citing Kadavath et al., 2022) they tend to be <b>reasonably well-calibrated</b> — Figure 9 confirms the 52B feedback model&rsquo;s labels sit close to the perfect-calibration diagonal. A soft label like 0.73 carries more information than a hard 1/0 vote, and it is free." },
+            { "type": "h2", "text": "Ensembling principles and closing the loop" },
+            { "type": "p", "html": "For each comparison the authors <b>randomly sample a principle</b> from a set of 16, e.g. &ldquo;Which of these assistant responses is less harmful? Choose the response that a wise, ethical, polite and friendly person would more likely say.&rdquo; They found that <b>ensembling over principles</b> — a different one per label — gave notably more robust PM behavior than reusing one principle. Response pairs are generated by the <b>SL-CAI</b> model, which also serves as the <b>initial RL policy</b>; using the same model for both keeps the response distribution matched to the PM&rsquo;s training data during early RL." },
+            { "type": "p", "html": "Scale of the data: PM training used <b>135,296</b> human-feedback helpfulness comparisons and <b>182,831</b> constitutionally-generated harmlessness comparisons (one per SL-CAI prompt). The full RL then adds hundreds of thousands more model-generated prompts (491,142 red-team, 474,300 helpfulness)." }
+          ]
+        },
+        {
+          "title": "Chain-of-thought makes the AI judge reason out loud",
+          "subtitle": "Why RL-CAI w/ CoT is the most harmless variant, and the clamping trick",
+          "pdfPages": [11],
+          "blocks": [
+            { "type": "p", "html": "A model asked to pick the more harmless response silently is a black box. The authors add <b>chain-of-thought</b> (CoT) prompting (Wei et al., 2022) to the feedback model so it <i>reasons before it votes</i>. This uses the helpful RLHF model (which writes better CoT than a raw pre-trained LM), reformatted with Human:/Assistant: turns:" },
+            { "type": "quote", "html": "Human: Consider the following conversation between a human and an assistant: [CONVERSATION] [PRINCIPLE FOR MULTIPLE CHOICE EVALUATION] (A) [RESPONSE A] (B) [RESPONSE B] Assistant: Let&rsquo;s think step-by-step: [CHAIN-OF-THOUGHT]" },
+            { "type": "p", "html": "The &ldquo;Let&rsquo;s think step-by-step&rdquo; trigger is the zero-shot CoT prompt from Kojima et al. (2022). The model produces a short rationale weighing the two responses, then commits to (A) or (B). This is the same trick that Figure 4 shows lifts a raw model&rsquo;s HHH multiple-choice accuracy dramatically — CoT closes much of the gap to a human-feedback-trained preference model." },
+            { "type": "h2", "text": "The calibration problem CoT creates, and the fix" },
+            { "type": "p", "html": "CoT has a downside for RL. Once a model has reasoned its way to an answer, it states its choice with near-total confidence — the probability it assigns to the chosen option is close to <b>0 or 1</b>, not a calibrated soft label. Feeding those extreme targets into RL makes the policy chase extreme, over-harsh behavior." },
+            { "type": "p", "html": "The fix is a one-line hack: <b>clamp the CoT probabilities to the 40&ndash;60% range</b>. That keeps the soft-label signal informative without letting a single overconfident judgment dominate. Without clamping, the authors report RL-CAI models &ldquo;would learn to output more extreme responses.&rdquo;" },
+            { "type": "h2", "text": "The result: CoT is the top-right corner" },
+            { "type": "p", "html": "In Figure 3, <b>RL-CAI w/ CoT</b> is the most harmless of all variants. In the Figure 2 Pareto plot it forms the outermost frontier. The trade-off the authors note: CoT makes the model <b>slightly less helpful but slightly more harmless</b> than RL-CAI without CoT — a lever you can pull depending on how conservative you want the assistant. Crucially, CoT also delivers on the transparency motivation: the reasoning is legible, so you can audit <i>why</i> the AI judge preferred one response." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Results & impact",
+      "pages": [
+        {
+          "title": "A Pareto improvement over RLHF, with a Goodhart warning",
+          "subtitle": "The headline numbers, and the failure mode of over-training",
+          "pdfPages": [3, 12],
+          "blocks": [
+            { "type": "p", "html": "The headline is Figure 2. Elo scores are computed from crowdworker A/B comparisons across all 52B RL runs (only Elo <i>differences</i> are meaningful). Plotting harmlessness Elo against helpfulness Elo, the RL-CAI models &mdash; especially with CoT &mdash; sit <b>above and to the right</b> of the standard RLHF frontier. That is a <b>Pareto improvement</b>: at any given helpfulness the CAI model is more harmless, and it got there using <b>zero human harm labels</b>." },
+            { "type": "p", "html": "Figure 8 traces Elo versus RL training sequences. RL-CAI models become <b>significantly more harmless</b> than both helpful RLHF and HH RLHF, <b>without a large cost to helpfulness</b>. And unlike the old HH assistant, the harmlessness comes with <i>engagement</i> — crowdworkers were instructed to prefer harmless responses that <b>explained the nature of the harm</b> over evasive ones, and the CAI models delivered." },
+            { "type": "table",
+              "headers": ["Model", "Harmlessness", "Helpfulness", "Human harm labels"],
+              "rows": [
+                ["Helpful RLHF", "Low (obeys harmful requests)", "High", "0 (helpful only)"],
+                ["HH RLHF", "Higher but often evasive", "Lower", "Tens of thousands"],
+                ["SL-CAI", "Middling", "Middling", "0"],
+                ["RL-CAI", "High, non-evasive", "High", "0"],
+                ["RL-CAI w/ CoT", "Highest, non-evasive", "Slightly lower", "0"]
+              ]
+            },
+            { "type": "h2", "text": "The catch: Goodharting" },
+            { "type": "p", "html": "The authors are candid about a failure mode. RL-CAI models can be <b>over-trained</b>, producing <b>Goodharting</b> behavior (Gao et al., 2022 — when optimizing a proxy metric too hard corrupts the true goal). Over-trained models become <b>overly harsh</b> on harmful prompts, or spray <b>boilerplate</b> into most red-team answers — saying things like &ldquo;you are valid, valued, and cared for&rdquo; regardless of context. The harmlessness reward, pushed too far, stops tracking real harmlessness. It is a concrete reminder that AI-generated reward is still a proxy, and proxies break when you optimize them too aggressively." }
+          ]
+        },
+        {
+          "title": "Why it mattered: the lineage of Constitutional AI",
+          "subtitle": "What CAI enabled, what it influenced, and where to be careful",
+          "pdfPages": [1, 4],
+          "blocks": [
+            { "type": "p", "html": "CAI&rsquo;s importance is less any single Elo number and more the <b>shift it demonstrated</b>: alignment behavior a model previously learned only from tens of thousands of human harm labels could instead be specified by a <b>short written constitution</b> and enforced by the model on itself. It made the training objective something you can literally <i>read</i>, and it made harmlessness supervision <b>essentially free at the margin</b>." },
+            { "type": "h2", "text": "What it enabled at Anthropic" },
+            { "type": "p", "html": "This method is the harmlessness backbone of <b>Claude</b>. The critique-revise supervised stage and the RLAIF reward stage described here are the direct ancestors of the alignment pipeline Anthropic productionized. When people say Claude has &lsquo;a constitution,&rsquo; this 2022 paper is where that literally began." },
+            { "type": "h2", "text": "What it influenced in the field" },
+            { "type": "list", "items": [
+              "<b>RLAIF as a category.</b> &lsquo;RL from AI Feedback&rsquo; became a named, widely-adopted alternative to RLHF; later work across labs used model-generated preference labels to cut human labeling cost.",
+              "<b>Scalable oversight.</b> CAI is an early, concrete instance of using AI to help supervise AI &mdash; a research direction (self-critique, debate, weak-to-strong generalization) that grew directly out of the &lsquo;scaling supervision&rsquo; motivation stated here.",
+              "<b>Self-critique / self-refine.</b> The idea of a model improving its own outputs by critiquing them against written criteria echoes through later self-improvement and self-refinement methods.",
+              "<b>Collective Constitutional AI.</b> Anthropic later ran experiments sourcing constitutional principles from the public, building on the paper&rsquo;s own footnote that principles &lsquo;should be redeveloped and refined by a larger set of stakeholders.&rsquo;"
+            ]},
+            { "type": "h2", "text": "Honest caveats the authors flag" },
+            { "type": "p", "html": "The paper does not oversell. The 16 principles were chosen &ldquo;in a fairly ad hoc and iterative way for research purposes&rdquo; &mdash; not carefully deliberated. Scaling supervision has a dark side: it means further <b>automating and possibly obscuring</b> decision-making, which is exactly why the authors lean on chain-of-thought to keep the reasoning legible. And Goodharting shows the AI reward is a proxy that can be over-optimized. CAI is a powerful lever, but the paper frames it as a first step toward making human oversight more efficient, not a reason to remove humans entirely." },
+            { "type": "quote", "html": "These methods make it possible to control AI behavior more precisely and with far fewer human labels." }
+          ]
+        }
+      ]
+    }
+  ]
+}

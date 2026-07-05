@@ -1,0 +1,251 @@
+{
+  "title": "Self-Instruct: Aligning Language Models with Self-Generated Instructions",
+  "authors": "Wang, Kordi, Mishra, et al.",
+  "year": "2022",
+  "venue": "arXiv:2212.10560",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The annotation bottleneck",
+          "subtitle": "Why instruction data is the scarce resource",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"An <b>instruction-tuned</b> language model is one that has been finetuned to respond to natural-language commands like <i>&ldquo;Write a letter from the perspective of a cat&rdquo;</i> or <i>&ldquo;Given an address and city, come up with the zip code.&rdquo;</i> These models (T0, Tk-Instruct, InstructGPT) feel dramatically more useful than a raw pretrained model, and they get that ability from one thing: a big pile of <b>(instruction, input, output)</b> examples to imitate."},
+            {"type":"p","html":"The catch is that this pile is <b>hand-written by people</b>. Datasets like PromptSource and Super-NaturalInstructions (SuperNI) required armies of annotators. That is expensive, and worse, it is <b>not diverse</b>: humans reach for the same popular NLP tasks (sentiment, QA, summarization) over and over. The model can only learn the range of tasks the annotators happened to write down."},
+            {"type":"p","html":"Self-Instruct asks a mischievous question: <b>what if the model wrote its own training data?</b> Take a vanilla pretrained GPT3, give it 175 seed tasks written by humans, and have it bootstrap tens of thousands of new instructions and answers from itself. Filter out the junk, then finetune GPT3 on its own output."},
+            {"type":"quote","html":"We introduce Self-Instruct, a framework for improving the instruction-following capabilities of pretrained language models by bootstrapping off their own generations."},
+            {"type":"p","html":"The headline result is almost absurd. Applying Self-Instruct to vanilla GPT3 gives a <b>33% absolute improvement</b> over the original model on SuperNI &mdash; <b>on par with InstructGPT-001</b>, which OpenAI trained with private user data and paid human annotators. On a set of novel user-oriented tasks, the gap to InstructGPT-001 shrinks to just <b>5%</b>. Nearly matching a commercially-annotated model with <i>almost no human annotation</i> is the whole point."},
+            {"type":"p","html":"This paper is the recipe behind <b>Alpaca</b>: Stanford's 2023 Alpaca took exactly this pipeline, ran it against GPT&ndash;3.5 (<code>text-davinci-003</code>) to generate 52K instructions, and finetuned LLaMA on them for about $500. Self-Instruct is the moment synthetic instruction data went mainstream."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "1. The Core Idea",
+      "pages": [
+        {
+          "title": "Bootstrapping from the model itself",
+          "subtitle": "The iterative loop, end to end",
+          "pdfPages": [2],
+          "blocks": [
+            {"type":"p","html":"The insight that makes Self-Instruct work: a big pretrained LM has already <b>read</b> millions of instructions, questions, and worked examples during pretraining. It <i>knows</i> what a task looks like &mdash; it just was not tuned to reliably follow one. So instead of paying humans to author new tasks, you prompt the model to <b>recombine</b> what it has already seen into fresh tasks."},
+            {"type":"h2","text":"The loop"},
+            {"type":"p","html":"Self-Instruct is an iterative bootstrapping algorithm built around a growing <b>task pool</b>. Each round pulls a few tasks out of the pool as examples, asks the model to invent more, filters the results, and adds the survivors back &mdash; so next round has an even richer pool to sample from."},
+            {"type":"list","items":[
+              "<b>Seed.</b> Start the task pool with 175 human-written tasks (1 instruction + 1 instance each).",
+              "<b>Step 1 &mdash; Instruction Generation.</b> Sample 8 instructions as in-context examples and prompt the LM to write brand-new instructions.",
+              "<b>Step 2 &mdash; Classification Identification.</b> Ask the LM whether each new instruction is a classification task (small fixed set of output labels) or not.",
+              "<b>Step 3 &mdash; Instance Generation.</b> For each instruction, have the LM generate the input(s) and output(s) that actually solve it.",
+              "<b>Step 4 &mdash; Filtering.</b> Throw out low-quality, malformed, or near-duplicate tasks; add the rest back to the pool."
+            ]},
+            {"type":"p","html":"Run this on GPT3 and it produces roughly <b>52K instructions</b> paired with about <b>82K input&ndash;output instances</b>. Then you finetune GPT3 on this self-generated data to get the aligned model the paper calls GPT3<sub>SELF-INST</sub>."},
+            {"type":"p","html":"Why does the growing pool matter? Diversity compounds. Early rounds produce tasks close to the 175 seeds, but each new task you accept becomes a possible in-context example for later rounds, so the model keeps wandering further from the seeds. The filtering step is what keeps that wandering from collapsing into 52K paraphrases of the same task."},
+            {"type":"quote","html":"The overall process is an iterative bootstrapping algorithm, which starts off with a limited (e.g., 175 in our study) seed set of manually-written tasks that are used to guide the overall generation."}
+          ]
+        },
+        {
+          "title": "What counts as a task",
+          "subtitle": "Defining instruction data precisely",
+          "pdfPages": [3],
+          "blocks": [
+            {"type":"p","html":"Before generating anything, the paper pins down what it is generating. Instruction data is a set of tasks $\\{I_t\\}$. Each task $I_t$ is a natural-language instruction, and comes with one or more input&ndash;output examples."},
+            {"type":"math","tex":"\\{(X_{t,i}, Y_{t,i})\\}_{i=1}^{n_t}, \\quad n_t \\geq 1"},
+            {"type":"p","html":"Reading it term by term: $t$ indexes the task; $I_t$ is that task's instruction (a string like <i>&ldquo;Translate this to French&rdquo;</i>); $X_{t,i}$ is the $i$-th input for that task (the sentence to translate); $Y_{t,i}$ is the matching desired output; and $n_t$ is how many instances that task has. A model $M$ is expected to produce the output from the instruction and input together."},
+            {"type":"math","tex":"M(I_t, X_{t,i}) = Y_{t,i}, \\quad \\text{for } i \\in \\{1, \\dots, n_t\\}"},
+            {"type":"p","html":"In words: feed the model the instruction $I_t$ concatenated with input $X_{t,i}$, and it should emit $Y_{t,i}$. That is the entire target behavior &mdash; everything downstream is about generating good $(I_t, X_{t,i}, Y_{t,i})$ triples to train this mapping."},
+            {"type":"h2","text":"The blurry input boundary"},
+            {"type":"p","html":"A subtle design choice: the instruction and input do <b>not</b> have a hard boundary. <i>&ldquo;Write an essay about school safety&rdquo;</i> is a complete instruction with <b>empty input</b> ($X$ is empty). The same task could instead be phrased as instruction <i>&ldquo;Write an essay about the following topic&rdquo;</i> with input <i>&ldquo;school safety.&rdquo;</i> The paper deliberately allows both, to encourage diversity in how tasks are formatted."},
+            {"type":"p","html":"This is why <b>35,878 of the 82,439</b> generated instances have empty input &mdash; a huge chunk of real tasks (write a poem, brainstorm ideas) simply need no separate input field. Forcing every task into a rigid input&ndash;output schema, as many earlier NLP datasets did, would have thrown away exactly the free-form generative tasks that make instruction-tuned models feel general."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. The Generation Pipeline",
+      "pages": [
+        {
+          "title": "Generating new instructions",
+          "subtitle": "Step 1 &mdash; few-shot bootstrapping",
+          "pdfPages": [3],
+          "blocks": [
+            {"type":"p","html":"Step 1 is the creative engine: get the model to <b>invent task descriptions it has never been told about</b>. The trick is few-shot prompting. Show the model a handful of example instructions and it will happily continue the list with new ones in the same spirit."},
+            {"type":"h2","text":"The sampling recipe"},
+            {"type":"p","html":"For each generation step, Self-Instruct samples <b>8 instructions</b> from the task pool to use as in-context examples. Crucially, of those 8: <b>6 come from the human-written seed tasks</b> and <b>2 come from previously model-generated tasks</b>. Those 2 model-generated slots are what push the distribution outward &mdash; they let the model build on its own earlier inventions, not just echo the 175 seeds forever."},
+            {"type":"p","html":"So a prompt looks like: &ldquo;Come up with a diverse set of task instructions. Instruction 1: [seed]. Instruction 2: [seed]. ... Instruction 8: [prior generation]. Instruction 9:&rdquo; &mdash; and the model completes Instruction 9 onward with fresh tasks."},
+            {"type":"p","html":"Why 6-and-2 rather than all-8 from the pool? Anchoring heavily on human seeds keeps quality and readability high (the seeds are clean, well-formed tasks), while the 2 self-generated slots inject novelty. It is a deliberate quality-vs-diversity dial. Too many self-generated examples and the model amplifies its own noise; too few and it never escapes the seed distribution."},
+            {"type":"p","html":"How well does it escape? The 175 seed tasks were <b>written from scratch by the authors and their labmates at UW</b>, deliberately without reference to any existing dataset, so the model is not just regurgitating benchmark tasks. And the diversity analysis (later) shows most generated instructions have low ROUGE-L overlap with any seed &mdash; they are genuinely new tasks, not paraphrases."}
+          ]
+        },
+        {
+          "title": "Filling in inputs and outputs",
+          "subtitle": "Steps 2 & 3 &mdash; the Input-first vs Output-first trick",
+          "pdfPages": [3],
+          "blocks": [
+            {"type":"p","html":"Now you have thousands of bare instructions like <i>&ldquo;Give me a quote from a famous person on this topic.&rdquo;</i> Step 3 asks the model to actually <b>solve</b> each one: generate the input(s) it needs and the correct output. This is harder than it sounds, and the paper's clever bit is that <b>how you order the generation matters</b>."},
+            {"type":"h2","text":"Step 2: classification or not?"},
+            {"type":"p","html":"First, Step 2 has the model classify each instruction as a <b>classification task</b> (one whose output is a small fixed set of labels, e.g. positive/negative) or not. It does this few-shot, prompted with 12 classification and 19 non-classification examples from the seeds. The reason this matters is entirely about the next step."},
+            {"type":"h2","text":"The label-bias problem"},
+            {"type":"p","html":"The natural approach &mdash; call it <b>Input-first</b> &mdash; is to ask the model to first invent an input, then produce the output. For <i>&ldquo;write an essay about the following topic,&rdquo;</i> the model generates a topic, then the essay. This mirrors how the model will be used at inference, so it works well for open-ended tasks."},
+            {"type":"p","html":"But for classification, Input-first quietly breaks. Ask the model to first generate an input for a grammar-error-detection task and it <b>almost always generates a grammatical sentence</b> &mdash; so the label is nearly always &ldquo;correct,&rdquo; and you never get examples of the &ldquo;incorrect&rdquo; class. The generated dataset becomes lopsided toward one label."},
+            {"type":"p","html":"The fix is <b>Output-first</b>: for classification tasks, first generate the <i>class label</i> (e.g. &ldquo;Pro-abortion&rdquo;), then condition the input generation on that label so the input actually matches it. This forces balanced coverage across labels. Self-Instruct applies Output-first to the tasks Step 2 flagged as classification, and Input-first to everything else."},
+            {"type":"quote","html":"However, we found that this approach can generate inputs biased toward one label, especially for classification tasks."},
+            {"type":"p","html":"This is a small but genuinely important trick that recurs across synthetic-data papers: when a model generates its own training examples, its generation biases become dataset biases. Ordering the generation to break the correlation between input and label is the cheap fix."}
+          ]
+        },
+        {
+          "title": "Filtering for quality and diversity",
+          "subtitle": "Step 4 &mdash; keeping the pool clean",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type":"p","html":"A model generating its own data will produce plenty of garbage and plenty of near-duplicates. Without aggressive filtering, the 52K &ldquo;tasks&rdquo; would be mostly slight rewordings of a few dozen ideas, and diversity &mdash; the entire reason for doing this &mdash; would be lost. Step 4 is the guardrail."},
+            {"type":"h2","text":"The ROUGE-L diversity gate"},
+            {"type":"p","html":"A new instruction is added to the pool <b>only if its ROUGE-L similarity to every existing instruction is below 0.7</b>. ROUGE-L measures overlap via the longest common subsequence of words &mdash; a value near 1 means near-identical phrasing, near 0 means unrelated. The 0.7 threshold rejects anything that is basically a paraphrase of a task already in the pool."},
+            {"type":"p","html":"Concretely: if the pool already contains <i>&ldquo;Write a short story about a dragon&rdquo;</i> and the model proposes <i>&ldquo;Write a short story about a dinosaur,&rdquo;</i> the ROUGE-L overlap is high, so the new one is dropped. This is what forces the pool toward genuinely distinct tasks rather than a thesaurus attack on a handful of templates."},
+            {"type":"h2","text":"Heuristic cleanup"},
+            {"type":"list","items":[
+              "Drop instructions containing keywords LMs can't handle &mdash; <b>image, picture, graph</b> &mdash; since a text model can't process them.",
+              "For instances, discard exact duplicates and cases with the <b>same input but different outputs</b> (contradictory).",
+              "Filter obviously invalid generations by heuristics: instruction too long or too short, or the output is just a repetition of the input."
+            ]},
+            {"type":"p","html":"These filters are blunt and rule-based &mdash; no learned quality model, no reward model. That is deliberate: the whole selling point is <i>cheap</i>, so the cleanup has to be cheap too. The paper openly notes (later) that plugging in a learned reward model, as InstructGPT does, would likely improve things &mdash; but the point here is how far you get with almost nothing."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The Generated Data",
+      "pages": [
+        {
+          "title": "What 52K self-generated tasks look like",
+          "subtitle": "Statistics, diversity, and honest quality numbers",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type":"p","html":"Before trusting a model finetuned on this data, you want to know: how much is there, how varied is it, and how good is it? The paper answers all three with real numbers &mdash; including uncomfortable ones."},
+            {"type":"h2","text":"Quantity"},
+            {"type":"table","headers":["Statistic","Value"],"rows":[
+              ["# of instructions","52,445"],
+              ["&mdash; classification instructions","11,584"],
+              ["&mdash; non-classification instructions","40,861"],
+              ["# of instances","82,439"],
+              ["&mdash; instances with empty input","35,878"],
+              ["ave. instruction length (words)","15.9"],
+              ["ave. output length (words)","18.9"]
+            ]},
+            {"type":"h2","text":"Diversity"},
+            {"type":"p","html":"To check the tasks are actually varied, the authors parse each instruction with the Berkeley Neural Parser, extract the <b>root verb and its direct noun object</b>, and plot the distribution (Figure 3). The top 20 verbs (write, give, find, create, make, ...) with their top noun objects account for only <b>14%</b> of all instructions &mdash; a long tail, meaning enormous variety. And <b>26,559 of 52,445</b> instructions even have a clean verb-noun structure; the rest are more complex clauses or questions, i.e. even more diverse than the plot shows."},
+            {"type":"p","html":"They also compute each generated instruction's max ROUGE-L overlap against the 175 seeds (Figure 4). Most generations have <b>low</b> overlap &mdash; confirming these are new tasks, not seed paraphrases that slipped past the 0.7 gate."},
+            {"type":"h2","text":"Quality &mdash; the honest part"},
+            {"type":"p","html":"An author annotated a random sample of 200 instructions with 1 instance each. The results are refreshingly candid:"},
+            {"type":"table","headers":["Quality question","Yes %"],"rows":[
+              ["Does the instruction describe a valid task?","92%"],
+              ["Is the input appropriate for the instruction?","79%"],
+              ["Is the output a correct response?","58%"],
+              ["All fields valid","54%"]
+            ]},
+            {"type":"p","html":"Read this carefully: the <b>instructions</b> are almost always sensible (92%), but only <b>58%</b> of the <b>outputs</b> are actually correct, and only 54% of examples are clean across the board. The data is <b>noisy</b>. The paper's bet &mdash; which turns out to be right &mdash; is that even noisy data is usually in the correct <i>format</i> and partially correct, which is enough to teach a model the <i>shape</i> of following instructions. You do not need perfect data to learn the behavior."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Finetuning & Results",
+      "pages": [
+        {
+          "title": "Finetuning GPT3 on its own output",
+          "subtitle": "Section 2.3 &mdash; the training details",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type":"p","html":"Now the payoff: take the 52K self-generated tasks and finetune the <b>same</b> vanilla GPT3 (&ldquo;davinci&rdquo; engine, 175B parameters) that generated them. This is the step that converts a pile of synthetic data into an aligned model, denoted <b>GPT3<sub>SELF-INST</sub></b>."},
+            {"type":"h2","text":"How the prompt is built"},
+            {"type":"p","html":"Training is standard supervised finetuning: concatenate the instruction and input into a prompt, and train the model to generate the output. Nothing exotic. But to make the model robust to formatting, they encode each example with <b>many different templates</b> rather than one fixed layout."},
+            {"type":"list","items":[
+              "The instruction may or may not be prefixed with <code>Task:</code>",
+              "The input may or may not be prefixed with <code>Input:</code>",
+              "<code>Output:</code> may or may not be appended at the end",
+              "Varying numbers of line breaks between fields"
+            ]},
+            {"type":"p","html":"Why bother? At inference a real user will phrase things unpredictably. Training on a single rigid template would make the model brittle &mdash; it would only follow instructions that look exactly like the training format. Randomizing the template teaches the model that the <i>content</i> matters, not the punctuation around it."},
+            {"type":"h2","text":"Hyperparameters"},
+            {"type":"p","html":"Finetuning ran through the <b>OpenAI finetuning API</b> with default hyperparameters, two changes: the <b>prompt loss weight set to 0</b> (only the output tokens contribute to the loss &mdash; the model is graded on producing the answer, not on reproducing the instruction) and training for <b>2 epochs</b>. Two passes is enough; more risks memorizing the noisy outputs."}
+          ]
+        },
+        {
+          "title": "Nearly matching InstructGPT",
+          "subtitle": "Experiment 1 &mdash; zero-shot on SuperNI",
+          "pdfPages": [6],
+          "blocks": [
+            {"type":"p","html":"The first test: can GPT3<sub>SELF-INST</sub> follow instructions on standard NLP tasks it has never seen? They evaluate <b>zero-shot</b> (the model gets only the task definition, no examples) on the SuperNI evaluation set &mdash; 119 tasks, 100 instances each &mdash; scored by ROUGE-L against reference answers."},
+            {"type":"table","headers":["Model","# Params","ROUGE-L"],"rows":[
+              ["GPT3 (vanilla)","175B","6.8"],
+              ["T5-LM","11B","25.7"],
+              ["T0","11B","33.1"],
+              ["GPT3 + T0 Training","175B","37.9"],
+              ["GPT3<sub>SELF-INST</sub> (Ours)","175B","39.9"],
+              ["InstructGPT-001","175B","40.8"]
+            ]},
+            {"type":"p","html":"The story in three numbers. Vanilla GPT3 scores a pitiful <b>6.8</b> &mdash; it basically cannot follow instructions at all, generating irrelevant, repetitive text. Self-Instruct lifts the <i>identical base model</i> to <b>39.9</b>, a <b>+33.1 absolute</b> jump. And 39.9 sits right next to <b>InstructGPT-001's 40.8</b> &mdash; a model OpenAI built with private user queries and paid human annotators. Self-Instruct closes almost the entire gap with essentially no human labeling."},
+            {"type":"p","html":"It also beats <b>GPT3 + T0 Training</b> (37.9), i.e. finetuning the same GPT3 on the human-authored PromptSource/T0 data. Self-generated data outperforming a hand-built dataset of comparable size is the result that made the community take synthetic instruction data seriously."},
+            {"type":"h2","text":"Complementary, not replacement"},
+            {"type":"p","html":"One more row worth noting: adding Self-Instruct data <b>on top of</b> SuperNI training (<b>GPT3<sub>SELF-INST</sub> + SuperNI</b>) reaches <b>51.6</b>, beating SuperNI-training alone (49.5). So even when you already have lots of labeled data, the self-generated data still adds gains &mdash; it is complementary, covering tasks the human data misses."}
+          ]
+        },
+        {
+          "title": "Winning on real user tasks",
+          "subtitle": "Experiment 2 &mdash; 252 novel user-oriented instructions",
+          "pdfPages": [7],
+          "blocks": [
+            {"type":"p","html":"SuperNI is skewed toward research-y classification tasks. But the promise of instruction-following is <b>practical</b> use &mdash; email writing, coding, entertainment. So the authors hand-curated <b>252 novel user-oriented instructions</b> across domains (each with 1 instance), deliberately varied in style: some long, some short, outputs as bullet points, tables, code, equations."},
+            {"type":"p","html":"These tasks can't be scored by ROUGE-L (how do you auto-grade &ldquo;write a program&rdquo;?), so the <b>authors themselves rated</b> each model's response on a 4-level scale, with inter-rater agreement $\\kappa = 0.57$:"},
+            {"type":"list","items":[
+              "<b>RATING-A</b>: valid and satisfying response",
+              "<b>RATING-B</b>: acceptable, minor errors or imperfections",
+              "<b>RATING-C</b>: responds to the instruction but has significant errors",
+              "<b>RATING-D</b>: irrelevant or completely invalid"
+            ]},
+            {"type":"p","html":"The results (Figure 6): vanilla GPT3 is overwhelmingly RATING-D &mdash; it produces valid, satisfying responses on only a tiny fraction. GPT3<sub>SELF-INST</sub> <b>outperforms every GPT3 variant trained on public data</b> (T0 training, SuperNI training) by a wide margin. And against InstructGPT-001: if you count RATING-A and RATING-B (minor imperfections) as acceptable, GPT3<sub>SELF-INST</sub> is only <b>5% behind</b>."},
+            {"type":"quote","html":"GPT3_SELF-INST is only 5% behind InstructGPT-001."},
+            {"type":"p","html":"The newer InstructGPT-002 and 003 are clearly stronger (as expected &mdash; they use better data and RLHF). The paper doesn't claim to beat them; it conjectures that improving the <i>quality</i> of the generated data, e.g. with a reward model like InstructGPT's, would close that gap too &mdash; which foreshadows the next experiment."}
+          ]
+        },
+        {
+          "title": "More data, better data",
+          "subtitle": "Section 4.5 &mdash; scaling and the distillation trick",
+          "pdfPages": [8],
+          "blocks": [
+            {"type":"p","html":"Two natural follow-ups: does <b>more</b> self-generated data keep helping, and can you get <b>better</b> data cheaply? Figure 7 answers both by finetuning GPT3 on subsampled slices (175 up to 51,200 instructions) and re-running the human eval."},
+            {"type":"h2","text":"Data size"},
+            {"type":"p","html":"Performance climbs steadily with data size &mdash; the percentage of RATING-A responses rises <b>31.0% &rarr; 36.9% &rarr; 43.7% &rarr; 44.4%</b> as instructions grow &mdash; then <b>plateaus after ~16K</b>. So there is a lot of value in the first sixteen thousand tasks and diminishing returns beyond. (Interestingly, on SuperNI the plateau comes even earlier, around a few hundred tasks, because SuperNI's task style is narrower.)"},
+            {"type":"h2","text":"The distillation trick"},
+            {"type":"p","html":"For quality, they run a mini-distillation: take the generated instructions and inputs, but <b>regenerate the outputs using InstructGPT-003</b> (the best model available) instead of vanilla GPT3. Finetuning on this cleaner data beats the original by <b>10%</b> (the orange <b>54.4%</b> point in Figure 7, vs 44.4% with self-generated outputs)."},
+            {"type":"p","html":"This is a preview of how the field would actually use Self-Instruct: the <b>pipeline generates the task diversity cheaply</b>, and a stronger model (or humans) cleans up the <b>answers</b>. Stanford Alpaca did exactly this &mdash; Self-Instruct's pipeline for the 52K instructions, GPT&ndash;3.5's answers for quality &mdash; to align LLaMA for a few hundred dollars."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Significance",
+      "pages": [
+        {
+          "title": "Why Self-Instruct mattered",
+          "subtitle": "Impact, limitations, and legacy",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {"type":"p","html":"Self-Instruct reframed a bottleneck. Before it, the assumption was that aligning a model <b>required</b> expensive human annotation &mdash; the more instruction data you wanted, the more annotators you hired. Self-Instruct showed the base model was already a serviceable annotator of <i>itself</i>: 33% absolute gain on SuperNI, within 5% of a commercially-annotated model, for the cost of API calls."},
+            {"type":"h2","text":"What it enabled"},
+            {"type":"list","items":[
+              "<b>Alpaca (2023)</b> is Self-Instruct applied to <code>text-davinci-003</code> + LLaMA &mdash; the paper that democratized instruction tuning and kicked off the open-model instruction-tuning wave.",
+              "A cascade of synthetic-data descendants: <b>Evol-Instruct / WizardLM</b> (evolving instructions to be harder), <b>Unnatural Instructions</b>, <b>Vicuna</b>, and the general practice of <b>distilling a stronger model's answers</b> into a smaller one.",
+              "It made <b>public, large-scale instruction datasets</b> normal &mdash; the authors released their 52K set and 252 novel tasks, directly attacking the opacity of InstructGPT's private data."
+            ]},
+            {"type":"h2","text":"Honest limitations"},
+            {"type":"p","html":"The paper is unusually candid about weaknesses. Only <b>58% of generated outputs are fully correct</b>, so the data is noisy. Bootstrapping from a model risks <b>amplifying that model's biases</b> and its blind spots &mdash; you can only self-generate tasks the base model already implicitly understands. And Self-Instruct does no <b>RLHF</b> or reward modeling, which is precisely why InstructGPT-002/003 pull ahead."},
+            {"type":"p","html":"The intellectual lineage is worth naming. Self-Instruct sits between two ideas: <b>knowledge distillation</b> (train a student on a teacher's outputs) and <b>instruction tuning</b> (T0, FLAN, SuperNI). Its novelty is that the teacher and student can be the <i>same model</i> &mdash; a form of self-distillation for alignment &mdash; and that the generated artifact is <i>new task definitions</i>, not just answers to existing tasks. That is the seed of nearly every open instruction-tuned model that followed."},
+            {"type":"quote","html":"Self-Instruct provides an almost annotation-free method for aligning pretrained language models with instructions."}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+{
+  "title": "BLOOM: A 176B-Parameter Open-Access Multilingual Language Model",
+  "authors": "BigScience Workshop (Scao, Fan, et al.)",
+  "year": "2022",
+  "venue": "arXiv:2211.05100",
+  "sections": [
+    {
+      "title": "Abstract & Motivation",
+      "pages": [
+        {
+          "title": "Why BLOOM exists",
+          "subtitle": "Democratizing a 176B multilingual model",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type": "p", "html": "By 2022 the recipe for a powerful language model was well known: take a Transformer, make it enormous, and train it on a mountain of text. GPT-3 (175B), Gopher (280B), and PaLM (540B) had all shown that scale reliably buys new abilities. But there was a catch that had nothing to do with the science: <b>almost none of these models were public</b>, and almost all of them were trained overwhelmingly on English. The frontier of NLP had become a private club for a handful of well-funded labs."},
+            {"type": "p", "html": "BLOOM is the counter-move. It is a <b>176-billion-parameter</b> decoder-only Transformer, built not by one company but by the <b>BigScience Workshop</b> &mdash; a one-year open collaboration of over 1,000 researchers from 60+ countries and 250+ institutions, coordinated largely on Hugging Face and volunteer time. The name expands to the <i>BigScience Large Open-science Open-access Multilingual</i> language model."},
+            {"type": "quote", "html": "As a step towards democratizing this powerful technology, we present BLOOM, a 176B-parameter open-access language model designed and built thanks to a collaboration of hundreds of researchers."},
+            {"type": "p", "html": "Two design choices set BLOOM apart from its contemporaries. First, <b>multilinguality is built in, not bolted on</b>: it is trained on the ROOTS corpus spanning <b>46 natural languages and 13 programming languages</b> (59 in total), with deliberate inclusion of under-resourced African and Indic languages that big English models ignore. Second, <b>everything is open</b> &mdash; the weights, the training code, the data governance decisions, and a novel license &mdash; so the research community can inspect, reproduce, and build on it."},
+            {"type": "p", "html": "The compute came from a <b>French public grant</b> (from GENCI), using IDRIS's <b>Jean Zay supercomputer</b>. This matters for the story: a national research computer, not a corporate cluster, produced a frontier model, and its low-carbon nuclear-powered grid made BLOOM one of the least carbon-intensive large models ever trained (more on that later)."},
+            {"type": "p", "html": "A note on what this paper <i>is</i>. It is a <b>high-level overview and chronicle</b> of a coordinated engineering-and-governance effort, referencing dozens of companion reports for the fine detail. So this explainer treats BLOOM as a case study in <i>how</i> you build an open frontier model: the corpus, the architecture choices, the distributed-training engineering, the evaluation, and the ethics &mdash; each a deliberate, documented decision."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Background",
+      "pages": [
+        {
+          "title": "What a language model actually computes",
+          "subtitle": "Autoregressive factorization of text probability",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "Before the engineering, the core object. A <b>language model</b> assigns a probability to a piece of text. Concretely, given a text broken into a sequence of <b>tokens</b> (a token is a unit of text &mdash; a word, a subword, a character, or a byte), the model estimates how likely that exact sequence is. Train it to make real text probable, and it learns grammar, facts, and reasoning patterns as a side effect."},
+            {"type": "p", "html": "The trick that makes this tractable is the <b>chain rule of probability</b>: the joint probability of a whole sequence factors into a product of next-token predictions, each conditioned on everything before it."},
+            {"type": "math", "tex": "p(x) = p(x_1, \\ldots, x_T) = \\prod_{t=1}^{T} p(x_t \\mid x_{<t})"},
+            {"type": "p", "html": "Reading it term by term: $x$ is the full sequence of $T$ tokens; $x_t$ is the token at position $t$; $x_{<t} = (x_1, \\ldots, x_{t-1})$ is every token that precedes it. The model only ever has to answer one repeated question &mdash; <i>given the text so far, what is the probability distribution over the next token?</i> &mdash; and multiplying those together gives the probability of any sequence. This is called <b>autoregressive</b> language modeling: predict the next token, append it, repeat. Text generation is just sampling from $p(x_t \\mid x_{<t})$ step after step."},
+            {"type": "p", "html": "Why this specific factorization? Because it turns an impossibly high-dimensional problem (the joint distribution over all possible texts) into a sequence of ordinary classification problems (pick the next token out of a fixed vocabulary). A single neural network with shared weights answers all of them. The training loss is simply the average negative log of these probabilities &mdash; <b>cross-entropy</b>, equivalently perplexity."},
+            {"type": "p", "html": "A short history the paper walks through: early models were <b>$n$-gram</b> counters (estimate $p(x_t \\mid x_{<t})$ from how often short spans appear), which blow up in size as $n$ grows and cannot score sequences they never saw. Neural LMs (Bengio et al., 2000) replaced counts with learned representations; RNNs handled variable history; and finally the <b>Transformer</b> (Vaswani et al., 2017) became the de facto choice. BLOOM is a Transformer, and specifically a <b>causal decoder-only</b> one &mdash; the same family as GPT-3."},
+            {"type": "p", "html": "The background section also flags the <b>social limitations</b> that motivated the whole project: rising scale means rising cost and carbon, most models stay private, and most are English-centric. BLOOM is engineered as a direct response to each of these &mdash; a theme that recurs on every following page."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.1 Training Data (ROOTS)",
+      "pages": [
+        {
+          "title": "The ROOTS corpus: 1.6TB, curated by humans",
+          "subtitle": "Data as a first-class, governed artifact",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type": "p", "html": "Most large models are trained on web scrapes filtered by automatic heuristics, and the exact data is rarely disclosed. BigScience took the opposite stance: the corpus is a <b>deliberately assembled, documented, human-governed</b> artifact. The result is <b>ROOTS</b> (Responsible Open-science Open-collaboration Text Sources), a composite of <b>498 Hugging Face datasets totaling 1.61 terabytes of text</b> across 46 natural and 13 programming languages."},
+            {"type": "p", "html": "The single most important design decision is the <b>language distribution</b>, and it was chosen by people, not by whatever the internet happens to contain. English is the largest slice but far from dominant; French, Spanish, Portuguese, Arabic, Chinese, and a long tail of Indic and African languages get meaningful shares."},
+            {"type": "table", "headers": ["Language", "Family", "Size in ROOTS"], "rows": [["English", "Indo-European (Germanic)", "484.95 GB"], ["Simplified Chinese", "Sino-Tibetan", "261.02 GB"], ["French", "Indo-European (Romance)", "208.24 GB"], ["Spanish", "Indo-European (Romance)", "175.10 GB"], ["Portuguese", "Indo-European (Romance)", "79.28 GB"], ["Arabic", "Afro-Asiatic (Semitic)", "74.85 GB"], ["Vietnamese", "Austro-Asiatic", "43.71 GB"], ["Hindi", "Indo-European (Indic)", "24.62 GB"], ["Programming langs", "&mdash;", "174.70 GB"], ["Swahili", "Niger-Congo (Bantoid)", "236.48 MB"], ["Yoruba", "Niger-Congo (Defoid)", "89.70 MB"]]},
+            {"type": "p", "html": "Look at the bottom rows: Swahili and Yoruba are measured in <i>megabytes</i>, not gigabytes. Including them at all is a values statement &mdash; BigScience proposed that any group of <b>3+ fluent speakers</b> could add a language if they committed to guiding its sourcing and processing. That policy is why languages with almost no clean web text made it in."},
+            {"type": "p", "html": "Where did the text come from? Three streams, shown in the ROOTS creation pipeline (Figure 2): (1) a bottom-up <b>&ldquo;BigScience Catalogue&rdquo;</b> of 252 human-identified sources gathered at community hackathons (Machine Learning Tokyo, Masakhane for African languages, LatinX in AI); (2) <b>GitHub code</b> pulled from Google's BigQuery, with the language mix mirroring AlphaCode; and (3) <b>OSCAR</b>, a filtered Common Crawl snapshot that made up about <b>38%</b> of the corpus to hit the sheer volume BLOOM's size demanded."},
+            {"type": "p", "html": "The processing philosophy is captured in one memorable phrase: quality filtering keeps <b>&ldquo;text produced by humans for humans.&rdquo;</b> Rather than judging content or grammaticality, filters target obvious non-language &mdash; SEO spam, boilerplate, extraction errors &mdash; with thresholds and term lists <b>set per-language by fluent speakers</b>, plus a personal-information (PII) removal step. Data curation here is a governance process, not a regex."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.2 Model Architecture",
+      "pages": [
+        {
+          "title": "Causal decoder-only, with two twists",
+          "subtitle": "ALiBi positions and an embedding LayerNorm",
+          "pdfPages": [15, 16],
+          "blocks": [
+            {"type": "p", "html": "With a 176B model you get essentially <b>one shot</b> &mdash; you cannot train it ten times to compare architectures. So BigScience made the big choices by <b>ablating smaller models</b> (1.3B and 6.7B) on zero-shot generalization, using 29 tasks from EleutherAI's LM Evaluation Harness and 9 from T0-Eval, and only then committing to the full run."},
+            {"type": "p", "html": "The headline architectural decision: <b>causal decoder-only</b>, the GPT family, not the encoder-decoder of the original Transformer. This was not obvious &mdash; Raffel et al. (2020, T5) had found encoder-decoder better for transfer learning. But BigScience's own study (Wang et al., 2022) showed that <i>immediately after pretraining</i>, causal decoder-only models generalize best zero-shot, validating what every 100B+ model of the era already used. They also skipped mixture-of-experts and state-space models, citing the lack of mature, widely-supported GPU codebases at design time."},
+            {"type": "p", "html": "BLOOM then deviates from vanilla GPT in exactly <b>two</b> deliberate ways, each chosen by ablation:"},
+            {"type": "h2", "text": "1. ALiBi positional embeddings"},
+            {"type": "p", "html": "A Transformer has no built-in notion of word order, so you must inject position. GPT adds learned position vectors to the token embeddings. <b>ALiBi</b> (Attention with Linear Biases, Press et al., 2021) instead <b>adds nothing to the embeddings</b> and instead penalizes attention scores by how far apart the query and key are. The attention logit between query at position $i$ and key at position $j$ becomes:"},
+            {"type": "math", "tex": "\\text{score}(i, j) = q_i \\cdot k_j + m \\cdot (j - i), \\qquad m = 2^{-8i/n}"},
+            {"type": "p", "html": "Term by term: $q_i \\cdot k_j$ is the ordinary query-key dot product; $(j - i)$ is the signed distance between the two positions; and $m$ is a fixed, non-learned <b>slope</b> that is different for each of the $n$ attention heads (with $i \\in \\{1, \\ldots, n\\}$ indexing the head, per Figure 5). The further back a key sits, the larger the negative bias, so the model attends more to nearby tokens by default. Because the bias is a simple function of distance, ALiBi can <b>extrapolate to sequences longer than it trained on</b>. BigScience found a bonus: even at the training length, ALiBi gave <b>smoother training and better downstream scores</b> than both learned and rotary (RoPE) embeddings."},
+            {"type": "h2", "text": "2. Embedding LayerNorm"},
+            {"type": "p", "html": "In preliminary 104B experiments, training kept diverging. Adding an extra <b>layer normalization immediately after the embedding layer</b> (as recommended by the <code>bitsandbytes</code> StableEmbedding) <b>significantly improved stability</b>, so BLOOM includes it &mdash; despite the team finding it slightly hurts zero-shot generalization. A telling caveat: those unstable 104B runs used <code>float16</code>; the final BLOOM used <code>bfloat16</code>, which may have removed the need for the fix entirely. It's a candid look at how much frontier training is firefighting numerical instabilities."}
+          ]
+        },
+        {
+          "title": "Tokenizer & final configuration",
+          "subtitle": "A 250k byte-level BPE built for 46 languages",
+          "pdfPages": [17, 18, 21],
+          "blocks": [
+            {"type": "p", "html": "Here is a place BLOOM could not just copy GPT. OPT and GPT-3 both reused <b>GPT-2's tokenizer, trained on English</b>. For a model meant to be good in Hindi, Arabic, and Bengali, an English tokenizer is a quiet disaster: it chops non-English words into far too many pieces, wasting context and hurting quality."},
+            {"type": "p", "html": "The metric that captures this is <b>fertility</b> &mdash; the average number of subword tokens the tokenizer produces per word. Lower is better (fewer pieces per word = more efficient). BigScience's goal was to not degrade any language's fertility by more than 10 points versus that language's best monolingual tokenizer:"},
+            {"type": "table", "headers": ["Tokenizer", "fr", "en", "es", "zh", "hi", "ar"], "rows": [["Monolingual best", "1.30", "1.15", "1.12", "1.50", "1.07", "1.16"], ["BLOOM (250k)", "1.17", "1.15", "1.16", "1.58", "1.18", "1.34"]]},
+            {"type": "p", "html": "BLOOM actually <b>beats</b> the monolingual French tokenizer (1.17 vs 1.30) and ties English, at the cost of only mild degradation elsewhere (Arabic 1.34 vs 1.16) &mdash; a strong result for a single tokenizer covering 46 languages. It uses <b>byte-level BPE</b> (Byte Pair Encoding over raw bytes): because all 256 possible bytes are in the vocabulary, <b>there are no unknown tokens ever</b>, and byte-level merging maximizes vocabulary sharing across languages that share alphabets."},
+            {"type": "p", "html": "The vocabulary is large on purpose: <b>250,680 tokens</b> (divisible by 128 for GPU efficiency and by 4 for tensor parallelism, with 200 slots reserved for future PII placeholders). A big vocabulary reduces over-segmenting low-resource languages. No upstream Unicode normalization was applied, to keep the model maximally general &mdash; NFKC would, for example, collapse &lsquo;2<sup>2</sup>&rsquo; and &lsquo;22&rsquo;."},
+            {"type": "p", "html": "Putting it together, here is the final BLOOM-176B configuration from Table 3:"},
+            {"type": "table", "headers": ["Hyperparameter", "BLOOM-176B"], "rows": [["Parameters", "176,247M"], ["Layers", "70"], ["Hidden dimension", "14,336"], ["Attention heads", "112"], ["Vocab size", "250,680"], ["Sequence length", "2,048"], ["Position embedding", "ALiBi"], ["Activation", "GELU"], ["Precision", "bfloat16"], ["Global batch size", "2,048"], ["Learning rate", "6e-5 (cosine decay)"], ["Total training tokens", "366B"]]},
+            {"type": "p", "html": "Note the <b>366 billion training tokens</b>. This predates the Chinchilla compute-optimal finding becoming standard practice, so by later lights BLOOM is somewhat <b>under-trained</b> for its 176B size (Chinchilla would suggest several trillion tokens). That is a real limitation, and part of why later open models like LLaMA, trained far longer on fewer parameters, would outscore it per-parameter."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.4 Engineering",
+      "pages": [
+        {
+          "title": "Training 176B on Jean Zay",
+          "subtitle": "384 A100s, 3D parallelism, bfloat16",
+          "pdfPages": [18, 19, 20, 21],
+          "blocks": [
+            {"type": "p", "html": "A 176B-parameter model in bfloat16 needs ~352 GB just to <i>store</i> the weights &mdash; and training needs several times that for gradients and optimizer states. No single GPU comes close. The engineering problem is: how do you spread one model across hundreds of GPUs and keep them all busy?"},
+            {"type": "p", "html": "The hardware: <b>Jean Zay</b>, a French government supercomputer owned by GENCI and operated at IDRIS (the national CNRS computing center). Training used <b>48 nodes of 8 NVIDIA A100 80GB GPUs each &mdash; 384 GPUs total</b>, plus 4 spare nodes for failures, connected by NVLink within nodes and Omni-Path across an 8D-hypercube topology. The run took about <b>3.5 months</b> and consumed <b>1,082,990 compute-hours</b>."},
+            {"type": "p", "html": "The software was <b>Megatron-DeepSpeed</b> (Megatron-LM for the Transformer + tensor parallelism, DeepSpeed for the ZeRO optimizer and pipelining), combining <b>three orthogonal kinds of parallelism</b> (&ldquo;3D parallelism&rdquo;, Figure 6):"},
+            {"type": "list", "items": ["<b>Data parallelism (DP)</b>: replicate the whole model across devices, feed each a different slice of the batch, and average gradients at the end of each step. BLOOM used DP = 8 (eight full copies).", "<b>Tensor parallelism (TP)</b>: split an <i>individual</i> layer's weight matrices across GPUs so no single tensor lives on one device &mdash; &ldquo;horizontal&rdquo; splitting. BLOOM used TP = 4 (parameters divided across 4 GPUs).", "<b>Pipeline parallelism (PP)</b>: place different <i>layers</i> on different GPUs and stream micro-batches through them like an assembly line &mdash; &ldquo;vertical&rdquo; splitting. BLOOM used PP = 12."]},
+            {"type": "p", "html": "Note $8 \\times 4 \\times 12 = 384$ &mdash; the three factors tile the whole GPU pool exactly, and one full model replica occupies 48 GPUs. On top of this, <b>ZeRO stage 1</b> shards the optimizer states across data-parallel ranks so they aren't redundantly stored. Together these let BLOOM hit <b>156 TFLOPs</b> per A100 &mdash; half the theoretical 312 TFLOP peak, an excellent utilization at this scale."},
+            {"type": "p", "html": "<b>Numerical precision</b> was a hard-won lesson. Early 104B runs on V100s in <code>float16</code> suffered irreversible divergences, because float16's tiny dynamic range overflows. The A100s support <code>bfloat16</code>, which has the <b>same dynamic range as float32</b> (just less precision), so BLOOM trained in <b>bfloat16 mixed precision</b> &mdash; precision-sensitive ops (gradient accumulation, softmax) in float32, the rest in bfloat16 &mdash; and the instabilities vanished. The final run had only <b>one loss spike</b>, from which the model recovered on its own."},
+            {"type": "p", "html": "Other engineering wins: <b>fused CUDA kernels</b> (combining LayerNorm/scaling/masking/softmax into single kernel calls, since these ops are memory-bound and fusing halves their runtime by keeping intermediates in registers); checkpointing every 3 hours so the ~1&ndash;2 GPU failures per week never lost meaningful progress; and disabling async kernel launches at 384 GPUs to avoid deadlocks. This is what open frontier training actually looks like."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3.6 Release & Ethics",
+      "pages": [
+        {
+          "title": "Open governance, RAIL license, and carbon",
+          "subtitle": "Openness as a first-class design goal",
+          "pdfPages": [22, 23, 24],
+          "blocks": [
+            {"type": "p", "html": "For most model papers, &ldquo;release&rdquo; is a footnote. For BLOOM it is a core contribution, because the entire point was to make a frontier model <b>inspectable and reusable</b> by the whole community &mdash; guided by a collaboratively-designed <b>Ethical Charter</b> emphasizing inclusivity, openness, reproducibility, and responsibility."},
+            {"type": "h2", "text": "The Responsible AI License (RAIL)"},
+            {"type": "p", "html": "A fully unrestricted release of a capable multilingual model is risky; a fully locked one defeats the purpose. BigScience threaded the needle with a <b>Responsible AI License (RAIL)</b> that offers the model <b>free of charge</b> but attaches <b>13 behavioral-use restrictions</b> derived from the Model Card and Ethical Charter (e.g. no using it to deceive, harass, or generate harmful content). A distinguishing feature: it <b>separates licensing of the source code from the trained weights</b>, and explicitly defines &ldquo;use&rdquo; and &ldquo;derived works&rdquo; to cover prompting, finetuning, distillation, and even using the output logits. The source <b>code</b> itself is Apache 2.0. RAIL has since become a widely adopted template for responsible open releases."},
+            {"type": "p", "html": "BLOOM also shipped a detailed <b>Model Card</b> (Mitchell et al., 2019 format) written collaboratively &mdash; documenting technical specs, intended uses, out-of-scope uses, and limitations &mdash; setting a norm for transparent model documentation."},
+            {"type": "h2", "text": "Carbon footprint"},
+            {"type": "p", "html": "Because Jean Zay runs on France's largely <b>nuclear-powered, low-carbon grid</b> (57 gCO&#8322;eq/kWh vs 231 for OPT's grid), BLOOM's emissions are strikingly low for its size:"},
+            {"type": "table", "headers": ["Model", "Params", "Power", "CO₂eq emissions"], "rows": [["GPT-3", "175B", "1,287 MWh", "~502 tons"], ["Gopher", "280B", "1,066 MWh", "~352 tons"], ["OPT", "175B", "324 MWh", "70 tons"], ["BLOOM", "176B", "433 MWh", "25 tons"]]},
+            {"type": "p", "html": "BLOOM used slightly <i>more</i> energy than OPT (433 vs 324 MWh) yet emitted roughly <b>a third of OPT's carbon and 5% of GPT-3's</b> &mdash; a concrete demonstration that <i>where</i> you train can matter as much as how efficiently. The paper transparently attributes emissions: ~14% to manufacturing, 30% to training energy, 55% to idle cluster consumption, with the final training run being only ~37% of the project's total footprint once ablations and intermediate runs are counted."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Evaluation & 5. Conclusion",
+      "pages": [
+        {
+          "title": "How well does BLOOM actually work?",
+          "subtitle": "SuperGLUE, translation, code, and BLOOMZ",
+          "pdfPages": [24, 27, 28, 30, 34],
+          "blocks": [
+            {"type": "p", "html": "Evaluation focuses on <b>zero-shot and few-shot</b> prompting &mdash; the realistic way people use models this size &mdash; and deliberately uses prompts written <i>before</i> release with <b>no cherry-picking</b>, to report honest average behavior rather than best-case results. Baselines include GPT-J, GPT-NeoX, OPT-175B, T0, and the multilingual XGLM and mGPT."},
+            {"type": "h2", "text": "English tasks: competitive, and gains from context"},
+            {"type": "p", "html": "On <b>SuperGLUE</b> (Figure 7), BLOOM performs well above chance on entailment tasks (BoolQ, CB). The most interesting finding: <b>BLOOM benefits more than English models when going from zero-shot to one-shot</b> &mdash; it trails OPT-175B zero-shot but <i>matches or beats it one-shot</i>, despite being only partly trained on English. The likely reason: a multilingual model gains certainty about <i>which</i> language it's operating in from a single in-context example. On the English-only HELM benchmark, BLOOM lands roughly on par with previous-generation English models like GPT-3-davinci-v1, and rates among the <b>best models for fairness</b>."},
+            {"type": "h2", "text": "Multilingual tasks: where BLOOM shines"},
+            {"type": "p", "html": "This is BLOOM's home turf. On <b>WMT'14 machine translation</b> (Table 6, BLEU for BLOOM-176B), one-shot prompting works well between high-resource languages &mdash; en&rarr;fr reaches <b>36.4 BLEU</b> and fr&rarr;en <b>36.6</b> &mdash; and even low-resource directions improve dramatically with a single example (en&rarr;hi jumps from ~1.9 to 14.5 BLEU). The multilingual tokenizer and corpus pay off exactly where English models cannot follow."},
+            {"type": "h2", "text": "Code generation"},
+            {"type": "p", "html": "Thanks to the 13 programming languages in ROOTS, BLOOM writes code. On <b>HumanEval</b> (Table 9), BLOOM-176B reaches <b>15.5% pass@1</b> and 55.5% pass@100 &mdash; comparable to the similarly code-trained GPT models of its day (though behind the code-specialized Codex), from a general-purpose model that was never code-specialized."},
+            {"type": "h2", "text": "BLOOMZ: multitask finetuning"},
+            {"type": "p", "html": "The single biggest quality jump comes <b>after</b> pretraining. Applying <b>multilingual multitask prompted finetuning</b> on the <b>xP3</b> corpus (prompts for 83 datasets across 46 languages and 16 tasks) yields <b>BLOOMZ</b>, whose zero-shot performance improves significantly. Pretrained BLOOM sits near random baselines (33% on XNLI, 50% on XWinograd) on many held-out multilingual tasks; BLOOMZ pulls decisively above them. This mirrors the T0/FLAN instruction-tuning story, extended to a genuinely multilingual setting."},
+            {"type": "h2", "text": "Bias & the bigger picture"},
+            {"type": "p", "html": "A preliminary bias study on <b>multilingual CrowS-Pairs</b> (Table 14) put BLOOM's overall stereotype-preference accuracy near <b>.50</b> (an absence of strong systematic bias), with English and French behaving similarly &mdash; while the authors carefully caveat that this covers only limited situations and languages."},
+            {"type": "quote", "html": "We hope that the release of a powerful multilingual language model unlocks new applications and research directions for large language models. Further, we hope that documenting our experience will help the machine learning research community organize new large-scale collaborative projects similar to BigScience."},
+            {"type": "p", "html": "<b>Legacy.</b> BLOOM proved that a globally distributed, openly governed collaboration could ship a frontier-scale model &mdash; weights, data decisions, code, license, and carbon accounting all in the open. Even as later models (LLaMA, and the broader open-weights wave it helped legitimize) surpassed it on English benchmarks by training longer on compute-optimal token budgets, BLOOM's lasting contributions are its <b>multilingual-first design</b>, the widely-copied <b>RAIL license</b>, its <b>radical transparency</b>, and its demonstration that <i>who</i> builds these models &mdash; and on what grid &mdash; is itself a research and ethical choice."}
+          ]
+        }
+      ]
+    }
+  ]
+}

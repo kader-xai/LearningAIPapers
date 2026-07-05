@@ -1,0 +1,194 @@
+{
+  "title": "H2O: Heavy-Hitter Oracle for Efficient Generative Inference of LLMs",
+  "authors": "Zhang, Sheng, Zhou, et al.",
+  "year": "2023",
+  "venue": "arXiv:2306.14048",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The memory that eats your GPU",
+          "subtitle": "Why the KV cache, not the model weights, is the real bottleneck for long-context LLMs",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"When an LLM generates text one token at a time, it does <b>not</b> recompute attention over the whole prompt at every step. Instead it stores the key and value vectors it already computed for every previous token and reuses them. That store is the <b>KV cache</b> (key-value cache). It is pure convenience &mdash; it saves recomputation &mdash; but it is huge, and it grows <i>linearly</i> with sequence length and batch size."},
+            {"type":"p","html":"Here is the number that motivates the whole paper. The authors point out that a 30-billion-parameter model with an input batch size of 128 and a sequence length of 1024 needs <b>180 GB</b> of KV cache &mdash; on top of the model weights themselves. On an 80 GB A100 that does not fit. As you push toward the long-context applications everyone wants (dialogue systems, story writing, document QA), the KV cache, not the parameters, becomes the thing that runs you out of memory."},
+            {"type":"quote","html":"a large amount of transient state information, referred to as the KV cache, is stored in GPU memory in addition to model parameters, scaling linearly with the sequence length and batch size."},
+            {"type":"p","html":"The obvious fix is to cap the cache size, exactly like a classical CPU or hardware cache: keep only $k$ entries and evict the rest. The trouble is that evicting the wrong key-value pair silently corrupts every future token, and it is not at all obvious which pairs are safe to drop. H2O is a policy for making that eviction decision well."},
+            {"type":"h2","text":"The one observation that makes it work"},
+            {"type":"p","html":"H2O rests on a striking empirical fact: when you sum up how much attention every token receives over a generation, the distribution is extremely skewed &mdash; a tiny handful of tokens soak up most of the attention mass. The authors call these tokens <b>Heavy Hitters</b>, abbreviated $H_2$ (the $_2$ nods to the 'HH' initials, and to the chemistry pun that gives the paper its name). Keep the heavy hitters plus the most recent tokens, evict everything else, and the model barely notices."},
+            {"type":"quote","html":"a small portion of tokens contributes most of the value when computing attention scores. We call these tokens Heavy Hitters (H2)."},
+            {"type":"h2","text":"The headline result"},
+            {"type":"p","html":"With a KV cache budget of just <b>20%</b> heavy hitters, H2O matches full-cache accuracy on a wide range of tasks &mdash; a roughly 5&times; memory reduction. That freed memory lets you run bigger batches without CPU offloading, which is where the throughput wins come from: up to <b>29&times;</b> over DeepSpeed Zero-Inference and Hugging Face Accelerate, and up to <b>3&times;</b> over FlexGen on OPT-6.7B and OPT-30B, plus up to <b>1.9&times;</b> lower latency at the same batch size."},
+            {"type":"p","html":"H2O was validated on OPT, LLaMA, and GPT-NeoX. It sits alongside FlashAttention and PagedAttention (vLLM) as one of the foundational efficiency papers for long-context serving &mdash; but where those attack the <i>compute</i> or the <i>allocation</i> of the KV cache, H2O attacks its <i>size</i> by throwing entries away."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Setup",
+      "pages": [
+        {
+          "title": "What 'evict a token' actually means",
+          "subtitle": "Formalizing generation under a fixed KV cache budget",
+          "pdfPages": [4],
+          "blocks": [
+            {"type":"p","html":"Before proposing a policy, the paper needs a precise definition of the game being played. The game is: at every decoding step you may keep at most $k$ key-value pairs in the cache, and you must decide which ones to throw away. Once thrown away, a pair is gone forever &mdash; the next token can never attend to it again. That irreversibility is what makes the problem hard."},
+            {"type":"h2","text":"The pieces"},
+            {"type":"p","html":"Let $Q \\in \\mathbb{R}^{n \\times d}$ be the query matrix and $K \\in \\mathbb{R}^{n \\times d}$ the key matrix, where $n$ is the sequence length and $d$ the head dimension. Row $Q_{i,*}$ is the query for token $i$. The notation $K_{\\le i,*}$ means the first $i$ rows of $K$ &mdash; the keys of all tokens up to and including $i$. Let $k$ be the cache budget, with $k < n$: we are only allowed to hold $k$ keys, not all $i$ of them."},
+            {"type":"p","html":"$S_i \\subset [n]$ is the set of tokens actually kept in the cache when we predict token $i$. $K_{S_i, *} \\in \\mathbb{R}^{i \\times d}$ is $K$ with the non-selected rows zeroed out. So $S_i$ is the answer to 'which past tokens can token $i$ still see?'"},
+            {"type":"h2","text":"The eviction policy, formally"},
+            {"type":"p","html":"An eviction policy is a map $g : S_{i-1} \\to S_i$ &mdash; it takes last step's cache contents and produces this step's &mdash; obeying two rules:"},
+            {"type":"list","items":["$|S_i| = k$: the cache size never changes over time (once full, it stays full).","$|S_i \\setminus S_{i-1}| \\le 1$: at each step you add at most one new token (the one just generated), which means you also <b>evict at most one</b> old token to make room."]},
+            {"type":"p","html":"That 'evict at most one per step' constraint is the crux. You are not re-choosing the whole cache from scratch each step &mdash; you inherit last step's cache and can only kick out a single entry. It makes the policy cheap to run, but it also means a token you evict early can never be recovered even if it turns out to matter later."},
+            {"type":"h2","text":"Normalized attention under eviction"},
+            {"type":"p","html":"When some keys are zeroed out, the softmax normalization has to be adjusted. The paper writes the length-$i$ attention vector as $o_i := D_i^{-1} \\cdot \\exp(Q_{i,*}(K_{S_i,*})^{\\top})$ where the scalar $D_i := (\\exp(Q_{i,*}(K_{S_i,*})^{\\top}) - \\mathbf{1}_{[i]\\setminus S_i}) \\cdot \\mathbf{1}_i$ is the normalizer. In words: $D_i$ sums the exponentiated scores but subtracts the contributions of the evicted positions (they are set to 0), so the surviving scores still form a proper probability distribution. Plug $S_i = [i]$ (keep everything) back in and you recover ordinary full-cache attention &mdash; the eviction machinery is a strict generalization."},
+            {"type":"quote","html":"Our goal is to find a KV cache eviction policy such that the output of the generative process is similar or comparable to the original one without limiting the cache size."},
+            {"type":"p","html":"Why not just use Belady's algorithm, the classic provably-optimal cache-eviction rule (evict the entry reused farthest in the future)? Because Belady is optimal for a <i>standard</i> cache where a miss just means recompute. Here a 'miss' is unrecoverable: once you evict a KV pair the model's output is permanently different, and future queries depend on that changed output. The paper flags this in a footnote &mdash; the problem is genuinely combinatorial, not a solved textbook case."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Observations",
+      "pages": [
+        {
+          "title": "Attention is over 95% sparse",
+          "subtitle": "Why a small cache is even possible in the first place",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type":"p","html":"The first empirical pillar answers the question: is it even <i>plausible</i> that we can throw away most of the cache? If every token genuinely attends to every past token, no eviction policy can help. So the authors measured how sparse attention actually is in trained LLMs."},
+            {"type":"h2","text":"The measurement"},
+            {"type":"p","html":"They ran zero-shot inference with pre-trained OPT on the Wiki-Text-103 validation set. For each row of the normalized attention matrix $\\mathrm{Softmax}(QK^{\\top})$, they set a threshold at <b>one percent of the row's maximum</b> value and counted how many entries fall below it &mdash; those are effectively-zero attention weights. That fraction is the sparsity."},
+            {"type":"math","tex":"\\text{sparsity of row } i = \\frac{\\#\\{ j : A_{ij} < 0.01 \\cdot \\max_j A_{ij} \\}}{i}, \\qquad A = \\mathrm{Softmax}(QK^{\\top})"},
+            {"type":"p","html":"Reading it term by term: $A_{ij}$ is how much token $i$ attends to token $j$; $\\max_j A_{ij}$ is the strongest single attention weight in that row; the numerator counts positions whose weight is under 1% of that peak; dividing by $i$ (the number of tokens seen so far) gives a fraction. A sparsity near 1 means almost every past token is being ignored."},
+            {"type":"h2","text":"The result"},
+            {"type":"p","html":"Across OPT-6.7B, OPT-13B, OPT-30B, LLaMA-7B, LLaMA-13B and GPT-NeoX-20B, the attention matrices were <b>over 95% sparse in almost all layers</b> &mdash; even though the models were densely trained with no sparsity prior. Figure 2(a) shows this holds layer by layer."},
+            {"type":"quote","html":"the resulting attention score matrices are highly sparse, with a sparsity over 95% in almost all layers."},
+            {"type":"p","html":"The consequence is immediate: if 95% of attention weights are negligible, then in principle only ~5% of the KV cache is needed to produce the same next token &mdash; a potential <b>20&times;</b> reduction with no accuracy drop. Sparsity tells us a small cache is <i>possible</i>. It does <b>not</b> tell us <i>which</i> 5% to keep &mdash; that is the job of the next observation."},
+            {"type":"p","html":"This mirrors a broader theme in the efficiency literature: attention looks dense by construction but behaves sparsely in practice. Earlier work (Reformer, sparse/strided attention, Longformer) exploited sparsity during <i>training</i> to cut the quadratic cost, but those patterns were hand-designed and, applied naively to a pre-trained model at inference, cause high miss rates. H2O's angle is different: discover the sparsity that is <i>already there</i> in a standard model and prune the cache to match it."}
+          ]
+        },
+        {
+          "title": "Heavy hitters: a power law over tokens",
+          "subtitle": "The small set of tokens that carry the attention mass",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type":"p","html":"Sparsity says most tokens are ignored. The natural follow-up: are the <i>important</i> tokens always the same few, or does the important set churn wildly from step to step? If it churns, no fixed-budget cache can track it. The second observation is that it does <b>not</b> churn &mdash; a stable, tiny set of tokens dominates."},
+            {"type":"h2","text":"Accumulated attention follows a power law"},
+            {"type":"p","html":"For each token, sum the attention it receives across all query rows &mdash; its <b>accumulated attention score</b>. Plotting these, the authors found they follow a <b>power-law distribution</b>: a few tokens have enormous accumulated scores, and the long tail has almost nothing. Those few dominant tokens are the <b>heavy hitters</b> ($H_2$)."},
+            {"type":"math","tex":"\\text{acc-score}(j) = \\sum_{i \\ge j} A_{ij}, \\qquad A = \\mathrm{Softmax}(QK^{\\top})"},
+            {"type":"p","html":"Here $\\text{acc-score}(j)$ is the total attention token $j$ receives from every later token $i$ that could see it; $A_{ij}$ is the individual attention weight. Because attention is causal, only tokens $i \\ge j$ contribute. A heavy hitter is a $j$ with a very large acc-score."},
+            {"type":"h2","text":"Removing them is catastrophic &mdash; and they are predictable"},
+            {"type":"p","html":"To prove these tokens matter, the authors masked out the heavy hitters and re-ran generation: accuracy <b>dropped drastically</b> across COPA, OpenBookQA, PiQA and RTE (Figure 2c). So heavy hitters are not incidental &mdash; they are load-bearing. They also found the accumulated score of a word correlates strongly with how often that word <b>co-occurs</b> in the data (Figure 2b, red dots vs. gray co-occurrence curve): frequent, structurally important tokens naturally become heavy hitters."},
+            {"type":"quote","html":"the accumulated attention scores of all tokens within attention blocks follow a power-law distribution ... there exists a small set of influential tokens that are critical during generation, named heavy-hitters (H2)."},
+            {"type":"h2","text":"The move that makes it deployable: local statistics work"},
+            {"type":"p","html":"There is a catch. The 'true' accumulated score sums over <i>all</i> query rows &mdash; including future tokens you have not generated yet. You cannot know the future at decoding time. The authors' key practical discovery is that you do not need to: computing the accumulated score using only the tokens seen <b>so far</b> (local statistics, summed greedily at each decoding step) is <b>as effective</b> as using the full future-aware score."},
+            {"type":"quote","html":"retaining the H2 based on local statistics at each decoding step&mdash;summing the attention scores of only the preceding tokens&mdash;is as effective as considering the attention of future tokens."},
+            {"type":"p","html":"Figure 2(d) confirms it: on OPT-30B with a 20% budget, H2O using local statistics tracks H2O using global statistics almost exactly, and both crush the 'Local' baseline (keep only the most recent KV). This is what turns a nice observation into an online algorithm &mdash; you can decide evictions on the fly using only information already in the cache."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Heavy-Hitter Oracle",
+      "pages": [
+        {
+          "title": "The H2O eviction algorithm",
+          "subtitle": "A one-line greedy rule: keep recent tokens plus the current heavy hitters",
+          "pdfPages": [6],
+          "blocks": [
+            {"type":"p","html":"Now the payoff. H2O turns the two observations into a concrete, cheap policy. At each decoding step the cache holds a budget of $k$ entries, split between <b>recent</b> tokens (they correlate strongly with the current token) and <b>heavy hitters</b> (they carry the accumulated attention mass). When a new token arrives and the cache is full, evict the single entry with the <i>lowest</i> accumulated attention score."},
+            {"type":"h2","text":"A worked mini-example"},
+            {"type":"p","html":"Suppose the budget is $k=3$ and the sequence so far is 'Children laughed and played'. After decoding step 4 the cache holds three of these tokens with their running accumulated scores. A new token 'in' is generated. To make room, H2O compares the accumulated scores of the current cache members and evicts the smallest &mdash; in the paper's Figure 3 illustration, the KV of the token 'and' (a low-score function word this time) is dropped. That slot is now permanently inaccessible in later steps."},
+            {"type":"h2","text":"The scoring function and the greedy rule"},
+            {"type":"p","html":"Formally, define a score function $F_{\\text{score}} : 2^{[n]} \\to \\mathbb{R}$ that, for a set of kept tokens, sums their entries in the attention matrix. The eviction policy constructs the new cache $S_i$ from the old one $S_{i-1}$ by:"},
+            {"type":"math","tex":"S_i \\leftarrow (S_{i-1} \\cup \\{i\\}) \\setminus \\{u\\}, \\quad\\text{where}\\quad u \\leftarrow \\arg\\max_{v \\in (S_{i-1} \\cup \\{i\\})} F_{\\text{score}}\\big( (S_{i-1} \\cup \\{i\\}) \\setminus \\{v\\} \\big)"},
+            {"type":"p","html":"Reading it term by term: $S_{i-1} \\cup \\{i\\}$ is the old cache plus the token just generated &mdash; that is $k+1$ tokens, one too many. We must delete exactly one, call it $u$. We pick $u$ so that the <i>remaining</i> set has the highest total score $F_{\\text{score}}$. Equivalently, we delete the token whose removal hurts the total accumulated attention least &mdash; the current lowest heavy-hitter. $\\arg\\max$ scans the $k+1$ candidates and returns the best one to drop. Because $F_{\\text{score}}$ is just a sum, this is $O(k)$ per step, essentially free."},
+            {"type":"h2","text":"Why keep recent tokens too, not only heavy hitters?"},
+            {"type":"p","html":"Because recency and accumulated importance capture different things. Recent tokens matter for local coherence &mdash; the last few words the model just produced are almost always relevant to the next word. Heavy hitters matter for long-range structure &mdash; a subject noun or a key entity mentioned far back. The 'Local' baseline (recent only) collapses at 60% budget on hard tasks like LLaMA-13B XSUM; pure heavy-hitters would forget the local thread. H2O's split of the budget between the two is exactly what lets a 20% cache match the full one."},
+            {"type":"p","html":"Note the eviction is <b>dynamic</b>, not a fixed pattern like strided or local attention. A token that is a heavy hitter early can be evicted later once its accumulated score is overtaken; a token can be kept as long as it keeps earning attention. This is why H2O beats the static-sparsity baselines from Figure 1: those commit to a mask up front and cannot adapt."}
+          ]
+        },
+        {
+          "title": "Why greedy is provably good enough",
+          "subtitle": "Dynamic submodular maximization and the (1-1/e) guarantee",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type":"p","html":"Greedy algorithms feel risky &mdash; they make locally-optimal choices and hope for the best. The theoretical section explains <i>why</i> this particular greedy rule is safe: under a mild assumption, evicting the current lowest heavy-hitter is near-optimal, with a classical worst-case guarantee borrowed from submodular optimization."},
+            {"type":"h2","text":"Submodularity: diminishing returns"},
+            {"type":"p","html":"A set function $f$ is <b>submodular</b> if adding an element to a small set helps at least as much as adding it to a bigger set &mdash; the diminishing-returns property. Formally, for $X \\subset Y$ and any $x \\notin Y$:"},
+            {"type":"math","tex":"f(X \\cup \\{x\\}) - f(X) \\;\\ge\\; f(Y \\cup \\{x\\}) - f(Y)"},
+            {"type":"p","html":"Term by term: $f(X \\cup \\{x\\}) - f(X)$ is the marginal gain of adding $x$ to the smaller set $X$; the right side is the same gain on the larger set $Y \\supset X$. Submodularity says the earlier you add $x$, the more it helps. For attention this is intuitive: the first few important tokens explain most of the attention mass; each additional kept token adds less."},
+            {"type":"h2","text":"The twist: dynamic submodular"},
+            {"type":"p","html":"Standard submodular maximization assumes a fixed objective. Here the objective <i>changes every step</i> as new tokens arrive &mdash; the paper introduces a <b>dynamic submodular</b> framework where $F(Z, \\cdot)$ is submodular with respect to $Z$ for the evolving sets. Loading the sequence $S_1, S_2, \\dots, S_n$ (each obeying $|S_i| \\le k$ and $|S_i \\setminus S_{i-1}| \\le 1$) into this framework makes H2O a particular instance of dynamic submodular maximization."},
+            {"type":"h2","text":"The guarantee"},
+            {"type":"p","html":"Theorem 4.4 (informal) states that under the mild assumption, the greedily-constructed set $\\widetilde{S}_i$ for each token satisfies:"},
+            {"type":"math","tex":"f(\\widetilde{S}_i) \\;\\ge\\; (1-\\alpha)\\,(1 - 1/e)\\,\\max_{|S|=k} f(S) \\;-\\; \\beta"},
+            {"type":"p","html":"Reading it: $\\max_{|S|=k} f(S)$ is the best possible score any budget-$k$ cache could achieve &mdash; the unattainable oracle. The $(1 - 1/e) \\approx 0.632$ factor is the famous greedy-submodular bound (Nemhauser-Wolsey-Fisher): greedy always gets at least 63% of optimal. The extra $(1-\\alpha)$ and $-\\beta$ are slack terms ($\\alpha, \\beta > 0$) for the dynamic setting and the approximation in the score. So H2O is not a heuristic gamble &mdash; it inherits a worst-case near-optimality bound."},
+            {"type":"quote","html":"Under the mild assumption ... we can show the set S_i we generate each for token i satisfy that f(S_i) >= (1-alpha)(1-1/e) max f(S) - beta."},
+            {"type":"p","html":"This is the same $(1-1/e)$ result that underpins greedy algorithms for influence maximization, sensor placement and coverage &mdash; H2O's contribution is showing KV-cache eviction can be cast into that mold despite the sequential, changing objective. The theory is a guide rather than a tight bound (the constants are loose), but it explains why the dead-simple greedy rule holds up empirically."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Empirical Evaluation",
+      "pages": [
+        {
+          "title": "20% cache, full accuracy",
+          "subtitle": "End-to-end quality on eight tasks across OPT, LLaMA and GPT-NeoX",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type":"p","html":"The central quality claim: H2O reduces the KV cache by <b>5&ndash;10&times;</b> while achieving comparable accuracy on a majority of tasks. The experiments span three model families (OPT up to 175B, LLaMA, GPT-NeoX-20B) and eight tasks sampled from HELM and lm-eval-harness: COPA, MathQA, OpenBookQA, PiQA, RTE, Winogrande, XSUM and CNN/Daily Mail. Hardware: NVIDIA A100 80GB."},
+            {"type":"h2","text":"Headline numbers (20% KV cache budget)"},
+            {"type":"p","html":"Table 1 compares H2O against the full cache and weaker baselines on 5-shot tasks. H2O with a 20% budget essentially ties the full cache and crushes the 'Local' (recent-only) strategy:"},
+            {"type":"table","headers":["Method","PiQA","COPA","OpenBookQA","Winogrande"],"rows":[["Full cache","80.09","81.00","44.80","71.51"],["Local (20%)","57.94","56.00","28.40","51.30"],["H2O (20%)","79.22","85.00","43.80","71.67"]]},
+            {"type":"p","html":"Read the middle row: keeping only recent tokens at the same 20% budget tanks COPA from 81 to 56 and OpenBookQA from 44.8 to 28.4. H2O at the same budget stays within a fraction of full &mdash; and on COPA (85.00 vs 81.00) and Winogrande (71.67 vs 71.51) it actually <b>beats</b> the full cache, a mild regularization effect from dropping distracting tokens."},
+            {"type":"h2","text":"Heavy hitters rescue other sparsity methods"},
+            {"type":"p","html":"Table 2 (OPT-30B, 20% budget) shows the heavy-hitter idea is a general fix, not just a standalone policy. Both 'Local' and Sparse-Transformer masks collapse at 20% budget &mdash; but adding $H_2$ to each recovers full-cache quality:"},
+            {"type":"table","headers":["Model (OPT-30B)","COPA","OpenBookQA","PiQA","Winogrande"],"rows":[["Full cache","85.00","43.20","78.51","70.24"],["Local w/o H2","48.00","25.20","55.82","49.17"],["Local w/ H2","84.00","43.00","78.45","69.06"],["Sparse (strided) w/o H2","50.00","24.60","56.20","47.59"],["Sparse (strided) w/ H2","83.00","42.60","78.24","69.61"]]},
+            {"type":"p","html":"The pattern is stark: every 'w/o H2' row is near-random; every 'w/ H2' row is within a point or two of full. Static sparse attention fails at 20% budget (up to 35% accuracy drop) purely because it does not protect the heavy hitters. Bolting on the $H_2$ set fixes it. This is strong evidence that heavy hitters &mdash; not any particular masking geometry &mdash; are what generation actually depends on."},
+            {"type":"p","html":"Extra wins the authors highlight: on {OPT-66B, RTE}, {OPT-30B, MathQA} and {GPT-NeoX-20B, XSUM}, H2O at 20% budget beats the full model by 0.73%, 0.64% and 0.18% respectively. And on the harder long-sequence generation tasks (XSUM, CNN/Daily Mail) H2O stays consistent where 'Local' collapses at 60% budget (Figure 4)."}
+          ]
+        },
+        {
+          "title": "Throughput, latency and infinite context",
+          "subtitle": "Turning saved memory into speed",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {"type":"p","html":"Accuracy parity is only half the story &mdash; the point of a smaller cache is <i>speed</i>. A smaller KV cache means you fit a much larger batch on the GPU, and larger batches mean higher throughput. Better still, a small enough cache lets you avoid CPU offloading entirely, which is where the biggest wins come from."},
+            {"type":"h2","text":"Throughput on a T4 (16GB) GPU"},
+            {"type":"p","html":"Table 3 reports generation throughput (tokens/s) against three serving systems. The numbers are dramatic once offloading is avoided (H2O keeps everything on GPU where the baselines spill to CPU):"},
+            {"type":"table","headers":["System","OPT-6.7B, 512+512","OPT-30B, 512+512"],"rows":[["Accelerate","15.5 (batch 1, GPU)","0.6 (batch 8, CPU)"],["DeepSpeed","9.6 (batch 16, CPU)","0.6 (batch 4, CPU)"],["FlexGen","16.8 (batch 1, GPU)","8.5 (batch 80, CPU)"],["H2O (20%)","51.7 (batch 4, GPU)","18.83 (batch 416, CPU)"]]},
+            {"type":"p","html":"Reading the brackets: they show effective batch size and the lowest memory tier used (G = GPU, C = CPU). On OPT-6.7B, H2O hits 51.7 tok/s at batch 4 fully on GPU versus FlexGen's 16.8 &mdash; because the shrunken cache lets it use a bigger batch without offloading. Across systems the paper reports up to <b>3&times;, 29&times; and 29&times;</b> gains over FlexGen, DeepSpeed and Accelerate respectively, on both synthetic and real (XSUM) data."},
+            {"type":"h2","text":"Latency on an A100"},
+            {"type":"p","html":"Table 5 isolates latency at matched batch size (so it is a fair head-to-head, no batch-size trick). H2O with a 20% budget cuts wall-clock latency by <b>1.1&ndash;1.9&times;</b> versus FlexGen: 7000+1024 on OPT-30B drops from 57.0s to 50.4s; 5000+5000 on OPT-13B from 214.2s to 155.4s. And where FlexGen goes out-of-memory at batch 64 (OPT-6.7B, 2048+2048), H2O still runs at 1161 tok/s &mdash; a case that simply was not servable before."},
+            {"type":"h2","text":"Infinite-length input"},
+            {"type":"p","html":"Because H2O keeps a fixed-size cache regardless of how many tokens have streamed through, it naturally handles unbounded input. Combined with an attention-sink style position rolling (retaining the first few tokens, as in the concurrent StreamingLLM work), H2O let the authors process inputs up to <b>four million tokens</b> &mdash; the kind of length ordinary full-cache attention cannot fit at any batch size."},
+            {"type":"p","html":"Two caveats the paper is honest about: H2O is orthogonal to offloading and quantization (it composes with FlexGen's optimizations rather than replacing them), and the theoretical guarantee's constants are loose. The eviction is also lossy by construction &mdash; a token wrongly evicted is unrecoverable, so on adversarial retrieval-heavy tasks a fixed 20% budget can miss. But for the broad swath of generation tasks tested, 20% is enough."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What H2O changed",
+          "subtitle": "Its place in the long-context efficiency stack",
+          "pdfPages": [1, 2],
+          "blocks": [
+            {"type":"p","html":"H2O reframed KV-cache reduction as an <i>eviction</i> problem &mdash; deciding what to forget &mdash; rather than a compression or architecture problem. That framing, plus the concrete heavy-hitter signal (accumulated attention) and the cheap greedy rule, made it one of the reference points for token-dropping methods that followed."},
+            {"type":"h2","text":"Where it sits among the landmark efficiency papers"},
+            {"type":"list","items":["<b>FlashAttention</b> makes attention <i>compute</i> cheaper and IO-aware but stores the full KV cache &mdash; it does not shrink memory. H2O shrinks memory; the two compose.","<b>PagedAttention / vLLM</b> manages KV-cache <i>allocation</i> (no fragmentation, sharing across requests) but keeps every token. H2O removes tokens; again complementary.","<b>Multi-Query / Grouped-Query Attention</b> shrinks the cache by sharing K/V across heads &mdash; an architectural change requiring retraining. H2O is training-free and drops per-token entries instead.","<b>StreamingLLM (attention sinks)</b>, concurrent, keeps the first few tokens plus a recent window for infinite streaming. H2O's insight is that the important old tokens are the <i>heavy hitters</i>, not merely the first ones &mdash; and the two ideas combine."]},
+            {"type":"h2","text":"The lasting ideas"},
+            {"type":"list","items":["<b>Attention is sparse and heavy-tailed at inference</b>, even in densely-trained models &mdash; a fact later KV-eviction and sparse-decoding work builds on.","<b>Local accumulated attention is a good proxy for global importance</b>, which is what makes online, future-blind eviction possible.","<b>KV eviction as dynamic submodular maximization</b>, giving a $(1-1/e)$-style justification for a greedy rule &mdash; a template for reasoning about streaming cache policies.","<b>Recent + heavy-hitter split</b>: neither alone suffices; the budget must cover both local coherence and long-range structure."]},
+            {"type":"p","html":"The practical bottom line the paper leaves you with: for a large class of generation tasks you can throw away 80% of the KV cache, chosen by a two-line greedy rule, and keep full-model quality &mdash; while unlocking up to 29&times; throughput and multi-million-token context. That is why H2O (arXiv:2306.14048, NeurIPS 2023) became a standard citation whenever someone needs to make long-context LLM serving fit in memory."}
+          ]
+        }
+      ]
+    }
+  ]
+}

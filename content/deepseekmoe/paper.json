@@ -1,0 +1,193 @@
+{
+  "title": "DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts",
+  "authors": "Dai, Deng, Zhao, et al. (DeepSeek)",
+  "year": "2024",
+  "venue": "arXiv:2401.06066",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The pitch: bigger brain, same running cost",
+          "subtitle": "Why Mixture-of-Experts, and what DeepSeekMoE fixes",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"A modern language model spends most of its parameters (and most of its compute) inside its <b>feed-forward network (FFN)</b> layers &mdash; the two-matrix MLP that sits after every attention block. Scaling the model means growing those FFNs, but that grows the compute for <i>every token</i> too. <b>Mixture-of-Experts (MoE)</b> breaks that link: replace one big FFN with many smaller <b>expert</b> FFNs, and for each token let a small <b>router</b> pick just a couple of experts to actually run. The model holds a huge number of parameters, but any single token only touches a sliver of them."}
+          , {"type":"p","html":"Concretely: a token comes in, the router scores it against all experts, and only the top-$K$ (often $K=2$) experts process it. So a model can carry, say, 2 billion parameters worth of experts while doing the compute of a 0.3B-parameter model. This is why MoE is the standard trick for &lsquo;cheap giant models.&rsquo; The catch is <b>expert specialization</b>: we <i>want</i> each expert to become an authority on some non-overlapping slice of knowledge. Conventional routing (used in Google&rsquo;s GShard and Switch Transformer) doesn&rsquo;t enforce this, so experts end up learning overlapping, muddled knowledge &mdash; wasting capacity."},
+            {"type":"quote","html":"conventional MoE architectures like GShard, which activate the top-K out of N experts, face challenges in ensuring expert specialization, i.e. each expert acquires non-overlapping and focused knowledge."},
+            {"type":"h2","text":"The two ideas"},
+            {"type":"list","items":[
+              "<b>Fine-grained expert segmentation.</b> Chop each expert into $m$ smaller ones and activate $m$ times as many. Same total compute, but vastly more <i>combinations</i> of experts &mdash; so knowledge can be split more finely across specialists.",
+              "<b>Shared expert isolation.</b> Set aside a few experts that are <i>always</i> on for every token. They soak up the common, boilerplate knowledge everyone needs, freeing the routed experts to specialize instead of each re-learning the basics."
+            ]},
+            {"type":"p","html":"The headline results, all at fixed active compute: <b>DeepSeekMoE 2B</b> matches <b>GShard 2.9B</b> which has <b>1.5&times;</b> the expert parameters and compute. It nearly reaches its own <i>dense upper bound</i> (a model with all parameters always active). Scaled to <b>16B</b>, it matches <b>LLaMA2 7B</b> using only <b>~40%</b> of the FLOPs. And a preliminary <b>145B</b> run matches DeepSeek 67B using roughly <b>28.5%</b> of the compute. These architectural ideas became the backbone of DeepSeek-V2 and DeepSeek-V3."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Preliminaries",
+      "pages": [
+        {
+          "title": "How a conventional MoE layer routes tokens",
+          "subtitle": "The GShard/Switch baseline this paper improves on",
+          "pdfPages": [4],
+          "blocks": [
+            {"type":"p","html":"Before improving MoE, we need to see the standard recipe precisely. A Transformer stacks $L$ blocks; each block does self-attention then an FFN. To make an MoE model, you replace the FFN in some blocks with an <b>MoE layer</b>: a bag of $N$ expert FFNs plus a router that, per token, turns most of them off."},
+            {"type":"p","html":"Think of it like a hospital. A patient (token) walks in; a triage nurse (router) reads the symptoms and sends them to the 2 most relevant specialists out of $N$ on staff, instead of every doctor examining every patient. The building holds many specialists (large parameter count) but each patient only consumes two consultations (small active compute)."},
+            {"type":"h2","text":"The MoE layer, term by term"},
+            {"type":"math","tex":"\\mathbf{h}_t^l = \\sum_{i=1}^{N} \\left( g_{i,t}\\, \\mathrm{FFN}_i\\!\\left(\\mathbf{u}_t^l\\right) \\right) + \\mathbf{u}_t^l"},
+            {"type":"p","html":"Reading it: $\\mathbf{u}_t^l \\in \\mathbb{R}^d$ is the input hidden state for token $t$ at layer $l$ (the output of that block&rsquo;s attention). $\\mathrm{FFN}_i$ is the $i$-th expert, a full standard feed-forward network. $g_{i,t}$ is the <b>gate value</b> &mdash; how much expert $i$ contributes to token $t$; it is $0$ for every expert the router didn&rsquo;t pick. The final $+\\,\\mathbf{u}_t^l$ is the residual connection. So the layer&rsquo;s output is a gated sum over experts, but almost all gates are zero."},
+            {"type":"math","tex":"g_{i,t} = \\begin{cases} s_{i,t}, & s_{i,t} \\in \\mathrm{Topk}(\\{ s_{j,t} \\mid 1 \\le j \\le N \\},\\, K), \\\\ 0, & \\text{otherwise}, \\end{cases} \\qquad s_{i,t} = \\mathrm{Softmax}_i\\!\\left( \\mathbf{u}_t^{l\\,T} \\mathbf{e}_i^l \\right)"},
+            {"type":"p","html":"$s_{i,t}$ is the <b>token-to-expert affinity</b>: dot the token&rsquo;s hidden state with $\\mathbf{e}_i^l$, the learned <i>centroid</i> (a $d$-dimensional signature vector) of expert $i$, then softmax over all experts. $\\mathrm{Topk}(\\cdot, K)$ keeps only the $K$ highest-affinity experts (GShard uses $K=2$; Switch uses $K=1$). The gate $g_{i,t}$ equals the affinity for chosen experts, $0$ otherwise. Because only $K$ of $N$ gates are nonzero, only $K$ experts actually run &mdash; that sparsity is the entire source of MoE&rsquo;s efficiency."},
+            {"type":"p","html":"<b>Where this falls short.</b> With few, large experts, each of the $N$ experts gets a broad, diverse stream of tokens and is forced to be a generalist &mdash; the opposite of specialization. And every expert independently re-learns common patterns (grammar, common words), duplicating parameters. DeepSeekMoE attacks both problems in section 3."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. DeepSeekMoE Architecture",
+      "pages": [
+        {
+          "title": "Idea 1: Fine-grained expert segmentation",
+          "subtitle": "Split each expert into m smaller ones for combinatorial flexibility",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type":"p","html":"<b>The problem.</b> When there are only a handful of experts, each one is a bottleneck: it must absorb many unrelated kinds of knowledge at once, which it stuffs into shared parameters that fight each other. If instead a token could be routed to <i>more, smaller</i> experts, that diverse knowledge could be decomposed &mdash; each little expert handles one facet."},
+            {"type":"p","html":"<b>The move.</b> Split every expert FFN into $m$ smaller ones by shrinking its intermediate hidden dimension to $1/m$ of the original. To keep the compute identical, activate $m$ times as many. So GShard&rsquo;s &lsquo;top-2 of 16&rsquo; becomes, at $m=4$, &lsquo;top-8 of 64&rsquo; &mdash; same parameters, same FLOPs, but far finer granularity. Figure 2(b) in the paper illustrates exactly this split."},
+            {"type":"math","tex":"\\mathbf{h}_t^l = \\sum_{i=1}^{mN} \\left( g_{i,t}\\, \\mathrm{FFN}_i\\!\\left(\\mathbf{u}_t^l\\right) \\right) + \\mathbf{u}_t^l, \\qquad g_{i,t} = \\begin{cases} s_{i,t}, & s_{i,t} \\in \\mathrm{Topk}(\\{ s_{j,t} \\mid 1 \\le j \\le mN \\},\\, mK), \\\\ 0, & \\text{otherwise} \\end{cases}"},
+            {"type":"p","html":"Compared to the baseline, every $N$ became $mN$ (total expert count) and every $K$ became $mK$ (number activated). Crucially the total expert parameters still equal $N$ standard FFNs, and the active parameters still equal $K$ standard FFNs &mdash; nothing about the compute budget changed. Only the <i>grain</i> did: many small specialists instead of few big generalists."},
+            {"type":"h2","text":"Why it works: combinatorial explosion"},
+            {"type":"p","html":"The real payoff is how many distinct expert <i>teams</i> the router can assemble. The paper&rsquo;s worked example with $N=16$:"},
+            {"type":"table","headers":["Configuration","Combinations of active experts"],"rows":[
+              ["Conventional top-2 of 16","$\\binom{16}{2} = 120$"],
+              ["Fine-grained: split each into 4, top-8 of 64","$\\binom{64}{8} = 4{,}426{,}165{,}368$"]
+            ]},
+            {"type":"quote","html":"The surge in combinatorial flexibility enhances the potential for achieving more accurate and targeted knowledge acquisition."},
+            {"type":"p","html":"From 120 to ~4.4 <i>billion</i> possible activated-expert combinations. Each token can be matched to a bespoke committee of specialists rather than one of a few coarse buckets. That flexibility is what lets each small expert stay focused on a narrow slice of knowledge &mdash; the &lsquo;ultimate specialization&rsquo; the title promises."}
+          ]
+        },
+        {
+          "title": "Idea 2: Shared expert isolation",
+          "subtitle": "A few always-on experts absorb common knowledge",
+          "pdfPages": [6],
+          "blocks": [
+            {"type":"p","html":"<b>The problem.</b> Even with fine-grained routing, different tokens still share <i>common</i> knowledge &mdash; basic syntax, frequent words, generic reasoning. Under pure routing, many different experts each have to re-learn this common material, wasting parameters on redundancy. That redundancy is the enemy of specialization."},
+            {"type":"p","html":"<b>The move.</b> Carve out $K_s$ experts as <b>shared experts</b> that are <i>always</i> activated for <i>every</i> token, regardless of what the router says. They become the common-knowledge reservoir. Because they cover the shared load, the routed experts no longer need to duplicate it &mdash; they can each concentrate on something distinctive. To keep compute constant, activate $K_s$ fewer routed experts. Figure 2(c) shows the shared experts (green) sitting alongside the routed ones (blue)."},
+            {"type":"p","html":"Analogy: in that hospital, the shared experts are the general practitioners every patient sees no matter what, handling vitals and common complaints; the routed experts are the rare specialists you only see if triage sends you. Because the GPs handle the routine, the specialists never waste their training re-learning how to take a blood pressure."},
+            {"type":"math","tex":"\\mathbf{h}_t^l = \\sum_{i=1}^{K_s} \\mathrm{FFN}_i\\!\\left(\\mathbf{u}_t^l\\right) + \\sum_{i=K_s+1}^{mN} \\left( g_{i,t}\\, \\mathrm{FFN}_i\\!\\left(\\mathbf{u}_t^l\\right) \\right) + \\mathbf{u}_t^l"},
+            {"type":"p","html":"The first sum runs over the $K_s$ shared experts (indices $1$ to $K_s$) with <i>no</i> gate &mdash; they always fire. The second sum is the routed part over the remaining $mN - K_s$ experts, gated as before. The router now picks its top experts only from the routed pool: $g_{i,t}$ selects the top $mK - K_s$ from experts $K_s+1,\\dots,mN$. So the totals are: $K_s$ shared experts, $mN - K_s$ routed experts, and $mK - K_s$ nonzero routed gates &mdash; the total active experts stays at $mK$, holding compute fixed."},
+            {"type":"p","html":"<b>Trivia.</b> The paper notes a prototype of this idea appears in Rajbhandari et al. (2022, DeepSpeed-MoE), but there it was an <i>engineering</i> optimization; DeepSeekMoE derives it from an <i>algorithmic</i> specialization argument. In the final 2B model the recipe is <b>1 shared + 63 routed experts</b> (each 0.25&times; a standard FFN), activating the shared one plus 7 routed &mdash; a shared-to-activated-routed ratio of 1:7 at the 2B scale, later tuned to 1:3 when scaling up."}
+          ]
+        },
+        {
+          "title": "Keeping the router honest: load-balance losses",
+          "subtitle": "Two auxiliary losses that prevent routing collapse and device bottlenecks",
+          "pdfPages": [7],
+          "blocks": [
+            {"type":"p","html":"<b>The problem.</b> A freely-learned router has a nasty failure mode called <b>routing collapse</b>: early in training a few experts get slightly favored, so they train faster, so they get favored even more &mdash; a rich-get-richer spiral that leaves most experts starved of tokens and untrained. Separately, if experts live on different GPUs, an uneven load makes some devices idle while others choke. DeepSeekMoE adds two auxiliary losses to counteract both."},
+            {"type":"h2","text":"Expert-level balance loss"},
+            {"type":"math","tex":"\\mathcal{L}_{\\mathrm{ExpBal}} = \\alpha_1 \\sum_{i=1}^{N'} f_i P_i, \\qquad f_i = \\frac{N'}{K' T} \\sum_{t=1}^{T} \\mathbb{1}(\\text{Token } t \\text{ selects Expert } i), \\qquad P_i = \\frac{1}{T} \\sum_{t=1}^{T} s_{i,t}"},
+            {"type":"p","html":"Term by term: $f_i$ is the <i>fraction of tokens</i> actually routed to expert $i$ (normalized so a perfectly balanced router gives $f_i \\approx 1$); $\\mathbb{1}(\\cdot)$ is the indicator function counting each routing event; $T$ is the number of tokens; $N' = mN - K_s$ is the routed-expert count and $K' = mK - K_s$ the number of routed slots. $P_i$ is the <i>average affinity</i> the router assigned to expert $i$ (this is the differentiable part &mdash; $f_i$ is a hard count). $\\alpha_1$ is the <b>expert-level balance factor</b>, a small hyperparameter (set to <b>0.01</b> in validation runs)."},
+            {"type":"p","html":"The product $f_i P_i$ is minimized when the router spreads probability evenly, so the loss gently pushes against collapse. It&rsquo;s kept <i>small</i> on purpose &mdash; too much balancing pressure would force the router to ignore relevance and hurt quality. The point is only to keep every expert alive, not to make routing uniform."},
+            {"type":"h2","text":"Device-level balance loss"},
+            {"type":"math","tex":"\\mathcal{L}_{\\mathrm{DevBal}} = \\alpha_2 \\sum_{i=1}^{D} f_i' P_i', \\qquad f_i' = \\frac{1}{|\\mathcal{E}_i|} \\sum_{j \\in \\mathcal{E}_i} f_j, \\qquad P_i' = \\sum_{j \\in \\mathcal{E}_i} P_j"},
+            {"type":"p","html":"Here the routed experts are partitioned into $D$ groups $\\{\\mathcal{E}_1,\\dots,\\mathcal{E}_D\\}$, one per device. $f_i'$ is the average token-fraction of the experts on device $i$, $P_i'$ their summed affinity, and $\\alpha_2$ the <b>device-level balance factor</b>. This loss only cares that <i>whole devices</i> get roughly equal work &mdash; not that individual experts do. That relaxation matters: the practical recipe uses a <i>small</i> $\\alpha_1$ (just enough to avoid collapse) and a <i>larger</i> $\\alpha_2$ (to keep GPUs busy), because over-constraining individual experts would compromise the specialization the whole architecture is built for."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Validation Experiments",
+      "pages": [
+        {
+          "title": "The 2B result: beating GShard 1.5x at equal compute",
+          "subtitle": "Setup and the headline evaluation table",
+          "pdfPages": [8, 9, 10],
+          "blocks": [
+            {"type":"p","html":"<b>Setup.</b> All validation models share one recipe so the comparison is clean: 9 Transformer layers, hidden dimension 1280, 10 attention heads (each dim 128), trained on a <b>100B-token</b> multilingual (mostly English + Chinese) corpus with an 8K BPE vocabulary, AdamW, and a warmup-and-step-decay schedule (max LR $1.08 \\times 10^{-3}$). Each MoE model holds ~<b>2B total parameters</b> with only ~<b>0.3B active</b>. DeepSeekMoE&rsquo;s config: <b>1 shared + 63 routed experts</b>, each 0.25&times; a standard FFN, activating 1 shared + 7 routed."},
+            {"type":"p","html":"<b>The competitors,</b> all at 2.0B total params: <b>Hash Layer</b> (top-1 hash routing), <b>Switch Transformer</b> (top-1 learned routing), and <b>GShard</b> (top-2 learned routing, 0.3B active &mdash; matched to DeepSeekMoE). A 0.2B <b>Dense</b> model is the small-but-fully-active baseline. Benchmarks span language modeling (Pile loss), reasoning (HellaSwag, PIQA, ARC), reading comprehension (RACE), code (HumanEval, MBPP), and closed-book QA (TriviaQA, NaturalQuestions)."},
+            {"type":"h2","text":"Results (Table 1)"},
+            {"type":"table","headers":["Metric","Dense 0.2B","GShard 2.0B","DeepSeekMoE 2.0B"],"rows":[
+              ["Pile (loss, lower better)","2.060","1.867","<b>1.808</b>"],
+              ["HellaSwag (0-shot Acc.)","38.8","50.5","<b>54.8</b>"],
+              ["PIQA (0-shot Acc.)","66.8","70.6","<b>72.3</b>"],
+              ["ARC-easy (0-shot Acc.)","41.0","43.9","<b>49.4</b>"],
+              ["RACE-high (5-shot Acc.)","29.0","30.4","<b>31.7</b>"],
+              ["HumanEval (Pass@1)","0.0","3.7","<b>4.9</b>"],
+              ["TriviaQA (5-shot EM)","4.9","10.2","<b>16.6</b>"]
+            ]},
+            {"type":"p","html":"DeepSeekMoE wins <i>every</i> metric against GShard despite identical total and active parameter counts &mdash; TriviaQA jumps from GShard&rsquo;s 10.2 to 16.6 EM. The story is entirely architectural: same budget, better use of it. The next page pushes on the more striking claim &mdash; that it approaches the theoretical ceiling of what any MoE can do."}
+          ]
+        },
+        {
+          "title": "Touching the ceiling: matching GShard 1.5x and Dense 16x",
+          "subtitle": "How close DeepSeekMoE gets to the theoretical upper bound",
+          "pdfPages": [10, 11],
+          "blocks": [
+            {"type":"p","html":"<b>The question.</b> How good <i>can</i> a 2B-total MoE be? Two reference points bound it. Above it: <b>GShard&times;1.5</b>, a GShard with 1.5&times; the expert size (so 1.5&times; the expert params and compute) &mdash; if DeepSeekMoE matches it, DeepSeekMoE is effectively worth 1.5&times; its size. The absolute ceiling: <b>Dense&times;16</b>, a dense model with 16&times; standard-FFN parameters <i>all always active</i>. Since an MoE&rsquo;s experts sum to that same parameter budget but only fire a fraction, Dense&times;16 is the best an MoE of this size could ever hope to be."},
+            {"type":"h2","text":"Table 2, side by side"},
+            {"type":"table","headers":["Metric","GShard&times;1.5","Dense&times;16 (ceiling)","DeepSeekMoE"],"rows":[
+              ["FLOPs per 2K tokens","5.8T","24.6T","<b>4.3T</b>"],
+              ["Activated expert params","0.35B","1.89B","<b>0.24B</b>"],
+              ["Pile (loss)","1.808","1.806","1.808"],
+              ["HellaSwag (Acc.)","54.4","55.1","54.8"],
+              ["PIQA (Acc.)","71.1","71.9","72.3"],
+              ["TriviaQA (EM)","15.7","16.5","16.6"]
+            ]},
+            {"type":"p","html":"Two remarkable reads. First, DeepSeekMoE <b>ties GShard&times;1.5 on Pile loss (1.808)</b> while spending only 4.3T FLOPs vs 5.8T and 0.24B active params vs 0.35B &mdash; it delivers 1.5&times;-GShard quality at ~74% of its active compute. Second, its numbers sit right on top of <b>Dense&times;16</b>, the strict upper bound, whose 24.6T FLOPs are ~5.7&times; larger."},
+            {"type":"quote","html":"at least at the scale of about 2B parameters and 100B training tokens, the performance of DeepSeekMoE aligns closely with the theoretical upper bound of MoE models."},
+            {"type":"p","html":"That is the paper&rsquo;s strongest claim: DeepSeekMoE isn&rsquo;t just better than other MoEs, it is nearly as good as an equally-sized <i>fully dense</i> model &mdash; while paying the compute of a model a fraction of the size. It has closed most of the gap between sparse efficiency and dense quality."}
+          ]
+        },
+        {
+          "title": "Proving it: ablations and specialization evidence",
+          "subtitle": "Both ideas earn their keep, and experts really do specialize",
+          "pdfPages": [12, 13],
+          "blocks": [
+            {"type":"p","html":"<b>Do both ideas actually help?</b> The ablation (Figure 3) starts from GShard (0 shared + top-2 of 16) and adds one change at a time, holding total and active parameters fixed. Adding shared-expert isolation lifts most benchmarks; then adding finer segmentation (to 32, then 64 experts) lifts them further &mdash; a clean monotone trend that isolates each idea&rsquo;s contribution."},
+            {"type":"list","items":[
+              "<b>Ratio tuning.</b> On the 64-expert config, isolating 1, 2, or 4 shared experts gives Pile loss 1.808 / 1.806 / 1.811 &mdash; barely sensitive, but 1:3 (shared:routed) is marginally best, so that ratio is used when scaling up.",
+              "<b>Segmentation matters.</b> Going 16 &rarr; 32 &rarr; 64 experts steadily improves every task, confirming finer grain helps."
+            ]},
+            {"type":"h2","text":"Do experts actually specialize?"},
+            {"type":"p","html":"Three probes (section 4.5) test whether the specialization story is real, not just a nice narrative:"},
+            {"type":"list","items":[
+              "<b>Lower redundancy (Figure 4).</b> Disable a rising fraction of each token&rsquo;s top routed experts and watch Pile loss. DeepSeekMoE&rsquo;s loss climbs <i>faster</i> than GShard&times;1.5&rsquo;s &mdash; meaning its experts are more irreplaceable, i.e. less redundant. Redundancy is exactly what specialization removes.",
+              "<b>Shared experts are irreplaceable.</b> Disable the single shared expert and Pile loss jumps from <b>1.808 to 2.414</b>, even though the freed compute goes to an extra routed expert. The shared expert holds fundamental knowledge no routed expert covers.",
+              "<b>More accurate with fewer experts.</b> Varying activated routed experts from 3 to 7, DeepSeekMoE reaches strong Pile loss with fewer active experts than GShard needs &mdash; the combinatorial flexibility pays off in sample-efficient knowledge acquisition."
+            ]},
+            {"type":"p","html":"Together these confirm the mechanism, not just the outcome: routed experts are non-redundant, the shared expert carries distinct common knowledge, and the whole thing extracts more from each activated expert."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Scaling & Impact",
+      "pages": [
+        {
+          "title": "Scaling to 16B: LLaMA2 7B quality at 40% of the FLOPs",
+          "subtitle": "And the lineage into DeepSeek-V2 / V3",
+          "pdfPages": [17],
+          "blocks": [
+            {"type":"p","html":"The 2B experiments prove the idea; the 16B model proves it holds at scale. <b>DeepSeekMoE 16B</b> has 16.4B total parameters but only <b>2.8B active</b>, trained on <b>2T tokens</b>. It is compared against the dense <b>DeepSeek 7B</b> (6.9B params, all active)."},
+            {"type":"h2","text":"Table 3: 16B MoE vs 7B dense"},
+            {"type":"table","headers":["Metric","DeepSeek 7B (Dense)","DeepSeekMoE 16B"],"rows":[
+              ["FLOPs per 4K tokens","183.5T","<b>74.4T</b>"],
+              ["Pile (BPB, lower better)","0.75","<b>0.74</b>"],
+              ["HellaSwag (Acc.)","75.4","<b>77.1</b>"],
+              ["TriviaQA (EM)","59.7","<b>64.8</b>"],
+              ["MMLU (Acc.)","<b>48.2</b>","45.0"],
+              ["MBPP (Pass@1)","39.0","<b>39.2</b>"]
+            ]},
+            {"type":"p","html":"With only <b>40.5% of the computation</b>, DeepSeekMoE 16B matches or beats DeepSeek 7B (and, the paper reports, LLaMA2 7B) on most tasks &mdash; especially <b>knowledge-intensive</b> ones like Pile, HellaSwag, and TriviaQA. That fits the theory that FFN parameters in Transformers store factual knowledge (Dai et al., 2022a): MoE multiplies FFN capacity cheaply, so knowledge tasks benefit most."},
+            {"type":"p","html":"<b>The one honest weakness:</b> multiple-choice tasks like MMLU (45.0 vs 48.2) and the Chinese CEval lag. The paper traces this to <i>attention</i> capacity, not the MoE FFNs &mdash; DeepSeekMoE 16B has only ~0.5B attention parameters vs DeepSeek 7B&rsquo;s ~2.5B. MoE grows the FFN cheaply but doesn&rsquo;t grow attention, and some tasks lean on attention. A clean diagnosis of where the architecture&rsquo;s benefits do and don&rsquo;t reach."},
+            {"type":"h2","text":"Why this paper mattered"},
+            {"type":"p","html":"DeepSeekMoE 16B was released publicly and, notably, <b>runs on a single 40GB GPU without quantization</b> &mdash; a genuinely usable open MoE. It was fine-tuned into an aligned chat model, showing the architecture survives SFT."},
+            {"type":"p","html":"Its lasting significance is as a <b>blueprint</b>. Fine-grained segmentation + shared-expert isolation + the balance losses became the MoE recipe underneath <b>DeepSeek-V2</b> (236B total / 21B active) and <b>DeepSeek-V3</b> (671B total / 37B active), which pushed the &lsquo;huge sparse model, tiny active cost&rsquo; design to the frontier. The 145B preliminary run here &mdash; matching DeepSeek 67B at ~28.5% compute &mdash; foreshadowed exactly that trajectory. In short: this paper is where the modern DeepSeek MoE stack begins."}
+          ]
+        }
+      ]
+    }
+  ]
+}

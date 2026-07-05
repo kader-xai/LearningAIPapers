@@ -1,0 +1,155 @@
+{
+  "title": "Fast Inference from Transformers via Speculative Decoding",
+  "authors": "Leviathan, Kalman, Matias (Google)",
+  "year": "2022",
+  "venue": "arXiv:2211.17192",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The bottleneck: big models decode one token at a time",
+          "subtitle": "Why generation is slow, and the crack the paper exploits",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Large autoregressive Transformers (GPT-3, PaLM, LaMDA, T5-XXL) generate text <b>one token at a time</b>. To produce $K$ tokens you must run the full model $K$ times in series, each run waiting for the previous token before it can start. Producing a 100-token answer from an 11-billion-parameter model means 100 sequential forward passes through 11 billion weights. That serial dependency, not raw arithmetic, is what makes generation feel slow." },
+            { "type": "p", "html": "Here is the key intuition the paper builds on: <b>not every token is equally hard</b>. In the sentence <i>&ldquo;the capital of France is ___&rdquo;</i>, a tiny model already knows the answer is <i>Paris</i>. Only a few tokens in a passage genuinely require the full power of the big model; most are easy filler that a much cheaper model would get right anyway. Yet standard decoding spends the same enormous compute on every single token." },
+            { "type": "p", "html": "The authors also make a hardware observation that turns this into free money: on modern accelerators, a single decode step of a big model is usually <b>not bottlenecked by arithmetic</b> but by <b>memory bandwidth</b> &mdash; the time it takes to stream all the model&rsquo;s weights from memory into the compute units. That means when you run the big model on a batch of tokens instead of one, the extra tokens are <i>almost free</i>: you already paid to load the weights. There is idle compute lying around." },
+            { "type": "quote", "html": "We additionally observe that inference from large models is often not bottlenecked on arithmetic operations, but rather on memory bandwidth and communication, so additional computation resources might be available." },
+            { "type": "p", "html": "<b>Speculative decoding</b> exploits both facts: let a small cheap <i>draft</i> model guess several tokens ahead, then run the big <i>target</i> model <b>once, in parallel</b>, to check all the guesses at the same time. Accept the guesses the big model agrees with; correct the first one it doesn&rsquo;t. Each big-model run now emits several tokens instead of one." },
+            { "type": "p", "html": "The headline result: a <b>2X&ndash;3X speedup</b> on T5-XXL (11B parameters) with <b>provably identical output distribution</b> &mdash; the accelerated model samples from exactly the same distribution as the original. No retraining, no architecture change, no quality loss. It is a pure inference-time trick you can bolt onto an off-the-shelf model." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. The Core Idea",
+      "pages": [
+        {
+          "title": "Draft, then verify in parallel",
+          "subtitle": "Speculative execution borrowed from CPU branch prediction",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "The name comes from <b>speculative execution</b> in CPUs. When a processor hits a branch (an <code>if</code>), instead of stalling until it knows which way to go, it <i>guesses</i> the likely path and starts executing it speculatively. If the guess was right, the work is already done and time was saved; if wrong, it throws the work away &mdash; no harm, since those compute units were idle anyway. Speculative decoding is exactly this idea applied to text generation." },
+            { "type": "p", "html": "Two models play roles. $M_p$ is the <b>target model</b> &mdash; the big, expensive model whose output we actually want, giving distribution $p(x_t \\mid x_{<t})$ over the next token. $M_q$ is the <b>approximation model</b> &mdash; a small, cheap model giving $q(x_t \\mid x_{<t})$. Typically $M_q$ is about <b>two orders of magnitude smaller</b> than $M_p$ (e.g. 77M vs 11B)." },
+            { "type": "h2", "text": "The three-step loop" },
+            { "type": "list", "items": [
+              "<b>1. Draft.</b> Run the cheap model $M_q$ autoregressively to guess $\\gamma$ tokens ahead (say $\\gamma = 5$). This is cheap and serial, but each step is tiny.",
+              "<b>2. Verify in parallel.</b> Feed all $\\gamma$ guesses to the big model $M_p$ in <b>one</b> forward pass, getting its probability for each guessed position simultaneously. This is where the memory-bandwidth savings pay off &mdash; one weight-load, many positions checked.",
+              "<b>3. Accept &amp; correct.</b> Walk left to right and accept the longest prefix of guesses that $M_p$ agrees with (via a randomized rule, next page). At the first disagreement, resample that one token from a corrected distribution. Everything after it is discarded."
+            ]},
+            { "type": "p", "html": "Look at Figure 1 in the paper: generating a 38-token sentence about the Nikkei index took only <b>9 serial runs of the target model</b> instead of 38. Green tokens are draft guesses the target accepted, red are rejected guesses, blue are the target&rsquo;s corrections. In the very first line, the target ran once and 5 tokens came out." },
+            { "type": "p", "html": "<b>Why it can never be slower.</b> Even in the worst case &mdash; the draft model guesses wrong every single time &mdash; each parallel run of $M_p$ still corrects and emits at least <b>one</b> token. So the number of serial target-model runs is capped at the standard method&rsquo;s. In the best case, all $\\gamma$ guesses are accepted <i>and</i> the target adds one more, giving up to $\\gamma + 1$ tokens from a single run." }
+          ]
+        },
+        {
+          "title": "Speculative sampling: accepting without changing the distribution",
+          "subtitle": "The rejection-sampling rule that makes it provably exact",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "The magic is the <b>acceptance rule</b>. A naive scheme &mdash; &ldquo;keep the guess if the big model would also have picked it&rdquo; &mdash; would bias the output toward tokens both models like, changing the distribution. The paper&rsquo;s <b>speculative sampling</b> rule accepts guesses stochastically in a way that provably reproduces $p(x)$ exactly, no matter how bad the draft model $q(x)$ is." },
+            { "type": "p", "html": "For a single guessed token $x \\sim q(x)$, draw a uniform random number $r \\sim U(0,1)$ and apply the rule:" },
+            { "type": "list", "items": [
+              "If $q(x) \\le p(x)$ &mdash; the target likes this token <i>at least as much</i> as the draft did &mdash; <b>always accept</b> it.",
+              "If $q(x) > p(x)$ &mdash; the draft over-proposed this token &mdash; accept it only with probability $p(x)/q(x)$, and otherwise <b>reject</b>."
+            ]},
+            { "type": "p", "html": "When a token is rejected, you cannot just resample from $p$ &mdash; that would double-count the tokens $p$ and $q$ already agree on. Instead you resample from an <b>adjusted residual distribution</b>:" },
+            { "type": "math", "tex": "p'(x) = \\text{norm}\\big(\\max(0,\\; p(x) - q(x))\\big)" },
+            { "type": "p", "html": "Reading it term by term: $p(x)$ is the target model&rsquo;s probability for token $x$, $q(x)$ is the draft&rsquo;s probability. The subtraction $p(x) - q(x)$ isolates the probability mass the target wanted but the draft under-supplied; $\\max(0, \\cdot)$ zeros out any negative entries (tokens the draft over-supplied); and $\\text{norm}(\\cdot)$ rescales the result so it sums to 1, making it a valid probability distribution to sample from." },
+            { "type": "p", "html": "<b>Why this is exact.</b> The probability that any token $x$ ends up as the final output splits into two disjoint cases: (1) it was drawn from $q$ and accepted, contributing $\\min(p(x), q(x))$, plus (2) some other token was rejected and $x$ was drawn from the residual $p'$, contributing $\\max(0, p(x) - q(x))$. These sum to exactly $p(x)$. The paper proves this in Appendix A.1; the punchline is that the accelerated sampler is <i>indistinguishable</i> from sampling directly from the big model." },
+            { "type": "p", "html": "A subtlety that makes this work in production: sampling methods like argmax (greedy), top-k, nucleus, and temperature can all be recast as <b>standard sampling from an adjusted distribution</b>. Argmax, for instance, is just zeroing out every non-max entry and renormalizing. So the same rejection rule covers every decoding strategy &mdash; the paper only ever has to reason about &ldquo;sampling from $p$&rdquo;." }
+          ]
+        },
+        {
+          "title": "Algorithm 1: one speculative decoding step",
+          "subtitle": "The full loop, from draft to corrected output",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "Here is the whole method in one procedure. It takes the target $M_p$, the draft $M_q$, and the current $prefix$, and returns the prefix extended by <b>between 1 and $\\gamma + 1$</b> new tokens." },
+            { "type": "h2", "text": "Step 1 — draft γ guesses autoregressively" },
+            { "type": "math", "tex": "\\text{for } i = 1 \\ldots \\gamma:\\quad q_i(x) \\leftarrow M_q(prefix + [x_1,\\ldots,x_{i-1}]),\\quad x_i \\sim q_i(x)" },
+            { "type": "p", "html": "The draft model runs $\\gamma$ times in series, each pass conditioning on its own previous guesses. $q_i(x)$ is the draft&rsquo;s distribution at position $i$, and $x_i$ is the token sampled from it. This is the only serial part, but each pass is cheap." },
+            { "type": "h2", "text": "Step 2 — verify all guesses in one parallel run of Mp" },
+            { "type": "math", "tex": "p_1(x),\\ldots,p_{\\gamma+1}(x) \\leftarrow M_p(prefix),\\; \\ldots,\\; M_p(prefix + [x_1,\\ldots,x_\\gamma])" },
+            { "type": "p", "html": "The target model computes its distribution at <b>all $\\gamma + 1$ positions at once</b>. Crucially it also gets $p_{\\gamma+1}$ &mdash; the distribution for the token <i>after</i> the last guess &mdash; for free, because a Transformer processing a sequence produces a next-token distribution at every position in a single pass. That extra position is what lets a fully-accepted run emit $\\gamma + 1$ tokens." },
+            { "type": "h2", "text": "Step 3 — accept a prefix, then correct" },
+            { "type": "math", "tex": "n = \\min\\big(\\{\\, i - 1 \\mid 1 \\le i \\le \\gamma,\\; r_i > \\tfrac{p_i(x_i)}{q_i(x_i)} \\,\\} \\cup \\{\\gamma\\}\\big)" },
+            { "type": "p", "html": "With $r_1,\\ldots,r_\\gamma \\sim U(0,1)$, this finds $n$ = the number of accepted guesses: it is the position <i>before</i> the first rejection (the first $i$ where $r_i$ exceeds the acceptance ratio $p_i/q_i$), or all $\\gamma$ if none are rejected. The $\\cup\\{\\gamma\\}$ caps it so a fully-accepted run keeps all guesses." },
+            { "type": "math", "tex": "p'(x) \\leftarrow p_{n+1}(x); \\quad \\text{if } n < \\gamma:\\; p'(x) \\leftarrow \\text{norm}\\big(\\max(0, p_{n+1}(x) - q_{n+1}(x))\\big)" },
+            { "type": "p", "html": "If every guess was accepted ($n = \\gamma$), the final token is drawn straight from the target&rsquo;s bonus distribution $p_{\\gamma+1}$ &mdash; a genuine free extra token. If there was a rejection at position $n+1$, that token is instead redrawn from the residual $p'$. Either way the step returns $prefix + [x_1,\\ldots,x_n, t]$ with $t \\sim p'$: the $n$ accepted guesses plus one corrected token." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Analysis",
+      "pages": [
+        {
+          "title": "How many tokens per run? The acceptance rate α",
+          "subtitle": "A geometric formula for the expected speedup",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "How much do we actually gain? That depends entirely on <b>how often the draft&rsquo;s guesses are accepted</b>. The paper defines the <b>acceptance rate</b> $\\beta$ as the probability that a token sampled from $M_q$ gets accepted by the speculative-sampling rule, and $\\alpha = E(\\beta)$ as its expectation &mdash; a single number capturing how well the small model mimics the big one on this task." },
+            { "type": "p", "html": "Assuming acceptances are i.i.d. with rate $\\alpha$, the number of tokens produced per step is a <b>capped geometric random variable</b>: you keep accepting until the first rejection, up to a cap of $\\gamma + 1$. Its expectation is:" },
+            { "type": "math", "tex": "E(\\#\\text{ generated tokens}) = \\frac{1 - \\alpha^{\\gamma+1}}{1 - \\alpha}" },
+            { "type": "p", "html": "Term by term: $\\alpha$ is the per-token acceptance probability, $\\gamma$ is how many guesses the draft makes per step, and the ratio is the expected number of tokens emitted by one call to Algorithm 1. This is exactly the reduction factor in serial target-model calls &mdash; produce this many tokens per big-model run instead of one." },
+            { "type": "p", "html": "<b>Plug in real numbers.</b> With a strong draft ($\\alpha = 0.8$) and $\\gamma = 5$: the numerator is $1 - 0.8^6 = 1 - 0.262 = 0.738$ and the denominator is $0.2$, giving $\\approx 3.69$ tokens per run &mdash; roughly a 3.7X reduction in target-model calls. With a weak draft ($\\alpha = 0.6$, $\\gamma = 2$): $(1 - 0.6^3)/0.4 = 0.784/0.4 \\approx 1.96$, still nearly 2X." },
+            { "type": "p", "html": "Two limits sharpen the intuition. As $\\alpha \\to 1$ (perfect draft), the expression approaches $\\gamma + 1$ &mdash; every guess accepted plus the bonus token. As $\\alpha \\to 0$ (useless draft), it collapses to 1 &mdash; you always fall back to standard one-token-at-a-time decoding, never worse. Figure 2 in the paper plots this family of curves; larger $\\gamma$ helps more, but only when $\\alpha$ is high." }
+          ]
+        },
+        {
+          "title": "The cost accounting: walltime vs total arithmetic",
+          "subtitle": "Why speed goes up even though total FLOPs can too",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Two costs must be separated. <b>Walltime</b> (how long the user waits) can drop dramatically; <b>total arithmetic operations</b> (energy / FLOPs summed across parallel units) can actually rise. Speculative decoding trades extra compute &mdash; which was idle anyway &mdash; for latency. The paper analyzes both precisely." },
+            { "type": "p", "html": "Let $c$ be the <b>cost coefficient</b>: the ratio of time for one run of the small model $M_q$ to one run of the big model $M_p$. In the experiments $M_q$ is a couple orders of magnitude smaller, so $c < 0.05$ and often near 0 &mdash; running the draft is almost free relative to the target. The expected <b>walltime improvement factor</b> is:" },
+            { "type": "math", "tex": "\\text{walltime speedup} = \\frac{1 - \\alpha^{\\gamma+1}}{(1 - \\alpha)(\\gamma c + 1)}" },
+            { "type": "p", "html": "The numerator $1 - \\alpha^{\\gamma+1}$ over $(1-\\alpha)$ is the tokens-per-step from the previous page; the new denominator factor $(\\gamma c + 1)$ is the per-step cost: one target run (the $+1$) plus $\\gamma$ draft runs each costing $c$. When $c \\approx 0$ the draft cost vanishes and the speedup approaches the raw token multiplier. This is why a cheap draft matters &mdash; if $c$ were large, drafting would eat the savings." },
+            { "type": "p", "html": "For <b>total arithmetic operations</b>, the story flips. Let $\\hat{c}$ be the ratio of ops-per-token of $M_q$ to $M_p$. The expected factor of increase in total ops is:" },
+            { "type": "math", "tex": "\\text{ops increase} = \\frac{(1-\\alpha)(\\gamma \\hat{c} + \\gamma + 1)}{1 - \\alpha^{\\gamma+1}}" },
+            { "type": "p", "html": "When guesses get rejected, the target model did work on tokens that were thrown away &mdash; wasted arithmetic. The lower $\\alpha$ is, the more waste, so this factor is high when the draft is bad and low when it is good. Table 1 makes the trade-off concrete: at $\\alpha = 0.8$, $\\gamma = 5$ you get a <b>3.69X speedup for only a 1.63X increase in operations</b>. At $\\alpha = 0.9$, $\\gamma = 10$: <b>6.86X faster</b> for 1.60X the ops." },
+            { "type": "p", "html": "The paper adds a beautiful bound for Transformers: the extra arithmetic from parallel verification is bounded above by <b>a single run of a same-size Transformer encoder</b> &mdash; and better yet, total <b>memory accesses go down</b> by the token-multiplier factor, because the target&rsquo;s weights and KV-cache are read once per step instead of once per token. On memory-bound hardware, that is the win." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Experiments",
+      "pages": [
+        {
+          "title": "Results: 2X–3X on T5-XXL, no quality change",
+          "subtitle": "Real walltimes on translation and summarization",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "The authors implemented speculative decoding on top of the production <b>T5X</b> codebase and benchmarked against its own optimized decoding &mdash; a fair, strong baseline, not a strawman. Target model $M_p$ = <b>T5-XXL (11B parameters)</b>, T5 version 1.1. Two tasks from the original T5 paper: <b>English&rarr;German translation</b> (fine-tuned on WMT EnDe) and <b>text summarization</b> (fine-tuned on CNN/DailyMail). Batch size 1 on a single TPU-v4." },
+            { "type": "p", "html": "For the draft $M_q$ they used <b>existing off-the-shelf checkpoints</b> at three sizes &mdash; T5-large (800M), T5-base (250M), T5-small (77M) &mdash; with no special training. This is the whole selling point: you take a model you already have and speed it up for free." },
+            { "type": "table", "headers": ["Task", "Draft Mq", "Temp", "γ", "α", "Speedup"], "rows": [
+              ["EnDe", "T5-small (77M)", "0", "7", "0.75", "3.4X"],
+              ["EnDe", "T5-base (250M)", "0", "7", "0.80", "2.8X"],
+              ["EnDe", "T5-small (77M)", "1", "7", "0.62", "2.6X"],
+              ["CNN/DM", "T5-small (77M)", "0", "5", "0.65", "3.1X"],
+              ["CNN/DM", "T5-base (250M)", "0", "5", "0.73", "3.0X"],
+              ["CNN/DM", "T5-small (77M)", "1", "5", "0.53", "2.3X"]
+            ]},
+            { "type": "p", "html": "The tiny <b>T5-small (77M) draft won overall</b> &mdash; it has a slightly lower acceptance $\\alpha$ than T5-base, but its cost $c$ is so much smaller that the walltime math favors it. Speedups: <b>2.6X (temp=1) and 3.4X (temp=0) on translation</b>, <b>2.3X and 3.1X on summarization</b>. Argmax/greedy sampling (temp=0) gets higher $\\alpha$ than stochastic sampling (temp=1), because a deterministic target is easier for the draft to match. Every one of these outputs is distribution-identical to plain T5-XXL." },
+            { "type": "p", "html": "A striking result on <b>negligible-cost approximation models</b>: even a trivial <b>bigram model</b> (just a lookup table, $c \\approx 0$) as the draft gave $\\alpha \\approx 0.2$ and a 1.25X speedup on translation with $\\gamma = 3$. No neural draft at all &mdash; a parameter-free heuristic still helps, because any correct guess is a saved target-model run. The paper notes n-gram models and &ldquo;copy-from-context&rdquo; heuristics as especially deployable draft choices." }
+          ]
+        },
+        {
+          "title": "Why it mattered: the technique that reshaped LLM serving",
+          "subtitle": "Impact, lineage, and the ideas it spawned",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "Speculative decoding hit a sweet spot: a <b>free, exact, drop-in</b> speedup for the exact moment LLM inference cost was exploding. Because it changes nothing about the model &mdash; no retraining, no new architecture, identical outputs &mdash; it slots under any existing model as a serving-layer optimization. Within a year it was in llama.cpp, Hugging Face Transformers, vLLM, and TensorRT-LLM." },
+            { "type": "p", "html": "It arrived essentially simultaneously with DeepMind&rsquo;s <b>Chen et al. (2023), &ldquo;Accelerating Large Language Model Decoding with Speculative Sampling&rdquo;</b>, which derived the same rejection-sampling rule independently and demonstrated it on the 70B Chinchilla model. The two papers are usually cited together as co-founders of the technique &mdash; a classic case of an idea whose time had come." },
+            { "type": "p", "html": "The follow-on line is deep. <b>Self-speculative / Medusa</b> methods dropped the separate draft model entirely, attaching extra prediction heads to the target so it drafts for itself. <b>EAGLE</b> improved the draft by predicting at the feature level rather than the token level, pushing acceptance rates far higher. <b>Lookahead decoding</b> and <b>prompt lookup</b> revived the paper&rsquo;s own n-gram idea &mdash; guessing tokens by copying from the context with zero draft model." },
+            { "type": "p", "html": "The conceptual reframings the paper introduced have outlived the specific algorithm. First, the <b>memory-bandwidth-bound</b> view of autoregressive decoding &mdash; that verifying many tokens costs almost the same as decoding one &mdash; is now the standard mental model for LLM serving. Second, the insight that <b>hard tasks contain easy subtasks</b>, and that you should spend big-model compute only where it is genuinely needed, echoes through adaptive-computation and mixture-of-experts work." },
+            { "type": "p", "html": "The property that made it adoptable is worth restating: it is <b>provably lossless</b>. Earlier efficient-inference tricks &mdash; distillation, quantization, pruning, early-exit &mdash; all trade some accuracy for speed and require validating that the degradation is acceptable. Speculative decoding trades <i>idle compute</i> for speed and provably preserves the exact output distribution, so there is nothing to validate and no reason not to turn it on." },
+            { "type": "quote", "html": "Our method can accelerate existing off-the-shelf models without retraining or architecture changes. We demonstrate it on T5-XXL and show a 2X-3X acceleration compared to the standard T5X implementation, with identical outputs." }
+          ]
+        }
+      ]
+    }
+  ]
+}

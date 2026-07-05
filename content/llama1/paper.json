@@ -1,0 +1,170 @@
+{
+  "title": "LLaMA: Open and Efficient Foundation Language Models",
+  "authors": "Touvron, Lavril, Izacard, et al. (Meta AI)",
+  "year": "2023",
+  "venue": "arXiv:2302.13971",
+  "sections": [
+    {
+      "title": "Abstract & Motivation",
+      "pages": [
+        {
+          "title": "A smaller model, trained on far more data, can beat a giant",
+          "subtitle": "Why LLaMA-13B matches GPT-3 (175B) at a tenth the size",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "By early 2023 the dominant belief was blunt: <b>more parameters = better model</b>. GPT-3 had 175 billion parameters, Gopher 280B, PaLM 540B. The race was to scale the network. LLaMA's core claim overturns the framing: for a <i>fixed amount of compute you can spend at inference time</i>, a <b>smaller model trained on many more tokens</b> wins. LLaMA-13B (13 billion parameters) outperforms GPT-3 (175B) on most benchmarks while being roughly $10\\times$ smaller and runnable on a single GPU." },
+            { "type": "quote", "html": "In particular, LLaMA-13B outperforms GPT-3 (175B) on most benchmarks, and LLaMA-65B is competitive with the best models, Chinchilla-70B and PaLM-540B. We release all our models to the research community." },
+            { "type": "h2", "text": "The training-cost vs. inference-cost distinction" },
+            { "type": "p", "html": "Scaling-law work like <b>Chinchilla</b> (Hoffmann et al., 2022) asks: given a fixed <i>training</i> budget, how big a model and how many tokens minimize loss? Its answer for a 10B model was about 200B tokens. But that objective ignores the <b>inference</b> budget, which is what actually costs money once a model is deployed and serving millions of queries. A model you train once but run billions of times should be optimized to be cheap <i>to run</i>, not cheap to train." },
+            { "type": "p", "html": "LLaMA's design move follows from this: keep the network <i>small</i> (cheap inference) and simply <b>train it far longer than compute-optimal</b>. The authors report that a 7B model keeps improving even past 1 trillion tokens, well beyond the point Chinchilla would call optimal. You spend more electricity up front to get a permanently cheaper, permanently deployable model." },
+            { "type": "h2", "text": "Only public data, and the whole thing released" },
+            { "type": "p", "html": "The second claim is about openness. GPT-3, PaLM, and Chinchilla trained on proprietary or undocumented corpora (Google's internal data, \"Books – 2TB\", \"social media conversations\"). LLaMA uses <b>only publicly available datasets</b> — CommonCrawl, C4, GitHub, Wikipedia, Books3, arXiv, Stack Exchange — making the recipe reproducible. Meta released the weights (initially to researchers), and those weights leaked within weeks, seeding <b>Alpaca</b>, <b>Vicuna</b>, and the entire open-LLM ecosystem that followed." },
+            { "type": "table", "headers": ["Model", "Params", "Compares to", "Key point"], "rows": [["LLaMA-7B", "7B", "—", "Runs on one consumer-ish GPU"], ["LLaMA-13B", "13B", "GPT-3 175B", "Beats it on most benchmarks, ~10× smaller"], ["LLaMA-33B", "33B", "—", "Trained on 1.4T tokens"], ["LLaMA-65B", "65B", "Chinchilla-70B, PaLM-540B", "Competitive with the giants"]] }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Pre-training Data",
+      "pages": [
+        {
+          "title": "1.4 trillion tokens, all from the open web",
+          "subtitle": "The data mixture that made the recipe reproducible",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "A language model is only as good as what it reads. The intuition here: to hit GPT-3-level quality on <i>public</i> data alone, you need a large, <b>diverse, aggressively cleaned</b> mixture. LLaMA's training set is roughly <b>1.4 trillion tokens</b> assembled from seven sources, each weighted by how much you sample from it during training." },
+            { "type": "table", "headers": ["Dataset", "Sampling prop.", "Epochs", "Disk size"], "rows": [["CommonCrawl", "67.0%", "1.10", "3.3 TB"], ["C4", "15.0%", "1.06", "783 GB"], ["GitHub", "4.5%", "0.64", "328 GB"], ["Wikipedia", "4.5%", "2.45", "83 GB"], ["Books", "4.5%", "2.23", "85 GB"], ["arXiv", "2.5%", "1.06", "92 GB"], ["Stack Exchange", "2.0%", "1.03", "78 GB"]] },
+            { "type": "p", "html": "Reading the table term by term: <b>Sampling prop.</b> is the fraction of training tokens drawn from that source (they sum to 100%). <b>Epochs</b> is how many times that subset is seen over the full 1.4T-token run — note most sources are seen roughly once, but the high-quality <b>Wikipedia (2.45×)</b> and <b>Books (2.23×)</b> are deliberately repeated about twice. <b>Disk size</b> is the raw size on disk; CommonCrawl dominates at 3.3 TB but is heavily filtered." },
+            { "type": "h2", "text": "Quality filtering is the real work" },
+            { "type": "p", "html": "Two thirds of the data is <b>CommonCrawl</b>, a raw scrape of the web that is mostly junk. LLaMA runs it through the <b>CCNet pipeline</b>: deduplicate at the line level, run a fastText classifier to keep only English pages, and drop low-quality pages with an n-gram language model. Cleverly, they trained a linear classifier to distinguish pages <i>cited as references on Wikipedia</i> from random pages, and discarded anything that did not look reference-like — a cheap proxy for \"is this page trustworthy?\"" },
+            { "type": "list", "items": ["<b>C4 (15%)</b>: another cleaned CommonCrawl, kept because \"diverse pre-processed CommonCrawl datasets improves performance\" — its filtering leans on punctuation and word/sentence counts rather than a model.", "<b>GitHub (4.5%)</b>: only Apache/BSD/MIT-licensed projects, boilerplate stripped — this is what gives LLaMA its surprising coding ability.", "<b>Wikipedia (4.5%)</b>: June–August 2022 dumps across 20 languages (Latin and Cyrillic scripts).", "<b>Books (4.5%)</b>: Gutenberg (public domain) plus the Books3 section of ThePile, deduplicated at the book level.", "<b>arXiv (2.5%)</b>: LaTeX source with headers and bibliographies removed — the scientific-reasoning fuel.", "<b>Stack Exchange (2%)</b>: the 28 largest sites, answers sorted best-first — high-quality Q&A."] },
+            { "type": "h2", "text": "Tokenizer: byte-pair encoding with a twist" },
+            { "type": "p", "html": "Text is turned into tokens with <b>byte-pair encoding (BPE)</b> — an algorithm that starts from characters and greedily merges the most frequent adjacent pairs into subword units — via the SentencePiece implementation. Two deliberate choices: they <b>split every number into individual digits</b> (so \"2023\" becomes \"2\",\"0\",\"2\",\"3\", which helps arithmetic), and they <b>fall back to raw bytes</b> for unknown UTF-8 characters so nothing is ever out-of-vocabulary." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2.2 Architecture",
+      "pages": [
+        {
+          "title": "Three upgrades to the Transformer",
+          "subtitle": "Pre-normalization + RMSNorm, SwiGLU, and Rotary Embeddings",
+          "pdfPages": [3],
+          "blocks": [
+            { "type": "p", "html": "LLaMA is <b>not</b> a new architecture — it is the 2017 Transformer (Vaswani et al.) with three well-chosen modernizations, each borrowed from a specific prior model. The theme: small changes that improve <b>training stability</b> and <b>quality-per-parameter</b>, with the origin of each idea named in brackets by the authors themselves." },
+            { "type": "h2", "text": "1. Pre-normalization with RMSNorm [from GPT-3]" },
+            { "type": "p", "html": "Normalization keeps activations from exploding or vanishing across the network's dozens of layers. The original Transformer normalized the <i>output</i> of each sub-layer (\"post-norm\"); LLaMA normalizes the <i>input</i> instead (\"pre-norm\"), which makes very deep networks train stably. It also swaps LayerNorm for the cheaper <b>RMSNorm</b> (Zhang & Sennrich, 2019):" },
+            { "type": "math", "tex": "\\bar{a}_i = \\frac{a_i}{\\text{RMS}(a)}\\, g_i, \\qquad \\text{RMS}(a) = \\sqrt{\\frac{1}{n}\\sum_{j=1}^{n} a_j^2}" },
+            { "type": "p", "html": "Reading it: $a = (a_1,\\dots,a_n)$ is the vector of activations at one position (dimension $n$ = the model width, e.g. 4096 for LLaMA-7B). $\\text{RMS}(a)$ is the <b>root-mean-square</b> of those activations — a single scalar measuring their magnitude. Dividing by it rescales the whole vector to unit RMS. $g_i$ is a learned per-feature gain. Unlike LayerNorm, RMSNorm <b>skips subtracting the mean</b>, so it is cheaper and empirically just as stable — fewer operations for the same benefit." },
+            { "type": "h2", "text": "2. SwiGLU activation [from PaLM]" },
+            { "type": "p", "html": "Each Transformer block has a feed-forward network (FFN) that processes each token. The original used ReLU: $\\max(0,x)$. LLaMA replaces it with <b>SwiGLU</b> (Shazeer, 2020), a gated variant that lets the network learn <i>which</i> information to pass through:" },
+            { "type": "math", "tex": "\\text{FFN}_{\\text{SwiGLU}}(x) = \\big(\\text{Swish}(xW_1)\\otimes xV\\big)\\,W_2, \\qquad \\text{Swish}(z)=z\\,\\sigma(z)" },
+            { "type": "p", "html": "Reading it: $x$ is the token's hidden vector. It is projected two ways — $xW_1$ goes through <b>Swish</b> (a smooth, differentiable version of ReLU where $\\sigma$ is the sigmoid), and $xV$ is a plain linear <b>gate</b>. The two are multiplied element-wise ($\\otimes$), so the gate can scale each dimension up or down before the output projection $W_2$. Because SwiGLU adds a third weight matrix, LLaMA shrinks the FFN hidden width to $\\tfrac{2}{3}\\cdot 4d$ (instead of the usual $4d$) to keep the parameter count fair — and still gets better quality." },
+            { "type": "h2", "text": "3. Rotary Positional Embeddings (RoPE) [from GPTNeo]" },
+            { "type": "p", "html": "Transformers process all tokens in parallel, so they need a way to encode <i>position</i>. Instead of adding absolute position vectors at the input, LLaMA uses <b>RoPE</b> (Su et al., 2021): it <b>rotates</b> the query and key vectors by an angle proportional to their position, at <i>every</i> attention layer." },
+            { "type": "math", "tex": "\\langle \\text{RoPE}(q, m),\\, \\text{RoPE}(k, n) \\rangle \\;=\\; g(q, k,\\, m-n)" },
+            { "type": "p", "html": "Reading it: $q$ and $k$ are the query at position $m$ and the key at position $n$. RoPE rotates each 2D slice of the vector by an angle scaled by its position. The elegant consequence: the resulting attention score depends only on the <b>relative distance</b> $m-n$, not the absolute positions. This makes the model naturally <i>relative</i> and helps it generalize to sequence lengths and offsets it did not see verbatim in training." },
+            { "type": "p", "html": "<b>Why this combination?</b> None of these are LLaMA inventions — the contribution is the disciplined <i>selection</i>: take the stability trick from GPT-3, the activation from PaLM, the positions from GPTNeo, and prove that together, on enough data, they beat models 10× larger. This exact block (RMSNorm pre-norm + SwiGLU + RoPE) became the de-facto template copied by Mistral, Qwen, and most open LLMs since." }
+          ]
+        },
+        {
+          "title": "Model sizes and the optimizer",
+          "subtitle": "Four models from 7B to 65B, AdamW, and 21 days on 2048 GPUs",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "LLaMA ships as <b>four models</b> that share the same architecture and differ only in width and depth. Bigger models get a smaller learning rate and, for the two largest, more training tokens." },
+            { "type": "table", "headers": ["params", "dimension", "n heads", "n layers", "learning rate", "batch size", "n tokens"], "rows": [["6.7B", "4096", "32", "32", "3.0e-4", "4M", "1.0T"], ["13.0B", "5120", "40", "40", "3.0e-4", "4M", "1.0T"], ["32.5B", "6656", "52", "60", "1.5e-4", "4M", "1.4T"], ["65.2B", "8192", "64", "80", "1.5e-4", "4M", "1.4T"]] },
+            { "type": "p", "html": "Reading the table: <b>dimension</b> is the model width (size of each token's hidden vector); <b>n heads</b> is the number of parallel attention heads; <b>n layers</b> is the depth (stacked Transformer blocks). <b>batch size</b> is a constant <b>4 million tokens</b> per optimizer step for all four models. <b>n tokens</b> is the training-set size seen — note the 7B and 13B see 1.0T tokens while 33B and 65B see 1.4T. Every model is trained far past Chinchilla-optimal, which is the whole point." },
+            { "type": "h2", "text": "Optimizer and schedule" },
+            { "type": "p", "html": "Training uses <b>AdamW</b> (Loshchilov & Hutter) with $\\beta_1=0.9$, $\\beta_2=0.95$, weight decay $0.1$, and gradient clipping at $1.0$. The learning rate follows a <b>cosine schedule</b> that decays to 10% of its peak, with 2,000 warm-up steps. These are standard, boring, well-tested choices — deliberately so, since the paper's claims rest on data and scale, not exotic optimization." },
+            { "type": "h2", "text": "The compute reality" },
+            { "type": "quote", "html": "When training a 65B-parameter model, our code processes around 380 tokens/sec/GPU on 2048 A100 GPU with 80GB of RAM. This means that training over our dataset containing 1.4T tokens takes approximately 21 days." },
+            { "type": "p", "html": "That is the price of the recipe: <b>2048 A100 GPUs for 21 days</b>. Expensive to train once — but the resulting 65B (and especially 13B and 7B) models are cheap enough to <i>run</i> that thousands of labs and hobbyists could deploy them. This asymmetry is exactly the training-vs-inference trade-off the abstract argued for." }
+          ]
+        },
+        {
+          "title": "Making it train fast: efficient attention & checkpointing",
+          "subtitle": "xformers, causal masking, and manual backward passes",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "Even with 2048 GPUs, naive attention would be too slow and memory-hungry. LLaMA leans on two engineering optimizations that later became standard practice." },
+            { "type": "h2", "text": "1. Memory-efficient causal attention" },
+            { "type": "p", "html": "Standard self-attention builds an $n\\times n$ score matrix (every token against every token) and stores it. LLaMA uses the <b>xformers</b> implementation (inspired by Rabe & Staats, 2021, with the backward pass from Dao et al., 2022 — i.e. <b>FlashAttention</b>). The trick: because language modeling is <b>causal</b> (a token can only attend to earlier tokens), the upper triangle of the score matrix is masked out anyway — so <i>never compute or store it</i>. Attention weights are also not materialized in memory; they are recomputed on the fly. This cuts both runtime and memory." },
+            { "type": "h2", "text": "2. Activation checkpointing" },
+            { "type": "p", "html": "During the backward pass, gradients need the activations computed in the forward pass. Storing all of them for an 80-layer 65B model is ruinous. <b>Checkpointing</b> saves only the expensive-to-recompute activations (like linear-layer outputs) and recomputes the rest on demand. LLaMA does this by <b>manually implementing the backward function</b> for the Transformer layer rather than relying on PyTorch autograd — trading a little code complexity for a lot of saved memory." },
+            { "type": "p", "html": "To make checkpointing pay off, they also use <b>model and sequence parallelism</b> (Korthikanti et al., 2022) to split the model across GPUs, and overlap the GPU-to-GPU communication of <code>all_reduce</code> operations with computation so the network is not idle waiting for data. None of this changes the model's outputs — it is pure systems engineering to hit that 380 tokens/sec/GPU figure." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Main Results",
+      "pages": [
+        {
+          "title": "The headline: 13B beats GPT-3, 65B rivals the giants",
+          "subtitle": "Zero-shot common-sense reasoning across 8 benchmarks",
+          "pdfPages": [4],
+          "blocks": [
+            { "type": "p", "html": "The paper evaluates on <b>20 benchmarks</b> in zero-shot and few-shot settings. <b>Zero-shot</b> means the model gets a task description and a test example with <i>no</i> worked examples; <b>few-shot</b> means it is shown between 1 and 64 examples first. For multiple-choice, LLaMA picks the completion with the highest likelihood (normalized by length) given the context." },
+            { "type": "h2", "text": "Common-sense reasoning (zero-shot)" },
+            { "type": "p", "html": "Eight standard benchmarks: BoolQ, PIQA, SIQA, HellaSwag, WinoGrande, ARC-easy, ARC-challenge, OpenBookQA. These test whether a model \"just knows\" everyday facts and physical/social reasoning without being told." },
+            { "type": "table", "headers": ["Model", "Params", "BoolQ", "PIQA", "HellaSwag", "WinoGrande", "ARC-c", "OBQA"], "rows": [["GPT-3", "175B", "60.5", "81.0", "78.9", "70.2", "51.4", "57.6"], ["Chinchilla", "70B", "83.7", "81.8", "80.8", "74.9", "—", "—"], ["PaLM", "540B", "88.0", "82.3", "83.4", "81.1", "53.0", "53.4"], ["LLaMA-13B", "13B", "78.1", "80.1", "79.2", "73.0", "52.7", "56.4"], ["LLaMA-65B", "65B", "85.3", "82.8", "84.2", "77.0", "56.0", "60.2"]] },
+            { "type": "p", "html": "Read the middle two rows against the top: <b>LLaMA-13B</b> (13B params) matches or beats <b>GPT-3</b> (175B) on PIQA, HellaSwag, WinoGrande, ARC-challenge and OpenBookQA — at a tenth the size. And <b>LLaMA-65B</b> beats PaLM-540B on HellaSwag and OpenBookQA despite being <b>8× smaller</b>. The authors summarize: LLaMA-65B outperforms Chinchilla-70B on all reported benchmarks but BoolQ, and surpasses PaLM-540B everywhere but BoolQ and WinoGrande." },
+            { "type": "h2", "text": "Closed-book question answering" },
+            { "type": "p", "html": "On <b>NaturalQuestions</b> and <b>TriviaQA</b> — answering factual questions with <i>no</i> supporting document, purely from memorized knowledge — LLaMA-65B reaches state-of-the-art in zero- and few-shot. On TriviaQA (64-shot) LLaMA-65B scores <b>73.0</b> exact-match, and even LLaMA-13B is competitive with GPT-3 and Chinchilla despite being 5–10× smaller. Crucially, the paper notes LLaMA-13B <b>runs on a single V100 GPU during inference</b> — the democratization claim made concrete." }
+          ]
+        },
+        {
+          "title": "Reading, math, code, and MMLU",
+          "subtitle": "Where LLaMA shines and where it trails the closed giants",
+          "pdfPages": [5, 7],
+          "blocks": [
+            { "type": "p", "html": "Beyond common sense, the paper probes harder skills. The picture is nuanced: <b>strong</b> on reasoning and knowledge, <b>surprisingly capable</b> at math and code for a model never fine-tuned on them, but <b>behind PaLM/Chinchilla on MMLU</b> — a gap the authors trace to their book/academic data being smaller." },
+            { "type": "h2", "text": "Reading comprehension (RACE, zero-shot)" },
+            { "type": "p", "html": "On the RACE benchmark (English exams for Chinese middle/high schoolers), LLaMA-65B scores <b>67.9 / 51.6</b> (middle/high), competitive with PaLM-540B, and LLaMA-13B outperforms GPT-3 by a few points." },
+            { "type": "h2", "text": "Mathematical reasoning (GSM8k, MATH)" },
+            { "type": "p", "html": "Here is a striking result. <b>Minerva</b> is a PaLM variant fine-tuned on 38.5B tokens of math from arXiv and math web pages. LLaMA is <b>not fine-tuned on any math data</b> — yet on GSM8k (grade-school word problems), <b>LLaMA-65B outperforms Minerva-62B</b>. The model picked up real arithmetic reasoning purely from its arXiv slice and digit-splitting tokenizer. (The <code>maj1@k</code> evaluations generate $k$ samples and take a majority vote.)" },
+            { "type": "h2", "text": "Code generation (HumanEval, MBPP)" },
+            { "type": "p", "html": "Given a natural-language description and a function signature, LLaMA writes working code — again with <b>no code-specific fine-tuning</b>, purely from its 4.5% GitHub slice. This foreshadowed <b>Code Llama</b> and showed that a general LLM trained on some code is a serviceable programmer." },
+            { "type": "h2", "text": "MMLU: the honest weak spot" },
+            { "type": "p", "html": "MMLU (Massive Multitask Language Understanding) is 57 tasks spanning humanities, STEM, social sciences and more, scored 5-shot. This is where LLaMA <i>trails</i>:" },
+            { "type": "table", "headers": ["Model", "Params", "MMLU Average (5-shot)"], "rows": [["GPT-3", "175B", "43.9"], ["Chinchilla", "70B", "67.5"], ["PaLM", "540B", "69.3"], ["LLaMA-65B", "65B", "63.4"]] },
+            { "type": "p", "html": "LLaMA-65B's <b>63.4</b> beats GPT-3 handily but falls short of Chinchilla and PaLM. The authors are candid about why: their pre-training used only <b>~177 GB of books and academic papers</b>, whereas Chinchilla and PaLM trained on up to <b>2 TB of books</b>. MMLU rewards exactly the broad textbook knowledge that dense book corpora provide — an honest limitation rather than an architectural one." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4-5. Instruction Tuning, Bias & Impact",
+      "pages": [
+        {
+          "title": "A little instruction-tuning goes a long way",
+          "subtitle": "LLaMA-I reaches 68.9 on MMLU; and the honesty about bias",
+          "pdfPages": [7],
+          "blocks": [
+            { "type": "p", "html": "The base LLaMA is a raw <b>foundation model</b> — it predicts next tokens, not a helpful assistant. Section 4 runs a single quick experiment: fine-tune on instruction data (following Chung et al., 2022's protocol) to make <b>LLaMA-I</b>." },
+            { "type": "quote", "html": "Despite the simplicity of the instruction finetuning approach used here, we reach 68.9% on MMLU." },
+            { "type": "p", "html": "That <b>+5.5 point jump</b> (63.4 → 68.9 on MMLU) from a small, cheap fine-tune is the seed of the entire instruction-tuning wave. It proved the base model held the knowledge all along; it just needed a light nudge to <i>express</i> it in instruction-following form. LLaMA-I-65B beats other instruction-tuned models of moderate size (OPT-IML, Flan-PaLM) — though still behind GPT <code>code-davinci-002</code> at 77.4." },
+            { "type": "h2", "text": "Bias, toxicity, and misinformation" },
+            { "type": "p", "html": "Because two-thirds of the training data is raw web text, the model inevitably absorbs the web's biases. Section 5 evaluates on standard benchmarks (RealToxicityPrompts, CrowS-Pairs, WinoGender, TruthfulQA) measuring toxic generation and stereotypes. The authors are careful to frame these as <b>necessary but not sufficient</b> — a diagnostic, not a clean bill of health." },
+            { "type": "quote", "html": "While we have selected some of the standard benchmarks that are used by the language model community to indicate some of the issues with these models, these evaluations are not sufficient to fully understand the risks associated with these models." }
+          ]
+        },
+        {
+          "title": "Why LLaMA mattered: the open-LLM big bang",
+          "subtitle": "The weight leak, Chinchilla vindicated, and everything downstream",
+          "pdfPages": [1, 7],
+          "blocks": [
+            { "type": "p", "html": "LLaMA's scientific claim — <b>train smaller, train longer, on public data</b> — was clean. But its historical impact came from a second fact: Meta <b>released the weights</b>. Within weeks the 7B–65B checkpoints leaked publicly, and for the first time a genuinely GPT-3-class model was in everyone's hands." },
+            { "type": "h2", "text": "The ecosystem it seeded" },
+            { "type": "list", "items": ["<b>Alpaca</b> (Stanford): LLaMA-7B instruction-tuned on 52K examples generated by GPT-3.5 — for ~$600 — showing anyone could build a capable assistant on top of LLaMA.", "<b>Vicuna</b>: LLaMA fine-tuned on ShareGPT conversations, claimed to reach ~90% of ChatGPT quality.", "<b>llama.cpp</b>: quantized LLaMA to run on a laptop CPU, then phones — driving the local-LLM movement.", "<b>Llama 2 / Llama 3</b>: Meta's official successors, this time openly licensed for commercial use, cementing the recipe."] },
+            { "type": "h2", "text": "How it connects to the rest of the field" },
+            { "type": "p", "html": "LLaMA is best read as the <b>practical vindication of Chinchilla</b> (Hoffmann et al., 2022). Chinchilla argued models were undertrained relative to their size; LLaMA took that further, deliberately <i>over</i>-training small models past compute-optimality because inference cost, not training cost, is what matters in deployment. Architecturally it standardized <b>RMSNorm + SwiGLU + RoPE</b> — the block now copied by Mistral, Qwen, Gemma, and nearly every open model since." },
+            { "type": "p", "html": "<b>The lasting lesson:</b> the frontier is not only a parameter-count race. A carefully curated public dataset, a disciplined choice of known-good components, and the willingness to train far past \"optimal\" produced a model that was smaller, cheaper to run, fully reproducible — and that, by being released, changed who gets to build with large language models at all." }
+          ]
+        }
+      ]
+    }
+  ]
+}

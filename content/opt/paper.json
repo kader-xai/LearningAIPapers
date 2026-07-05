@@ -1,0 +1,160 @@
+{
+  "title": "OPT: Open Pre-trained Transformer Language Models",
+  "authors": "Zhang, Roller, Goyal, et al. (Meta AI)",
+  "year": "2022",
+  "venue": "arXiv:2205.01068",
+  "sections": [
+    {
+      "title": "Abstract & Motivation",
+      "pages": [
+        {
+          "title": "Why OPT exists: opening the black box",
+          "subtitle": "The reproducibility crisis of 175B-scale models",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "By 2022, large language models (LLMs) like GPT-3 could do zero- and few-shot learning — solve a task from a prompt with no gradient updates — but they had become <b>black boxes</b>. GPT-3 (175 billion parameters) was reachable only through a paid API, and no outsider could see the weights. That meant the research community could poke the model but never open it up: you could not study its internals, probe why it was biased or toxic, or reproduce a single result. OPT's whole reason to exist is to break that lock."},
+            { "type": "p", "html": "The core problem is <b>cost as a gatekeeper</b>. Training a model at this scale takes hundreds of thousands of GPU-days, which only a few very well-funded labs can afford. So the science of LLMs was being decided by a handful of companies, and everyone else had to take their word for it. Reproducibility — the bedrock of science — was effectively impossible."},
+            { "type": "p", "html": "Meta AI's answer: <b>OPT (Open Pre-trained Transformer)</b>, a whole suite of decoder-only models from 125M up to 175B parameters, built to roughly match GPT-3's sizes and performance, then <i>released</i> — the smaller ones openly, the full 175B to researchers on request. Concretely, a reader could now download the weights and study a GPT-3-class model directly instead of guessing from an API."},
+            { "type": "quote", "html": "We present Open Pre-trained Transformers (OPT), a suite of decoder-only pre-trained transformers ranging from 125M to 175B parameters, which we aim to fully and responsibly share with interested researchers."},
+            { "type": "p", "html": "Two things made OPT more than just \"GPT-3 but free\". First, the headline efficiency claim: OPT-175B was developed at only <b>1/7th the carbon footprint of GPT-3</b>, by using newer NVIDIA A100 hardware and better training software. Second — and this is the part practitioners remember — Meta released a <b>logbook</b>: a candid, day-by-day record of everything that went wrong while training a 175B model (loss spikes, crashed GPUs, restarts). Nobody had ever published that before."},
+            { "type": "p", "html": "Context: OPT sits alongside EleutherAI's GPT-NeoX, BigScience's BLOOM, and later Meta's own LLaMA as part of the 2022 wave of <b>open LLMs</b>. OPT-175B in particular was the first time a full GPT-3-scale model was placed in academic hands, and it directly enabled a generation of interpretability, bias, and safety research that the closed GPT-3 had blocked."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Model & Training Setup",
+      "pages": [
+        {
+          "title": "The architecture: deliberately unoriginal",
+          "subtitle": "Eight models, GPT-3's blueprint copied on purpose",
+          "pdfPages": [2],
+          "blocks": [
+            { "type": "p", "html": "When your goal is <b>reproduction</b>, novelty is the enemy. If OPT had invented a new architecture and then failed to match GPT-3, nobody could tell whether the gap came from the new design or from a subtle training bug. So OPT does the opposite of most papers: it copies GPT-3's recipe as faithfully as possible, changing only what it must for efficiency."},
+            { "type": "p", "html": "OPT is a family of <b>eight decoder-only Transformers</b> (\"decoder-only\" = the GPT-style stack that only ever attends left-to-right and predicts the next token). The sizes were chosen to line up with GPT-3's, so you can compare like-for-like at every scale. Here is the actual configuration table from the paper:"},
+            { "type": "table", "headers": ["Model", "Layers (L)", "Heads (H)", "d_model", "Peak LR", "Batch (tokens)"], "rows": [
+              ["125M", "12", "12", "768", "6.0e-4", "0.5M"],
+              ["350M", "24", "16", "1024", "3.0e-4", "0.5M"],
+              ["1.3B", "24", "32", "2048", "2.0e-4", "1M"],
+              ["2.7B", "32", "32", "2560", "1.6e-4", "1M"],
+              ["6.7B", "32", "32", "4096", "1.2e-4", "2M"],
+              ["13B", "40", "40", "5120", "1.0e-4", "4M"],
+              ["30B", "48", "56", "7168", "1.0e-4", "4M"],
+              ["66B", "64", "72", "9216", "0.8e-4", "2M"],
+              ["175B", "96", "96", "12288", "1.2e-4", "2M"]
+            ]},
+            { "type": "p", "html": "Reading the table: <code>L</code> is the number of stacked Transformer blocks, <code>H</code> is the number of attention heads per block, and <code>d_model</code> is the width of the hidden vectors flowing through the network. Notice the pattern — bigger models get both deeper (more L) and wider (more d_model), and the peak learning rate <i>shrinks</i> as the model grows (from 6e-4 at 125M down to ~1e-4 at the biggest), because larger models are more fragile and blow up if pushed too hard. OPT-175B is 96 layers, 96 heads, width 12288 — matching GPT-3-175B exactly."},
+            { "type": "p", "html": "Weight initialization follows the Megatron-LM codebase: a normal distribution with mean 0 and standard deviation 0.006. Crucially, the output-layer weights are scaled down by a factor of $1.0/\\sqrt{2L}$, where $L$ is the total number of layers."},
+            { "type": "math", "tex": "\\sigma_{\\text{out}} = \\frac{1.0}{\\sqrt{2L}}"},
+            { "type": "p", "html": "Term by term: $\\sigma_{\\text{out}}$ is the standard deviation used to scale the output projections inside each block, $L$ is the total layer count (e.g. 96 for OPT-175B), and the $\\sqrt{2L}$ in the denominator shrinks the initialization as the network gets deeper. Why? In a deep residual network, signals accumulate as they pass through many layers; without damping, the variance grows layer by layer and the activations explode. Dividing by $\\sqrt{2L}$ keeps the forward signal roughly stable no matter how deep you go — a standard deep-Transformer stability trick."},
+            { "type": "p", "html": "The rest of the recipe: all bias terms initialized to 0, <b>ReLU</b> activations, sequence length <b>2048</b> tokens, <b>AdamW</b> optimizer with $(\\beta_1, \\beta_2) = (0.9, 0.95)$ and weight decay 0.1, a linear LR warmup then decay to 10% of peak, dropout 0.1 (but not on embeddings), and gradient-norm clipping at 1.0. These are almost all lifted directly from GPT-3 / Megatron-LM — the deliberate unoriginality that lets OPT serve as a clean reproduction."}
+          ]
+        },
+        {
+          "title": "The pre-training corpus and hardware",
+          "subtitle": "180B tokens, 992 A100 GPUs, 147 TFLOP/s each",
+          "pdfPages": [2, 3],
+          "blocks": [
+            { "type": "p", "html": "A model is only as good as its diet. GPT-3's exact training data was never released, so OPT had to assemble its own mix from publicly documented sources and hope it landed in the same neighborhood. Getting this right matters: the paper later speculates that PaLM's superior results came \"predominantly from higher quality and diversity of pre-training data\" — data is often the real lever, not architecture."},
+            { "type": "p", "html": "OPT's corpus is a concatenation of three previously-published dataset families, totaling roughly <b>180 billion tokens</b>:"},
+            { "type": "list", "items": [
+              "<b>RoBERTa data</b> — BookCorpus, Stories, and an updated CCNews (news crawled through September 28, 2021).",
+              "<b>The Pile</b> (a subset) — CommonCrawl, DM Mathematics, Project Gutenberg, HackerNews, OpenSubtitles, OpenWebText2, USPTO, and Wikipedia. Some Pile subsets were deliberately <i>dropped</i> because they increased training instability (they caused gradient-norm spikes at the 1.3B scale).",
+              "<b>PushShift.io Reddit</b> — conversational threads, flattened by keeping only the longest comment chain per thread (this discarded ~66% of the corpus)."
+            ]},
+            { "type": "p", "html": "Two data-hygiene steps are worth noting. First, <b>deduplication</b>: documents with Jaccard similarity ≥ 0.95 were removed using MinHashLSH. The authors flag that \"the Pile was particularly full of duplicate documents\" — a warning to future users. Second, all text is tokenized with the <b>GPT-2 byte-level BPE tokenizer</b>, the same one GPT-3 used, so token counts are directly comparable."},
+            { "type": "p", "html": "On the hardware side, OPT-175B was trained on <b>992 NVIDIA 80GB A100 GPUs</b>. To fit a 175B-parameter model across so many devices, they combined <b>Fully Sharded Data Parallel (FSDP)</b> — which splits the model state across GPUs so no single device holds the whole thing — with <b>Megatron-LM tensor parallelism</b>, which splits individual matrix multiplications across GPUs. They reached up to <b>147 TFLOP/s per GPU</b>, a strong utilization number that is the direct source of the 1/7th-carbon claim."},
+            { "type": "p", "html": "A subtle numerics detail: model weights lived in <b>FP16</b> (half precision, fast but narrow range), while the Adam optimizer state was kept in <b>FP32</b> (full precision) since it was sharded across hosts anyway. To stop FP16 gradients from silently rounding to zero, they used <b>dynamic loss scaling</b> — multiply the loss up before backprop, divide back after, so tiny gradients stay representable. This loss scalar becomes a key character in the instability story on the next page."}
+          ]
+        },
+        {
+          "title": "2.5 Training instabilities: the logbook",
+          "subtitle": "35+ manual restarts, 70+ automatic, 100+ dead hosts",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "This is the section that made OPT famous. Every other lab trained giant models behind closed doors and published only the clean final curve. OPT instead documented the <b>mess</b> — and it turns out training a 175B model over 2 months is a brutal, hands-on fight against hardware and math. The value here is enormous: it told the rest of the field, for the first time, what actually goes wrong at this scale and how to react."},
+            { "type": "h2", "text": "Hardware failures" },
+            { "type": "p", "html": "Concrete numbers: over ~2 months, hardware failures caused <b>at least 35 manual restarts</b> and cycled <b>over 100 hosts</b> out of the cluster. When a node misbehaved, the run was paused, diagnostics identified the bad hardware, the node was cordoned off, and training resumed from the last checkpoint. From the gap between hosts cycled and manual restarts, they estimate <b>70+ additional automatic restarts</b> on top. Picture it: a machine large enough that individual GPUs are dying often enough to interrupt you every day or two."},
+            { "type": "h2", "text": "Loss divergences" },
+            { "type": "p", "html": "The other enemy was the <b>loss diverging</b> — the training loss suddenly shooting up instead of down. The team found a telltale signature preceding a divergence: the dynamic loss scalar (from the previous page) would crash toward 0, and the $\\ell^2$-norm of the final layer's activations would spike. In plain terms, the FP16 numerics were falling apart and the activations were growing unboundedly."},
+            { "type": "p", "html": "Their fix was pragmatic rather than principled: when the loss diverged, <b>roll back to an earlier checkpoint and lower the learning rate</b>, then continue. They deliberately chose restart points where the loss scalar was still \"healthy\" (≥ 1.0) and after which activation norms trended downward. This is exactly why the empirical LR schedule (Figure 1) is not a smooth textbook curve but a jagged staircase of manual drops — each cliff is a human reacting to a divergence."},
+            { "type": "quote", "html": "We noticed a correlation between loss divergence, our dynamic loss scalar crashing to 0, and the l2-norm of the activations of the final layer spiking."},
+            { "type": "p", "html": "They also found that <b>lowering gradient clipping from 1.0 to 0.3</b> early in training helped stability. Figure 2 (validation perplexity vs. iterations) shows these mid-flight interventions leaving visible marks on the loss curve — the interventions were not cosmetic, they had real effects on the model."},
+            { "type": "h2", "text": "Other mid-flight changes" },
+            { "type": "p", "html": "The logbook lists more experiments run <i>while the training was live</i>: they tried switching to vanilla SGD (optimization plateaued quickly, so they reverted to AdamW), resetting the dynamic loss scalar (helped some divergences but not all), and upgrading to a newer version of Megatron (which reduced pressure on activation norms and improved throughput). The lasting lesson for the field: at 175B scale, training is an <b>operations problem as much as a machine-learning problem</b> — a message later echoed by BLOOM's and LLaMA's own training notes."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Evaluations",
+      "pages": [
+        {
+          "title": "Does OPT actually match GPT-3?",
+          "subtitle": "Zero-shot parity on average; per-task variance up close",
+          "pdfPages": [4, 5],
+          "blocks": [
+            { "type": "p", "html": "The entire point of a reproduction is to ask: <b>did we actually rebuild it?</b> If OPT matches GPT-3 on the same benchmarks with the same prompts, then the open model is a faithful stand-in and researchers can trust conclusions drawn from it. So the evaluation is designed as a head-to-head against GPT-3, using GPT-3's own prompts and experimental setup."},
+            { "type": "p", "html": "OPT is evaluated on <b>16 standard NLP tasks</b> — HellaSwag, StoryCloze, PIQA, ARC Easy and Challenge, OpenBookQA, WinoGrad, WinoGrande, and the SuperGLUE suite. Performance is reported as accuracy. All results use <b>in-context learning</b>: the model sees the task described (and, for few-shot, some examples) in its prompt and produces an answer with no weight updates."},
+            { "type": "h2", "text": "Zero-shot: average parity" },
+            { "type": "p", "html": "Averaged across 14 tasks (Figure 3), OPT <b>largely tracks GPT-3</b> as model size grows — the two curves rise together and stay close. Breaking it down: OPT roughly matched GPT-3 on <b>10 of the tasks</b>, underperformed on 3 (notably ARC Challenge and MultiRC), and on 3 more (CB, BoolQ, WSC) both models behaved unpredictably with scale — likely because those validation sets are tiny (56, 277, and 104 examples respectively), so a few examples swing the accuracy."},
+            { "type": "p", "html": "An honest touch: the authors <b>excluded MultiRC and WIC</b> from the averages, because those datasets \"seem to systematically favor GPT-3 or OPT disproportionately\" — cherry-picking in reverse, to avoid an unfair comparison in either direction. This kind of methodological candor runs throughout the paper."},
+            { "type": "h2", "text": "One-shot and few-shot: a wider gap" },
+            { "type": "p", "html": "The story gets more nuanced in the few-shot setting (Figure 4, with 0 / 1 / 32 examples in context). Here OPT's one- and few-shot performance <b>lags behind GPT-3</b> on average, and again varies heavily per task. The authors suspect their few-shot <b>evaluation setup differs</b> from GPT-3's in ways they couldn't fully reverse-engineer — for MultiRC they could not even reproduce GPT-3's numbers using the Davinci API within their harness, which points at differences in the evaluation methodology rather than the model itself. A quiet but important finding: <b>how you evaluate an LLM can matter as much as the LLM</b>."},
+            { "type": "p", "html": "For calibration against the wider field, the paper notes that Chinchilla and Gopher land where you'd expect for their sizes, while <b>PaLM</b> outperforms everyone even after controlling for parameter count — which they attribute to PaLM's higher-quality, more diverse pre-training data. This foreshadows the field's later pivot (Chinchilla, LLaMA) toward data quality and quantity over raw parameter count."}
+          ]
+        },
+        {
+          "title": "Dialogue: OPT-175B as a chatbot",
+          "subtitle": "Beating the unsupervised baseline; persona consistency",
+          "pdfPages": [5, 6],
+          "blocks": [
+            { "type": "p", "html": "Because LLMs sit at the heart of modern dialogue systems, the paper tests OPT-175B directly as an <b>open-domain chatbot</b> — with no dialogue fine-tuning, just clever prompting. The only prompt scaffolding is alternating \"Person 1:\" and \"Person 2:\" lines; generations use greedy decoding up to 32 tokens. This is a fair test of what the raw pre-trained model already knows about conversation."},
+            { "type": "p", "html": "It is evaluated on ConvAI2, Wizard of Wikipedia, Empathetic Dialogues, Blended Skill Talk, and the newer Wizard of Internet, using <b>Perplexity</b> and <b>Unigram F1 (UF1)</b> overlap (perplexities normalized to the GPT-2 tokenizer so different models compare fairly). Baselines include the fine-tuned BlenderBot 1 and its unsupervised pre-training counterpart, Reddit 2.7B."},
+            { "type": "p", "html": "Headline result: unsupervised OPT-175B <b>significantly outperforms the also-unsupervised Reddit 2.7B</b> on all tasks, and performs <b>competitively with the fully supervised BlenderBot 1</b>, especially on ConvAI2. On the fully-unsupervised Wizard-of-Internet task, OPT-175B gets the lowest perplexity of any model. That an un-fine-tuned raw LM rivals a purpose-built, fine-tuned chatbot is a striking demonstration of scale."},
+            { "type": "p", "html": "The authors were surprised OPT-175B did so well on ConvAI2 and checked for <b>data leakage</b> — maybe the model had simply memorized the test conversations. They searched the pre-training corpus for the first ConvAI2 conversation and found no overlap. As a stronger check, they evaluated on the <b>ConvAI2 hidden test set</b> (never publicly released) and got 10.7 perplexity / 0.185 UF1 — matching the validation numbers, so no leakage. On the MultiSessionChat (MSC) dataset, released <i>after</i> the pre-training CommonCrawl snapshot (so leakage is impossible), OPT-175B scored 9.7 perplexity / 0.177 UF1."},
+            { "type": "quote", "html": "We conclude that OPT-175B has a strong ability to maintain a consistent persona across conversations, a behavior also highlighted in LaMDA." },
+            { "type": "p", "html": "Persona consistency — staying \"the same character\" across a long chat — is exactly the property that later made instruction-tuned assistants feel coherent. Seeing it emerge in a raw 175B LM foreshadows the InstructGPT/ChatGPT era, where a similar base model plus alignment fine-tuning became the dominant recipe."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. & 5. Harms, Limitations & Impact",
+      "pages": [
+        {
+          "title": "Bias, toxicity, and honest limitations",
+          "subtitle": "Why they released it anyway",
+          "pdfPages": [5, 8],
+          "blocks": [
+            { "type": "p", "html": "Rather than bury the model's failures, OPT devotes a full section to <b>bias and toxicity</b> — measured on hate-speech detection (ETHOS), stereotype benchmarks, and toxic-generation tests (RealToxicityPrompts), compared head-to-head against GPT-3 Davinci. The framing is that you can only fix harms you can measure, and you can only measure them if the model is open."},
+            { "type": "p", "html": "The findings are unflattering and stated plainly. OPT-175B has a \"high propensity to generate toxic language and reinforce harmful stereotypes,\" and adversarial prompts that elicit toxicity were \"trivial to find.\" Even a relatively innocuous prompt could tip it into toxic output. Interestingly, in the dialogue safety evaluation (Table 6), models <b>fine-tuned on curated dialogue data</b> (BlenderBot 1, R2C2) had lower toxicity than raw OPT-175B — evidence that curated fine-tuning, not just scale, is what makes a model safe."},
+            { "type": "h2", "text": "Section 5: Limitations, stated bluntly" },
+            { "type": "p", "html": "The limitations read like a pre-mortem. OPT-175B <b>does not follow declarative instructions or point-blank questions well</b> — it tends to <i>simulate a dialogue</i> that begins with the instruction rather than <i>execute</i> it. The authors point to InstructGPT (Ouyang et al., 2022) as the likely fix: this is precisely the gap that instruction-tuning and RLHF would close later that same year. OPT also gets <b>stuck in repetitive loops</b> that sampling reduces but does not eliminate, and it can produce confidently false statements (they suggest retrieval-augmentation as a future remedy)."},
+            { "type": "quote", "html": "In summary, we still believe this technology is premature for commercial deployment." },
+            { "type": "p", "html": "Note the choice they made: because their primary goal was a faithful <b>replication of GPT-3</b>, they deliberately did <b>not</b> apply toxicity mitigations in this first release — leaving the model's raw behavior visible so researchers could study it. Releasing a known-flawed model, with the flaws documented, was itself the contribution: it hands the community the raw material to study alignment and safety instead of a pre-sanitized black box."}
+          ]
+        },
+        {
+          "title": "Why OPT mattered",
+          "subtitle": "The 1/7th-carbon number and the open-LLM movement",
+          "pdfPages": [1, 8],
+          "blocks": [
+            { "type": "p", "html": "OPT's legacy is less about a benchmark score and more about <b>who gets to do the science</b>. Before OPT, GPT-3-scale research was the exclusive domain of a few labs with API keys they controlled. After OPT, any qualified researcher could download a 175B-class model and take it apart. That single act of release reshaped the field's power structure."},
+            { "type": "h2", "text": "The efficiency headline" },
+            { "type": "p", "html": "The 1/7th-carbon figure is the paper's most-cited number. By pairing newer A100 hardware with FSDP + Megatron tensor parallelism and hitting 147 TFLOP/s per GPU, OPT-175B was developed at roughly <b>one-seventh the carbon footprint of GPT-3</b>. The authors are careful not to celebrate too hard — they stress the energy cost is still \"nontrivial\" and that repeated replication of models this size only amplifies the compute footprint of LLMs. Efficiency, framed as a responsibility, not a bragging right."},
+            { "type": "h2", "text": "Releasing more than weights" },
+            { "type": "p", "html": "OPT shipped a bundle that became a template for open-model releases:"},
+            { "type": "list", "items": [
+              "<b>The full model suite</b> — 125M to 66B openly, 175B to researchers on request.",
+              "<b>metaseq</b> — the actual training/inference codebase, so the training could in principle be reproduced.",
+              "<b>The logbook</b> — the day-by-day record of instabilities, restarts, and mid-flight decisions.",
+              "<b>Data sheets and model cards</b> — documentation of the data and known risks."
+            ]},
+            { "type": "p", "html": "Context and influence: OPT was part of the 2022 open-LLM wave alongside EleutherAI's GPT-NeoX-20B and BigScience's BLOOM, and it directly set the stage for Meta's own <b>LLaMA</b> (2023), which took the openness idea further and became the seed of the modern open-weights ecosystem (Llama 2/3, Mistral, and countless fine-tunes). The candor about instabilities also normalized the training-log genre later seen in BLOOM's and LLaMA's reports. In short, OPT's contribution was not a better model — it was a <b>reproducible, documented, openly available</b> one, and that is exactly what a black-boxed field needed."}
+          ]
+        }
+      ]
+    }
+  ]
+}

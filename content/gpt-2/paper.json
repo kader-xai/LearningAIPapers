@@ -1,0 +1,198 @@
+{
+  "title": "Language Models are Unsupervised Multitask Learners (GPT-2)",
+  "authors": "Radford, Wu, Child, Luan, Amodei, Sutskever (OpenAI)",
+  "year": "2019",
+  "venue": "OpenAI tech report",
+  "sections": [
+    {
+      "title": "Abstract & Thesis",
+      "pages": [
+        {
+          "title": "The one-sentence bet: prediction is all you need",
+          "subtitle": "Why a plain language model can do tasks it was never trained on",
+          "pdfPages": [1],
+          "blocks": [
+            {"type": "p", "html": "In 2019 the standard recipe for any NLP task was: collect a labeled dataset for <i>that task</i> (question answering, translation, summarization), then train or fine-tune a model on it. GPT-2 makes a radical claim: you do not need any of that. Train one big model to do a single boring thing &mdash; predict the next word &mdash; on enough of the raw internet, and it will <b>begin to perform many tasks with zero task-specific training</b>. No labeled QA pairs, no translation corpus, no fine-tuning step. Just a prompt."},
+            {"type": "p", "html": "The intuition is disarmingly simple. The internet is full of text that <i>demonstrates</i> tasks in passing: a webpage might contain <code>&quot;translate to french, cheese, fromage&quot;</code>, or a Q&amp;A forum, or a TL;DR followed by a summary. If a model must predict the next word across all of that, then to predict well it is forced to <b>implicitly learn to translate, answer, and summarize</b> &mdash; because those skills lower its prediction error. The paper calls this <b>unsupervised multitask learning</b>: many tasks, learned for free, as a side effect of one objective."},
+            {"type": "quote", "html": "We demonstrate that language models begin to learn these tasks without any explicit supervision when trained on a new dataset of millions of webpages called WebText."},
+            {"type": "h2", "text": "The headline numbers"},
+            {"type": "p", "html": "The abstract puts real numbers behind the claim. Conditioned on a document plus questions, GPT-2 reaches <b>55 F1 on CoQA</b> (a conversational reading-comprehension benchmark) &mdash; matching or exceeding 3 of 4 baseline systems, none of which used the 127,000+ labeled training examples GPT-2 skipped entirely. The largest model, <b>GPT-2, has 1.5 billion parameters</b> and sets state of the art on <b>7 of 8 tested language-modeling datasets</b> in a zero-shot setting."},
+            {"type": "list", "items": [
+              "<b>Zero-shot</b>: the model is evaluated on a task with <i>no</i> gradient updates for that task &mdash; you just phrase the task as text and let it predict.",
+              "<b>F1</b>: a score combining precision and recall (harmonic mean); 100 is perfect. 55 F1 on CoQA is competitive with supervised systems.",
+              "<b>Perplexity</b>: how &lsquo;surprised&rsquo; the model is by real text (lower is better). GPT-2 improved it on 7 of 8 benchmarks.",
+              "<b>Underfits WebText</b>: even at 1.5B parameters the model has not memorized its training data &mdash; more data and compute would still help."
+            ]},
+            {"type": "p", "html": "One phrase in the abstract quietly predicts the entire next five years of the field: performance improves <b>in a log-linear fashion with model capacity</b>. Bigger model &rarr; better at everything. That observation, drawn here from four models spanning 117M to 1.5B parameters, is the seed of the scaling-law era and of GPT-3, which simply pushed the same idea to 175B parameters a year later."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Approach",
+      "pages": [
+        {
+          "title": "Language modeling, written out as a chain of guesses",
+          "subtitle": "The objective that secretly contains every task",
+          "pdfPages": [2],
+          "blocks": [
+            {"type": "p", "html": "Before any tasks, you need to understand what &lsquo;language modeling&rsquo; actually computes. A language model assigns a probability to a whole string of text. But a sentence has an obvious sequential order &mdash; word 5 depends on words 1&ndash;4 &mdash; so instead of modeling the whole thing at once, you factor the joint probability into a product of one-step-ahead guesses."},
+            {"type": "math", "tex": "p(x) = \\prod_{i=1}^{n} p(s_i \\mid s_1, \\ldots, s_{i-1})"},
+            {"type": "p", "html": "Reading it term by term: $x$ is the full text, broken into a sequence of symbols $(s_1, s_2, \\ldots, s_n)$ &mdash; here symbols are byte-level BPE tokens (more on that later). $p(x)$ is the probability the model assigns to the whole passage. The product $\\prod$ says: multiply together, for every position $i$, the probability of the next symbol $s_i$ <b>given all the symbols before it</b>, $s_1$ through $s_{i-1}$. So the model only ever answers one question &mdash; &lsquo;what comes next?&rsquo; &mdash; and stitches those answers into a probability for any string."},
+            {"type": "p", "html": "Concrete example: to score <code>&quot;the cat sat&quot;</code> the model computes $p(\\text{the}) \\times p(\\text{cat} \\mid \\text{the}) \\times p(\\text{sat} \\mid \\text{the cat})$. Training maximizes this quantity over billions of real sentences, which is the same as teaching the model to place high probability on text that actually occurs. This decomposition is not new &mdash; it traces to Jelinek &amp; Mercer (1980) and Bengio et al. (2003) &mdash; but self-attention Transformers (Vaswani et al., 2017) finally made computing those conditionals expressive enough to matter."},
+            {"type": "h2", "text": "From one task to every task"},
+            {"type": "p", "html": "Here is the pivot that gives the paper its title. Doing a single task can be framed as modeling a conditional distribution $p(\\text{output} \\mid \\text{input})$. But a truly general system should perform many tasks on the same input, so it should really model:"},
+            {"type": "math", "tex": "p(\\text{output} \\mid \\text{input}, \\text{task})"},
+            {"type": "p", "html": "The term $\\text{task}$ is the crucial addition: the model conditions not only on the input but on <i>which task</i> to perform. Prior work baked the task into the architecture (separate encoders/decoders) or the training loop (MAML&rsquo;s inner/outer loops). GPT-2&rsquo;s insight, following McCann et al. (2018), is that <b>language itself can specify the task</b>. A translation example is just the token sequence <code>(translate to french, english text, french text)</code>; a reading-comprehension example is <code>(answer the question, document, question, answer)</code>. The task, input, and output are all the same modality &mdash; text &mdash; so an ordinary language model can absorb the task from the prompt."},
+            {"type": "p", "html": "The clinching argument is about optima, not architecture. The supervised objective (predict the answer) is the same function as the unsupervised objective (predict the next token), just evaluated on a subset of the sequence. So <b>the global optimum of next-word prediction is also the global optimum of every task it demonstrates</b>. If a language model with enough capacity can be pushed toward that optimum in practice, it should perform those tasks &mdash; no supervised signal required. The whole paper is a test of whether &lsquo;in principle&rsquo; becomes &lsquo;in practice&rsquo; at scale."}
+          ]
+        },
+        {
+          "title": "WebText: 40GB scraped from what Reddit found interesting",
+          "subtitle": "Quality-filtered data, and why they threw out Common Crawl",
+          "pdfPages": [3],
+          "blocks": [
+            {"type": "p", "html": "If the plan is to learn tasks from naturally occurring demonstrations, the dataset is everything. It must be huge (to contain enough demonstrations) and diverse (to cover many tasks and domains). The obvious source is Common Crawl &mdash; petabytes of scraped web pages. The authors tried it and hit a wall: Trinh &amp; Le (2018) noted much of Common Crawl is documents &lsquo;whose content are mostly unintelligible&rsquo;, and the OpenAI team saw the same garbage in their own experiments."},
+            {"type": "p", "html": "Their fix is a clever human-in-the-loop quality signal. Manually curating a full web scrape would be impossibly expensive &mdash; so instead they used <b>social proof as a free filter</b>: they scraped every outbound link from Reddit that received at least <b>3 karma</b> (net upvotes). The reasoning:"},
+            {"type": "quote", "html": "This can be thought of as a heuristic indicator for whether other users found the link interesting, educational, or just funny."},
+            {"type": "p", "html": "That yielded 45 million links. After extracting article text (using the Dragnet and Newspaper content extractors), de-duplicating, and light heuristic cleaning, the result is <b>WebText: slightly over 8 million documents, ~40 GB of text</b>. Two deliberate exclusions matter: (1) they used a preliminary version with <b>no links created after December 2017</b>, which becomes useful later &mdash; datasets released after that date (like CoQA) provably cannot be in the training set. (2) They <b>removed all Wikipedia</b>, because Wikipedia is a common source for other test sets and its overlap would muddy any zero-shot claim."},
+            {"type": "h2", "text": "Tasks really do show up in the wild"},
+            {"type": "p", "html": "Is the &lsquo;demonstrations occur naturally&rsquo; premise actually true? Table 1 of the paper answers with real WebText examples of English&harr;French translation found <i>inside ordinary documents</i> &mdash; e.g. a candidate&rsquo;s French quote paired with its English gloss, or <code>&quot;Brevet Sans Garantie Du Gouvernement&quot;</code> translated as <code>&quot;Patented without government warranty&quot;</code>. Nobody labeled these; they are just how bilingual web text looks. This is the empirical foundation for the whole approach: the internet is a giant, unlabeled, multi-task training set if your objective can exploit it."},
+            {"type": "p", "html": "Design trade-off worth naming: WebText trades raw size for quality. Common Crawl is orders of magnitude larger, but the karma filter buys cleaner, more &lsquo;interesting&rsquo; text at the cost of Reddit&rsquo;s demographic and topical biases. This dataset-curation-by-social-signal idea influenced many later corpora, and WebText itself was reverse-engineered by the community as <b>OpenWebText</b> since OpenAI never released the original."}
+          ]
+        },
+        {
+          "title": "Byte-level BPE: never say &lsquo;unknown word&rsquo; again",
+          "subtitle": "A tokenizer that can spell any string on Earth",
+          "pdfPages": [4],
+          "blocks": [
+            {"type": "p", "html": "A general language model should be able to assign a probability to <i>any</i> string &mdash; a URL, an emoji, a typo, a word in a language it has never seen. Classic word-level models can&rsquo;t: they have a fixed vocabulary and shove everything unfamiliar into a single <code>&lt;UNK&gt;</code> (unknown) token, which throws away information and makes some strings unmodelable. GPT-2 wants zero-shot evaluation on arbitrary datasets, so it cannot afford an <code>&lt;UNK&gt;</code> crutch."},
+            {"type": "p", "html": "The theoretically clean fix is to model text as raw <b>UTF-8 bytes</b> &mdash; there are only 256 possible byte values, and every possible string is just a sequence of bytes, so nothing is ever out-of-vocabulary. The problem: byte-level models are much longer (a word becomes several bytes) and historically underperform word-level models on big benchmarks like the One Billion Word Benchmark."},
+            {"type": "h2", "text": "The middle ground"},
+            {"type": "p", "html": "<b>Byte Pair Encoding (BPE)</b> (Sennrich et al., 2015) splits the difference: it starts from a base vocabulary and greedily merges the most frequent adjacent pairs into new tokens. Frequent words become single tokens (word-level efficiency); rare words fall back to sub-word or character pieces (character-level generality). Normally BPE runs over Unicode code points, which would need a base vocabulary of 130,000+ symbols just to cover Unicode. GPT-2 instead runs BPE over <b>bytes</b>, so the base vocabulary is only 256, and no string is ever unrepresentable."},
+            {"type": "p", "html": "Two hand-tuned fixes make byte-level BPE actually work. First, naive BPE greedily merges by frequency and ends up wasting vocabulary slots on many near-duplicate variants of common words &mdash; the paper notes it produced tokens for <code>dog.</code>, <code>dog!</code>, <code>dog?</code> as if the punctuation were part of the word. So they <b>prevent BPE from merging across character categories</b> (letters with punctuation), keeping tokens like <code>dog</code> clean. Second, they add an exception <b>allowing merges that include spaces</b>, which noticeably improves compression with minimal word fragmentation."},
+            {"type": "p", "html": "The final vocabulary is <b>50,257 tokens</b> (256 byte values + merged tokens + an end-of-text marker). The payoff is exactly what the general-LM thesis needs: because it can spell any Unicode string, GPT-2 can be evaluated on <b>any dataset regardless of its pre-processing, tokenization, or vocabulary</b> &mdash; which is what makes the &lsquo;7 of 8 datasets&rsquo; zero-shot comparison fair. This byte-level BPE tokenizer became the default for the entire GPT family and countless later models."}
+          ]
+        },
+        {
+          "title": "The model: GPT-1&rsquo;s Transformer, scaled up four ways",
+          "subtitle": "What actually changed, and the four sizes that reveal scaling",
+          "pdfPages": [4, 5],
+          "blocks": [
+            {"type": "p", "html": "GPT-2 is architecturally boring on purpose &mdash; and that is the point. It is a decoder-only Transformer (Vaswani et al., 2017) that largely reuses the original GPT (Radford et al., 2018). &lsquo;Decoder-only&rsquo; means every token attends only to tokens <i>before</i> it (causal masking), which is exactly the left-to-right conditioning of $p(s_i \\mid s_1, \\ldots, s_{i-1})$. The story here is not a new architecture; it is that scaling a known one, plus a few stability tweaks, unlocks new behavior."},
+            {"type": "h2", "text": "The modifications from GPT-1"},
+            {"type": "list", "items": [
+              "<b>Layer normalization moved to the input</b> of each sub-block (pre-norm, like a pre-activation ResNet, He et al. 2016) instead of after &mdash; this stabilizes training of deep stacks.",
+              "<b>An extra layer norm added after the final self-attention block.</b>",
+              "<b>Residual weights scaled by</b> $1/\\sqrt{N}$ <b>at initialization</b>, where $N$ is the number of residual layers &mdash; this keeps the growing sum along the residual path from blowing up as depth increases.",
+              "<b>Vocabulary expanded to 50,257</b> (byte-level BPE), <b>context size raised from 512 to 1024 tokens</b>, and a larger <b>batch size of 512</b>."
+            ]},
+            {"type": "p", "html": "That $1/\\sqrt{N}$ scaling deserves a term-by-term read: as a Transformer stacks $N$ residual layers, each adds its output to a running sum, so the variance of activations on the residual path grows roughly with $N$. Dividing the initial residual-layer weights by $\\sqrt{N}$ counteracts that growth, keeping activations well-scaled from the first step and letting very deep models train without diverging."},
+            {"type": "h2", "text": "Four sizes, log-uniformly spaced"},
+            {"type": "p", "html": "The experimental design is the real contribution: train <b>four models of increasing size</b> and watch how performance scales. Table 2 gives the exact configurations:"},
+            {"type": "table", "headers": ["Parameters", "Layers", "d_model", "Identity"], "rows": [
+              ["117M", "12", "768", "= original GPT (Radford et al., 2018)"],
+              ["345M", "24", "1024", "&asymp; BERT-Large (Devlin et al., 2018)"],
+              ["762M", "36", "1280", "intermediate"],
+              ["1542M (1.5B)", "48", "1600", "GPT-2"]
+            ]},
+            {"type": "p", "html": "<code>Layers</code> is the number of stacked Transformer blocks; <code>d_model</code> is the width of the hidden representation (the size of each token&rsquo;s vector as it flows through). The smallest model is literally the original GPT; the largest, GPT-2, has over 10&times; its parameters. Each model&rsquo;s learning rate was hand-tuned for the best perplexity on a 5% held-out slice of WebText. A telling detail: <b>all four still underfit WebText</b> &mdash; held-out perplexity was still improving with more training time. The models were not saturated; they were merely the biggest that could be trained then. That single sentence is the empirical hint that scaling had not hit a ceiling, and it directly motivated GPT-3."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Experiments & Results",
+      "pages": [
+        {
+          "title": "Zero-shot language modeling: 7 of 8 benchmarks, no fine-tuning",
+          "subtitle": "How a WebText model beats specialists on their home turf",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type": "p", "html": "The first test is the model&rsquo;s home task &mdash; language modeling &mdash; but on <i>other people&rsquo;s</i> datasets it never trained on. This is a pure domain-transfer probe: take a WebText LM and, with zero adaptation, measure its perplexity on eight standard benchmarks (Penn Treebank, WikiText-2/103, enwik8, text8, 1BW, LAMBADA, CBT). Because GPT-2 operates on raw bytes with no lossy pre-processing, it can be dropped onto any of them directly."},
+            {"type": "p", "html": "One obstacle: these benchmarks were tokenized and standardized in ways WebText text never is &mdash; disconnected punctuation, shuffled sentences, and a <code>&lt;UNK&gt;</code> token that appears just 26 times in 40 billion bytes of WebText, so GPT-2 barely knows it exists. The fix is <b>invertible de-tokenizers</b> that undo these artifacts before scoring; because they are invertible, the log-probability is still valid. This alone buys <b>2.5 to 5 perplexity</b> of improvement &mdash; a simple, honest form of domain adaptation."},
+            {"type": "h2", "text": "The scoreboard (Table 3)"},
+            {"type": "p", "html": "GPT-2 (1.5B) sets a new state of the art on 7 of the 8 datasets, often by a wide margin. Selected zero-shot results vs. prior SOTA:"},
+            {"type": "table", "headers": ["Dataset (metric)", "Prior SOTA", "GPT-2 1.5B"], "rows": [
+              ["LAMBADA (perplexity, lower better)", "99.8", "8.63"],
+              ["LAMBADA (accuracy, higher better)", "59.23", "63.24"],
+              ["CBT-NE (named entities, accuracy)", "82.3", "89.05"],
+              ["WikiText-2 (perplexity)", "39.14", "18.34"],
+              ["Penn Treebank (perplexity)", "46.54", "35.76"],
+              ["WikiText-103 (perplexity)", "18.3", "17.48"],
+              ["1BW (perplexity)", "21.8", "42.16"]
+            ]},
+            {"type": "p", "html": "The LAMBADA jump is the showpiece. LAMBADA (Paperno et al., 2016) tests long-range dependency: predict the final word of a passage that needs 50+ tokens of context. GPT-2 slashes perplexity from <b>99.8 to 8.6</b> and lifts accuracy from 19% to <b>52.66%</b>. Investigating its mistakes, the authors found most wrong predictions were valid continuations that simply weren&rsquo;t sentence-final; adding a stop-word filter to enforce &lsquo;must be the last word&rsquo; pushes accuracy to <b>63.24%</b>."},
+            {"type": "p", "html": "The one loss is <b>1BW (One Billion Word Benchmark)</b>, where GPT-2 gets 42.16 perplexity vs. 21.8 SOTA &mdash; roughly 2&times; worse. The paper is candid about why: 1BW does sentence-level shuffling, which destroys exactly the long-range structure GPT-2 excels at exploiting. It is a clean illustration of the model&rsquo;s bias &mdash; it thrives on coherent long context and struggles when that context is deliberately scrambled. Across every dataset, the smaller models score worse and the biggest scores best, the log-linear scaling the abstract promised showing up in hard numbers."}
+          ]
+        },
+        {
+          "title": "Reading comprehension, summarization &amp; translation, prompt-only",
+          "subtitle": "Real tasks invoked purely by the words you feed in",
+          "pdfPages": [6],
+          "blocks": [
+            {"type": "p", "html": "Now the paper cashes in the thesis: can you get GPT-2 to <i>do a task</i> just by phrasing it as text? No task head, no fine-tuning &mdash; only a cleverly chosen prompt that makes the desired behavior the most likely continuation."},
+            {"type": "h2", "text": "Reading comprehension (CoQA)"},
+            {"type": "p", "html": "CoQA (Reddy et al., 2018) pairs documents from 7 domains with conversational Q&amp;A. GPT-2 is fed the document, the conversation history, and a final <code>A:</code> token, then greedily decodes. It reaches <b>55 F1 on the development set</b> &mdash; matching or beating 3 of 4 baseline systems, <b>without using the 127,000+ labeled question&ndash;answer pairs</b> those baselines trained on. It is still short of the BERT-based supervised SOTA near 89 F1 (human level), and inspection shows GPT-2 leans on simple retrieval heuristics like &lsquo;answer a <i>who</i> question with a name from the document&rsquo; &mdash; but for a system with no task-specific training, this is striking."},
+            {"type": "h2", "text": "Summarization (CNN / Daily Mail)"},
+            {"type": "p", "html": "To trigger summarization, the authors append the literal text <code>TL;DR:</code> after the article &mdash; a token pattern the internet uses to mean &lsquo;too long; didn&rsquo;t read, here&rsquo;s the gist&rsquo; &mdash; then generate 100 tokens with Top-<i>k</i> sampling ($k=2$, which curbs repetition) and take the first 3 sentences as the summary. On ROUGE-1/2/L the output only reaches the level of early neural baselines and barely beats picking 3 random sentences. The load-bearing experiment: <b>remove the TL;DR hint and performance drops by 6.4 ROUGE points</b>. That drop is the cleanest evidence in the paper that a natural-language cue genuinely selects a task inside the model &mdash; the prompt is doing real work, not decoration."},
+            {"type": "h2", "text": "Translation (WMT-14 Fr&ndash;En)"},
+            {"type": "p", "html": "Seed the context with example pairs formatted as <code>english sentence = french sentence</code>, end with <code>english sentence =</code>, and let the model complete the translation. On WMT-14 English&rarr;French, GPT-2 gets a weak <b>5 BLEU</b> (worse than a bilingual-lexicon word substitution). But French&rarr;English reaches <b>11.5 BLEU</b>, beating several unsupervised MT baselines &mdash; remarkable because they had <b>deliberately removed non-English pages</b>; a byte-level language detector found only ~10MB of French in WebText, roughly 500&times; less than the monolingual French corpora prior MT work relied on. The model learned to translate from the crumbs of bilingual text that slipped through the filter."}
+          ]
+        },
+        {
+          "title": "Open-domain QA and the honest limits",
+          "subtitle": "Calibrated confidence, and where GPT-2 is still &lsquo;much, much worse&rsquo;",
+          "pdfPages": [7],
+          "blocks": [
+            {"type": "p", "html": "The last task probe asks what factual knowledge is actually stored in the weights: pose factoid questions (Natural Questions, Kwiatkowski et al., 2019) with a few example Q&amp;A pairs to cue the short-answer style, and see how often GPT-2 gets them right. This directly tests the &lsquo;the model absorbed world knowledge from prediction&rsquo; idea."},
+            {"type": "p", "html": "On the exact-match metric GPT-2 answers <b>4.1% of questions correctly</b>. That sounds terrible until you see the anchor: the smallest 117M model scores <b>1.0%</b>, no better than a baseline that just returns the most common answer for each question type. So the 1.5B model is <b>5.3&times; more accurate than the smallest</b> &mdash; another data point that <b>model capacity is the bottleneck</b>, not the approach."},
+            {"type": "h2", "text": "The good news: it knows when it knows"},
+            {"type": "p", "html": "A subtler, more important finding: GPT-2&rsquo;s confidence is <b>well calibrated</b>. On the 1% of questions it is most confident about, it is <b>63.1% accurate</b>. Table 5 shows the 30 most-confident answers &mdash; &lsquo;Who wrote the book the origin of species?&rsquo; &rarr; Charles Darwin (83.4% probability), &lsquo;Who took the first steps on the moon in 1969?&rsquo; &rarr; Neil Armstrong (66.8%). The model doesn&rsquo;t just guess; the probability it assigns tracks whether it is actually right. That calibration is what later made prompting and confidence-thresholding practical."},
+            {"type": "h2", "text": "The honest caveats"},
+            {"type": "p", "html": "The paper is unusually candid about limits. Overall QA performance is still &lsquo;much, much worse&rsquo; than the 30&ndash;50% of dedicated open-domain systems that hybridize retrieval with extraction. The famous footnote captures the mood: the smallest model matched the trivia accuracy of an author (&lsquo;Alec, who previously thought of himself as good at random trivia&rsquo;). And it flags that some CoQA answers come from shallow retrieval heuristics rather than reasoning. GPT-2 is presented as an early, promising, clearly-incomplete signal &mdash; a proof of direction, not a finished product."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Generalization & Impact",
+      "pages": [
+        {
+          "title": "Is it memorizing? Bloom filters say mostly no",
+          "subtitle": "Auditing train/test overlap so the results are believable",
+          "pdfPages": [8],
+          "blocks": [
+            {"type": "p", "html": "A scary alternative explanation looms over every result: what if GPT-2 does well on a benchmark simply because that benchmark&rsquo;s test text is <i>already in WebText</i>? The model would be reciting, not generalizing. This is a real problem &mdash; the authors note CIFAR-10 in computer vision has 3.3% train/test image overlap &mdash; and it gets worse as datasets grow. So they audit it head-on."},
+            {"type": "p", "html": "The tool is a <b>Bloom filter</b> (a compact probabilistic set-membership structure) built over <b>8-grams</b> (overlapping runs of 8 words) of the WebText training set, normalized to lower-cased alphanumeric tokens. The filter&rsquo;s false-positive rate is bounded below $\\tfrac{1}{10^8}$, verified by generating 1M strings and finding zero false hits. For any benchmark test set, they can then ask: what fraction of its 8-grams also appear in WebText?"},
+            {"type": "p", "html": "Table 6 gives the verdict: test sets overlap WebText training by roughly <b>1&ndash;6%</b> (average ~3.2%). The reassuring control: standard datasets overlap their <i>own</i> training splits by even more &mdash; an average of <b>5.9%</b>. So WebText contamination is no worse than the contamination those benchmarks already ship with. On LAMBADA overlap is 1.2%; excluding overlapping examples barely moves the numbers (8.6 &rarr; 8.7 perplexity). For CoQA, no actual questions or answers are in WebText at all, because CoQA was released <i>after</i> the December-2017 link cutoff &mdash; the dataset design choice from earlier now pays off as an airtight guarantee."},
+            {"type": "quote", "html": "Overall, our analysis suggests that data overlap between WebText training data and specific evaluation datasets provides a small but consistent benefit to reported results."},
+            {"type": "p", "html": "The complementary evidence for real learning: on WebText&rsquo;s <i>own</i> held-out set, both train and test performance keep improving together as the model grows (Figure 4). No train/test gap opening up means <b>GPT-2 is still underfitting, not memorizing</b>. The paper then recommends n-gram overlap de-duplication as a standard sanity check for future NLP datasets &mdash; a piece of methodological hygiene the field largely adopted."}
+          ]
+        },
+        {
+          "title": "Why GPT-2 mattered: scaling, prompting, and a staged release",
+          "subtitle": "The paper that turned &lsquo;bigger&rsquo; into a research program",
+          "pdfPages": [1, 8],
+          "blocks": [
+            {"type": "p", "html": "Step back from the numbers and GPT-2&rsquo;s influence is mostly about three ideas it demonstrated cleanly enough that the whole field reorganized around them."},
+            {"type": "h2", "text": "1. Scaling as the plan"},
+            {"type": "p", "html": "By training four log-uniformly spaced models and showing performance rise <b>log-linearly with capacity</b> across every task &mdash; while all models still underfit WebText &mdash; GPT-2 reframed progress as a scaling problem. The implicit prediction (keep going and it keeps improving) was tested directly by GPT-3 (Brown et al., 2020), which took the identical decoder-only recipe to 175B parameters and produced few-shot in-context learning. The Kaplan et al. (2020) scaling laws formalized the curve GPT-2 sketched with four points."},
+            {"type": "h2", "text": "2. The prompt as the interface"},
+            {"type": "p", "html": "GPT-2 showed you can steer a frozen model with words alone &mdash; <code>TL;DR:</code> for summaries, <code>=</code>-formatted pairs for translation, a trailing <code>A:</code> for answers. The 6.4-point ROUGE drop from removing the TL;DR hint proved the prompt genuinely selects a task inside the model. This is the direct ancestor of prompt engineering, in-context learning, and instruction-following &mdash; the entire modern interaction paradigm with LLMs."},
+            {"type": "h2", "text": "3. Staged release and AI-safety norms"},
+            {"type": "p", "html": "GPT-2 is also a landmark for what OpenAI <i>didn&rsquo;t</i> do: worried about misuse (mass-produced fake news, spam, impersonation &mdash; the paper even notes GPT-2 can write a coherent article about the discovery of talking unicorns, Table 13), they declined to release the full 1.5B model at first, publishing smaller models and staging up over months. It was controversial &mdash; critics called it hype or gatekeeping &mdash; but it opened the now-standard conversation about responsible release of powerful generative models."},
+            {"type": "h2", "text": "Where it sits in the lineage"},
+            {"type": "list", "items": [
+              "<b>Transformer (Vaswani et al., 2017)</b> &rarr; the architecture GPT-2 scales, decoder-only with causal masking.",
+              "<b>GPT-1 (Radford et al., 2018)</b> &rarr; established generative pre-training + fine-tuning; GPT-2 is literally its 117M model, grown 10&times; and stripped of the fine-tuning step.",
+              "<b>BERT (Devlin et al., 2018)</b> &rarr; the bidirectional, fine-tuning-based contemporary; GPT-2 is the decoder-only, zero-shot counter-bet. Its 345M model matches BERT-Large in size.",
+              "<b>GPT-3 (2020) and beyond</b> &rarr; the direct descendant that validated the scaling prediction and made in-context learning the norm."
+            ]},
+            {"type": "p", "html": "The lasting one-line lesson: <b>a single self-supervised objective, scaled on diverse enough data, produces general capability</b> &mdash; you don&rsquo;t need to hand-design a task, you can summon it with a prompt. Nearly every large language model since is a bet on that sentence being true."}
+          ]
+        }
+      ]
+    }
+  ]
+}

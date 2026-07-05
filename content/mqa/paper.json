@@ -1,0 +1,153 @@
+{
+  "title": "Fast Transformer Decoding: One Write-Head is All You Need (Multi-Query Attention)",
+  "authors": "Noam Shazeer",
+  "year": "2019",
+  "venue": "arXiv:1911.02150",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The one-sentence idea",
+          "subtitle": "Share the keys and values across all attention heads",
+          "pdfPages": [1],
+          "blocks": [
+            { "type": "p", "html": "Transformers are fast to <i>train</i> because every position in a sequence can be processed in parallel. But when a trained Transformer <i>generates</i> text one token at a time (called <b>incremental</b> or <b>autoregressive decoding</b>), it becomes slow. This paper, a solo four-page note by Noam Shazeer (a co-author of the original Transformer), pinpoints exactly <i>why</i> decoding is slow and proposes a tiny architectural change that makes it dramatically faster." },
+            { "type": "p", "html": "The culprit is not arithmetic. It is <b>memory bandwidth</b> — the speed at which the chip can move numbers between its memory and its compute units. At each generation step the model must reload the giant <b>keys</b> ($K$) and <b>values</b> ($V$) tensors that summarize everything generated so far. On a modern GPU/TPU, compute is roughly 100&times; faster than memory, so the model spends its time waiting for data to arrive, not doing math." },
+            { "type": "p", "html": "The fix is almost embarrassingly simple. In standard <b>multi-head attention</b> there are $h$ heads (say $h=8$), and each head has its own separate keys and values. <b>Multi-query attention (MQA)</b> keeps the $h$ separate <i>query</i> projections but forces all heads to share a <b>single</b> set of keys and values — one write-head. That shrinks the $K$/$V$ tensors by a factor of $h$, so far less data must be reloaded per step." },
+            { "type": "quote", "html": "We propose a variant called multi-query attention, where the keys and values are shared across all of the different attention \"heads\", greatly reducing the size of these tensors and hence the memory bandwidth requirements of incremental decoding." },
+            { "type": "p", "html": "The payoff, measured on WMT 2014 English-German translation: decoder inference time per token drops from <b>46 microseconds to 3.8 microseconds</b> — roughly a 12&times; speedup for the decoder step — while translation quality (BLEU) barely moves. The paper's title riffs on the original Transformer paper \"Attention Is All You Need\"; the joke is that you don't need many key/value heads, just one." },
+            { "type": "p", "html": "This little note became hugely influential. MQA was adopted in Google's <b>PaLM</b> and in <b>Falcon</b>, and directly inspired <b>Grouped-Query Attention (GQA)</b> — the middle ground used in Llama 2, Llama 3, Mistral, and most modern large language models. Understanding MQA is the key to understanding why today's LLMs are shaped the way they are." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Background: Attention",
+      "pages": [
+        {
+          "title": "From one query to many heads",
+          "subtitle": "Dot-product attention and multi-head attention, term by term",
+          "pdfPages": [1, 2],
+          "blocks": [
+            { "type": "p", "html": "Before we can shrink anything, we need to be precise about what attention actually computes. <b>Neural attention</b> (Bahdanau et al., 2014) takes a single <b>query vector</b> $q$ and a set of $m$ key-value pairs — stacked into a key matrix $K$ and a value matrix $V$ — and produces one output vector $y$. Think of it as a soft lookup table: the query asks a question, each key says how well it matches, and the answer is a weighted blend of the values." },
+            { "type": "math", "tex": "\\text{logits} = q K^\\top, \\qquad w = \\text{softmax}(\\text{logits}), \\qquad y = w V" },
+            { "type": "p", "html": "Reading it term by term: $q$ is a vector of length $k$ (the key dimension). $K$ has shape $[m, k]$, so $qK^\\top$ produces $m$ <b>logits</b> — one similarity score per key. <b>softmax</b> turns those scores into weights $w$ that are non-negative and sum to 1. $V$ has shape $[m, v]$, so $y = wV$ is a length-$v$ vector: a weighted average of the value vectors, with more weight on the values whose keys matched the query best. The paper writes this with TensorFlow <code>einsum</code> notation, e.g. <code>tf.einsum(\"k,mk-&gt;m\", q, K)</code>, which just names the dimensions being multiplied and summed." },
+            { "type": "h2", "text": "Multi-head attention: h parallel lookups" },
+            { "type": "p", "html": "One lookup is limited — a single weighted average can only capture one kind of relationship. The Transformer (Vaswani et al., 2017) runs $h$ attention layers, called <b>heads</b>, in parallel. Each head has its own learned linear projections, so head 1 might track subject-verb agreement while head 2 tracks nearby adjectives. The query comes from an input vector $x$; the keys and values come from a collection $M$ of $m$ input vectors (the memory the query attends over)." },
+            { "type": "math", "tex": "q_i = x P_q^{(i)}, \\quad K_i = M P_k^{(i)}, \\quad V_i = M P_v^{(i)}, \\quad y = \\sum_i \\big(\\text{softmax}(q_i K_i^\\top)\\, V_i\\big) P_o^{(i)}" },
+            { "type": "p", "html": "Term by term: $P_q, P_k, P_v$ are the query/key/value projection tensors, each of shape $[h, d, k]$ (or $[h, d, v]$) — that is, one $d\\times k$ matrix <i>per head</i>. Here $d$ is the model dimension (the width of $x$), and $k = v$ is the per-head dimension. Each head $i$ produces its own query $q_i$, keys $K_i$, and values $V_i$, does the attention lookup, and the $h$ outputs are recombined by the output projection $P_o$ of shape $[h, d, v]$. In the paper's setup $d = 512$ per layer is split into $h = 8$ heads of $d_k = d_v = 128$." },
+            { "type": "p", "html": "The crucial thing to notice for what comes next: <b>every head owns a private $K_i$ and $V_i$</b>. During generation the model must store and reload all $h$ of them at every step. That is the fat we are about to trim. (Aside: the paper folds the usual $1/\\sqrt{k}$ softmax scaling factor into $P_q$ or $P_k$, so it doesn't appear explicitly.)" }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2.3-2.4 Performance analysis",
+      "pages": [
+        {
+          "title": "Why training is fast but decoding is slow",
+          "subtitle": "The ratio of memory access to arithmetic decides everything",
+          "pdfPages": [3, 4],
+          "blocks": [
+            { "type": "p", "html": "Modern accelerators live and die by one ratio: <b>memory accesses divided by arithmetic operations</b>. A GPU/TPU can do maybe 100 multiply-adds in the time it takes to fetch one number from memory. So if an operation touches roughly as much memory as it does math, the chip starves — it sits idle waiting for data. This is called being <b>memory-bandwidth bound</b>. The whole paper is an exercise in computing this ratio for two situations." },
+            { "type": "h2", "text": "The good case: batched attention (training)" },
+            { "type": "p", "html": "During training, we process $b$ sequences at once, and within each sequence all $n$ query positions are computed together (we already know the whole target, so nothing has to wait). With the paper's simplifying assumptions ($m = n$, $k = v = d/h$, $n \\le d$):" },
+            { "type": "math", "tex": "\\text{operations} = \\Theta(b\\,n\\,d^2), \\qquad \\text{memory} = O(b\\,n\\,d + b\\,h\\,n^2 + d^2)" },
+            { "type": "p", "html": "The memory-to-compute ratio works out to $O\\!\\left(\\tfrac{1}{k} + \\tfrac{1}{bn}\\right)$. Reading it: $\\tfrac{1}{k}$ is small because the per-head dimension $k$ is around 128; $\\tfrac{1}{bn}$ is small because the batch $b$ times sequence length $n$ is large. Both terms are $\\ll 1$, so training is compute-bound — exactly what you want. The hardware stays busy. This is why Transformers train so efficiently." },
+            { "type": "h2", "text": "The bad case: incremental decoding (generation)" },
+            { "type": "p", "html": "Now generate one token at a time. Position $t$'s query must attend to the keys/values of all positions $1..t$, and those depend on the tokens the model itself just emitted — so the $n$ steps cannot be parallelized. At each step we reload the accumulated $K$ and $V$ (shape includes $bhmk = bn^2$ worth of data across the sequence). The ratio becomes:" },
+            { "type": "math", "tex": "\\text{ratio} = \\Theta\\!\\left(\\frac{n}{d} + \\frac{1}{b}\\right)" },
+            { "type": "p", "html": "Reading it: $\\tfrac{1}{b}$ we can shrink by using a bigger batch (cheap — just process more sequences at once). But $\\tfrac{n}{d}$ is the killer. When the sequence length $n$ approaches the model dimension $d$ (e.g. $n \\approx d \\approx 1000$), this term is near 1 — meaning one memory access per unit of compute, and the chip is bandwidth-starved. The $\\tfrac{n}{d}$ term comes precisely from <b>reloading the $K$ and $V$ tensors at every step</b>, and those carry the head dimension $h$." },
+            { "type": "quote", "html": "In this paper we present an orthogonal approach to reducing the size of the K and V tensors - namely removing their \"heads\" dimension, while maintaining the \"heads\" dimension in the queries." },
+            { "type": "p", "html": "Prior work attacked $n$ directly: cap the sequence, attend only to a local neighborhood, or compress the memory (Liu et al. 2018; Zhang et al. 2018; Povey et al. 2018). Shazeer's insight is <b>orthogonal</b> — leave $n$ alone, and instead delete the $h$ from $K$ and $V$. That's the entire idea of the paper, and the next page shows it costs one letter of code." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Multi-Query Attention",
+      "pages": [
+        {
+          "title": "Delete one letter, shrink the cache by h",
+          "subtitle": "The queries keep their heads; the keys and values give theirs up",
+          "pdfPages": [4, 5, 6],
+          "blocks": [
+            { "type": "p", "html": "Here is the whole invention. In multi-head attention the key/value projections have shape $[h, d, k]$ — a separate matrix per head. In <b>multi-query attention</b> they have shape $[d, k]$ — a <i>single shared</i> matrix. The queries are untouched: $P_q$ stays $[h, d, k]$, so we still get $h$ distinct queries. All $h$ queries then attend against the <b>same</b> keys and the <b>same</b> values." },
+            { "type": "p", "html": "In the paper's <code>einsum</code> code, the change is literally removing the letter <code>h</code> from the key/value equations. Multi-head computes keys with <code>tf.einsum(\"bmd,hdk-&gt;bhmk\", M, P_k)</code>; multi-query computes them with <code>tf.einsum(\"bmd,dk-&gt;bmk\", M, P_k)</code>. No $h$ index on $K$ or $V$ means one head's worth of keys/values instead of eight." },
+            { "type": "quote", "html": "The code for (incremental) multi-query (self) attention is identical to the code listed above for multi-head attention, except that we remove the letter \"h\" from the tf.einsum equations where it represents the \"heads\" dimension of K, V, P_k, or P_v." },
+            { "type": "h2", "text": "A concrete cache calculation" },
+            { "type": "p", "html": "Take the paper's translation model: $h = 8$ heads, $d_k = d_v = 128$. In multi-head attention, the per-position key+value cache is $2 \\times h \\times d_k = 2 \\times 8 \\times 128 = 2048$ numbers. In multi-query, it is $2 \\times 1 \\times 128 = 256$ numbers — an <b>8&times; smaller KV cache</b>, exactly the factor $h$. Over a 128-token sequence with a batch of 1024, that difference is what turns a bandwidth-bound crawl into a fast decode." },
+            { "type": "h2", "text": "The new bandwidth ratio" },
+            { "type": "p", "html": "Redoing the incremental performance analysis with shared keys/values, the memory-to-compute ratio becomes:" },
+            { "type": "math", "tex": "\\text{ratio}_{\\text{MQA}} = \\Theta\\!\\left(\\frac{1}{d} + \\frac{n}{d\\,h} + \\frac{1}{b}\\right)" },
+            { "type": "p", "html": "Compare to the multi-head ratio $\\Theta\\!\\left(\\tfrac{n}{d} + \\tfrac{1}{b}\\right)$. The offending $\\tfrac{n}{d}$ term has become $\\tfrac{n}{dh}$ — <b>reduced by a factor of $h$</b> (here 8&times;). That single division is the whole speedup. As Shazeer puts it, given a large batch this should dramatically improve incremental generation." },
+            { "type": "p", "html": "Why does keeping $h$ queries but only 1 key/value head still work? Because the expressiveness of attention comes largely from the queries asking different questions; the keys and values are a shared lookup table that all questions can consult. You lose a little — the values can no longer be head-specialized — but the loss turns out to be minor, as the next page shows. This asymmetry (rich queries, shared memory) is exactly why the paper's title says <i>one write-head</i> is all you need." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Experiments and Results",
+      "pages": [
+        {
+          "title": "Setup: what was trained",
+          "subtitle": "WMT14 EN-DE translation and the Billion-Word LM benchmark",
+          "pdfPages": [6, 7],
+          "blocks": [
+            { "type": "p", "html": "To prove the speedup is real and the quality cost is small, Shazeer runs two standard benchmarks and, crucially, holds the parameter count fixed so the comparison is fair." },
+            { "type": "h2", "text": "Machine translation" },
+            { "type": "p", "html": "The main task is <b>WMT 2014 English-German translation</b>. The baseline is a 6-layer encoder-decoder Transformer with $d_{model} = 1024$, $d_{ff} = 4096$, $h = 8$ heads, $d_k = d_v = 128$ — <b>211 million parameters</b>. All models trained for 100,000 steps (~20 epochs), batch size 128, sequences of 256 tokens, on a 32-core TPUv3 cluster in about 2 hours each." },
+            { "type": "p", "html": "The multi-query variant replaces <b>every</b> attention layer (encoder self-attention, decoder self-attention, and encoder-decoder cross-attention) with MQA. Because MQA has slightly fewer parameters (shared $K$/$V$), the feed-forward hidden size is widened from <b>4096 to 5440</b> so the total parameter count still equals the 211M baseline. This matters: any quality difference is due to the architecture, not model size." },
+            { "type": "p", "html": "As a control, the paper also trains the obvious cheaper alternatives — just use fewer heads or smaller key/value dimensions ($h{=}1$ with $d_k{=}128$; $h{=}2$ with 64; $h{=}4$ with 32; $h{=}8$ with 16), again widening $d_{ff}$ to match 211M parameters. These are the honest competitors MQA must beat." },
+            { "type": "p", "html": "To show MQA is <b>orthogonal to local attention</b> (attending only to a window of nearby positions), it also trains \"local\" versions where decoder self-attention is restricted to the current position and the previous 31 positions." },
+            { "type": "h2", "text": "Language modeling" },
+            { "type": "p", "html": "The second task is the <b>Billion-Word Language Modeling Benchmark</b> (Chelba et al., 2013), using a 6-layer transformer-decoder with $d_{model} = 1024$, $d_{ff} = 8192$, $h = 8$, $d_k = d_v = 128$ — <b>192 million parameters</b>. Trained 136K steps (10 epochs) at a batch of 64K tokens, ~3 hours on a 32-core TPUv3 cluster. Evaluated by per-word perplexity on the dev set." }
+          ]
+        },
+        {
+          "title": "Results: 12x faster, quality intact",
+          "subtitle": "The headline numbers from Tables 1, 2 and 3",
+          "pdfPages": [7, 8],
+          "blocks": [
+            { "type": "p", "html": "The two questions are: (1) does MQA actually decode faster on hardware, and (2) how much quality does sharing keys/values cost? The answers are: a lot faster, and almost nothing." },
+            { "type": "h2", "text": "Speed (Table 2) — the whole point" },
+            { "type": "p", "html": "Amortized inference cost in TPUv2-microseconds per output token, split into encoder + decoder, measured on 1024 sequences of length 128:" },
+            { "type": "table", "headers": ["Attention type", "Training (µs)", "Inference enc + dec", "Beam-4 enc + dec"], "rows": [["multi-head", "13.2", "1.7 + 46", "2.0 + 203"], ["multi-query", "13.0", "1.5 + 3.8", "1.6 + 32"], ["multi-head local", "13.2", "1.7 + 23", "1.9 + 47"], ["multi-query local", "13.0", "1.5 + 3.3", "1.6 + 16"]] },
+            { "type": "p", "html": "The decoder step is where autoregressive generation spends its time, and it falls from <b>46 µs to 3.8 µs</b> per token — about <b>12&times; faster</b>. With beam-4 search the effect is even larger: the decoder drops from <b>203 µs to 32 µs</b>, over 6&times;. The encoder (which runs in parallel and isn't bandwidth-bound) barely changes, and training cost is essentially identical (13.2 vs 13.0). Exactly as the theory predicted: MQA fixes the incremental-decoding bottleneck and touches nothing else." },
+            { "type": "h2", "text": "Translation quality (Table 1)" },
+            { "type": "table", "headers": ["Attention type", "h", "d_k,d_v", "ln(PPL) dev", "BLEU dev", "BLEU test beam 1/4"], "rows": [["multi-head", "8", "128", "1.424", "26.7", "27.7 / 28.4"], ["multi-query", "8", "128", "1.439", "26.5", "27.5 / 28.5"], ["multi-head h=1", "1", "128", "1.518", "25.8", "26.8 / 27.9"], ["multi-head h=2", "2", "64", "1.480", "26.2", "—"], ["multi-head h=4", "4", "32", "1.488", "26.1", "—"], ["multi-head h=8 d=16", "8", "16", "1.513", "25.8", "—"]] },
+            { "type": "p", "html": "Multi-query lands at BLEU 26.5 (dev) versus the baseline's 26.7 — a tiny 0.2-point drop. On the test set with beam-4 decoding, multi-query actually scored the <b>highest BLEU of all (28.5)</b>. Critically, MQA crushes the cheap alternatives: cutting heads to $h{=}1$ (25.8) or shrinking $d_k$ to 16 (25.8) loses far more quality. So sharing keys/values across 8 heads is much better than having 1 real head." },
+            { "type": "h2", "text": "Language modeling (Table 3)" },
+            { "type": "p", "html": "The Billion-Word story matches. Baseline multi-head dev perplexity is <b>29.9</b>; multi-query is <b>30.2</b> — a hair worse. But every reduced-head/reduced-dimension alternative is notably worse (31.0-31.2). The pattern is consistent across both tasks: MQA is nearly free in quality yet massively cheaper to decode, whereas naively shrinking the attention hurts." }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Conclusion & Legacy",
+      "pages": [
+        {
+          "title": "Why MQA reshaped modern LLMs",
+          "subtitle": "The precursor to GQA and the KV-cache era",
+          "pdfPages": [8],
+          "blocks": [
+            { "type": "p", "html": "The paper's own conclusion is modest — one paragraph saying MQA is an alternative to multi-head attention with much lower memory-bandwidth needs in the incremental setting, enabling wider use of attention models in performance-critical inference. History proved the understatement." },
+            { "type": "quote", "html": "We have proposed multi-query attention - an alternative to multi-head attention with much lower memory-bandwidth requirements in the incremental setting. We believe that this enables wider adoption of attention-based sequence models in inference-performance-critical applications." },
+            { "type": "h2", "text": "Why this matters more now than in 2019" },
+            { "type": "p", "html": "When Shazeer wrote this, the sequences were short (128 tokens). Today's LLMs serve contexts of tens of thousands of tokens, and the <b>KV cache</b> — the stored keys and values for every past token — dominates both memory footprint and bandwidth during generation. MQA's $h$-fold reduction of that cache is the difference between fitting a long conversation on one GPU or not. The 2019 note quietly solved a problem that only became critical years later." },
+            { "type": "h2", "text": "The GQA compromise" },
+            { "type": "p", "html": "MQA's one downside is that collapsing 8 key/value heads into 1 can slightly hurt quality and can be unstable to train at very large scale. In 2023, Ainslie et al. introduced <b>Grouped-Query Attention (GQA)</b>, an explicit interpolation: instead of $h$ key/value heads (multi-head) or 1 (multi-query), use $g$ groups — say 8 query heads sharing across 2 or 4 key/value heads. GQA recovers almost all of multi-head's quality while keeping most of MQA's speed, and is now the default in <b>Llama 2, Llama 3, Mistral, and Mixtral</b>. MQA is simply GQA with $g = 1$." },
+            { "type": "list", "items": [
+              "<b>PaLM</b> (Google, 2022) used pure multi-query attention at 540B parameters.",
+              "<b>Falcon</b> (TII, 2023) adopted multi-query attention for fast inference.",
+              "<b>GQA</b> (2023) generalized MQA and is the standard in the Llama and Mistral families.",
+              "The modern framing of <b>KV-cache optimization</b> — from PagedAttention to FlashAttention's decode path — all traces to the bandwidth analysis Shazeer laid out here."
+            ] },
+            { "type": "p", "html": "The lasting lesson is methodological: the bottleneck was not FLOPs but the memory-to-compute <b>ratio</b>, and the fix was a targeted structural change (rich queries, one shared write-head) rather than a bigger model or more compute. That way of thinking — profile the ratio, then cut the tensor that dominates it — is now standard practice in efficient-inference research." }
+          ]
+        }
+      ]
+    }
+  ]
+}

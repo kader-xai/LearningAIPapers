@@ -1,0 +1,211 @@
+{
+  "title": "PaLM: Scaling Language Modeling with Pathways",
+  "authors": "Chowdhery, Narang, Devlin, et al. (Google)",
+  "year": "2022",
+  "venue": "arXiv:2204.02311",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "One model, 540 billion parameters",
+          "subtitle": "The headline claim and why it matters",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"By 2022 the recipe for a strong language model was clear: make it a Transformer, train it on a lot of text, and it will do surprisingly well at tasks it was never explicitly trained on, just by being shown a few examples in its prompt. This is called <b>few-shot learning</b> (adapting to a task from a handful of in-context examples, with no weight updates). The open question this paper attacks is brutally simple: <i>what happens if we just make the model much, much bigger?</i>"},
+            {"type":"p","html":"PaLM &mdash; the <b>Pa</b>thways <b>L</b>anguage <b>M</b>odel &mdash; is a single dense Transformer with <b>540 billion parameters</b>. For scale: GPT-3 (Brown et al., 2020) had 175B, and Megatron-Turing NLG had 530B. PaLM is not a mixture-of-experts trick; <b>densely activated</b> means every one of those 540B parameters fires for every token, so its raw compute-per-token is roughly 3&times; GPT-3's."},
+            {"type":"quote","html":"On a number of these tasks, PaLM 540B achieves breakthrough performance, outperforming the finetuned state-of-the-art on a suite of multi-step reasoning tasks, and outperforming average human performance on the recently released BIG-bench benchmark."},
+            {"type":"p","html":"Two results made this paper land hard. First, on <b>BIG-bench</b> (a community benchmark of hundreds of hard, diverse tasks), a number of tasks showed <b>discontinuous</b> improvement: the 8B and 62B models sit near random, then the 540B model suddenly leaps to strong performance. Capability appeared as an abrupt jump, not a smooth climb &mdash; the phenomenon later popularized as <i>emergent abilities</i>."},
+            {"type":"p","html":"Second, pairing PaLM with <b>chain-of-thought prompting</b> (having the model write out its reasoning steps before the answer) cracked multi-step reasoning problems that had previously required task-specific finetuned systems. A pure few-shot language model matched or beat pipelines built by hand for those tasks."},
+            {"type":"p","html":"The third contribution is systems, not modeling: PaLM was trained on <b>6144 TPU v4 chips</b> across two data-center pods using <b>Pathways</b>, Google's new orchestration system. It was the largest reported TPU configuration trained end-to-end without pipeline parallelism &mdash; a claim we unpack in the training-infrastructure page."},
+            {"type":"p","html":"Read this paper as three theses stapled together: (1) scale still pays off &mdash; the returns had not saturated at 540B; (2) some abilities are latent until scale unlocks them; (3) you can train models this big efficiently on commodity accelerators if the software is right."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Model Architecture",
+      "pages": [
+        {
+          "title": "A standard Transformer, six tweaks",
+          "subtitle": "SwiGLU, parallel layers, multi-query attention, RoPE, no biases",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type":"p","html":"PaLM is a <b>decoder-only</b> Transformer (Vaswani et al., 2017): a stack of self-attention + feed-forward blocks where each token can only attend to itself and earlier tokens, trained to predict the next token. That is the same skeleton as GPT-3. The interesting engineering is a set of six modifications, each chosen because it either improves quality per unit of compute or speeds up training/inference at 540B scale. We go through them one at a time."},
+            {"type":"h2","text":"1. SwiGLU activation in the MLP"},
+            {"type":"p","html":"The feed-forward block of a Transformer is a two-layer MLP with a nonlinearity in the middle. PaLM replaces the usual ReLU/GeLU with <b>SwiGLU</b>, a gated activation from Shazeer (2020):"},
+            {"type":"math","tex":"\\text{SwiGLU}(x) = \\text{Swish}(xW) \\cdot xV"},
+            {"type":"p","html":"Here $x$ is the input vector to the block, $W$ and $V$ are two separate learned weight matrices, $\\text{Swish}(z) = z\\,\\sigma(z)$ is a smooth ReLU-like function, and $\\cdot$ is elementwise multiplication. The trick is <b>gating</b>: one linear projection $xW$ is passed through Swish and used to modulate (gate) the other projection $xV$. This needs <b>three</b> matrix multiplies in the MLP instead of two, so to keep the compute equal the paper shrinks the hidden dimension proportionally. Shazeer showed that even at matched compute, SwiGLU wins on quality &mdash; the gating buys expressiveness the extra parameters alone would not."},
+            {"type":"h2","text":"2. Parallel layers"},
+            {"type":"p","html":"A normal Transformer block runs attention and the MLP in series &mdash; the MLP reads the output of attention. PaLM runs them <b>in parallel</b> off the same normalized input (Wang &amp; Komatsuzaki, 2021):"},
+            {"type":"math","tex":"y = x + \\text{MLP}(\\text{LayerNorm}(x)) + \\text{Attention}(\\text{LayerNorm}(x))"},
+            {"type":"p","html":"Compare the standard serial form $y = x + \\text{MLP}(\\text{LayerNorm}(x + \\text{Attention}(\\text{LayerNorm}(x))))$. In the parallel form both branches see the same $\\text{LayerNorm}(x)$, so their input matrix multiplications can be <b>fused</b> into one big matmul. That is worth roughly <b>15% faster training</b> at large scale. Ablations showed a small quality hit at 8B but none at 62B, so the authors extrapolated it would be quality-neutral at 540B &mdash; a bet they had to make because re-running the 540B model to check was infeasible."},
+            {"type":"h2","text":"3. Multi-query attention"},
+            {"type":"p","html":"Standard multi-head attention gives every one of the $k$ heads its own query, key, and value projections, each of shape $[k, h]$ where $h$ is the head size. PaLM keeps <b>per-head queries</b> but <b>shares one key and one value</b> across all heads: keys and values are projected to $[1, h]$ instead of $[k, h]$ (Shazeer, 2019)."},
+            {"type":"p","html":"Why bother? It is quality-neutral during training but a huge win at <b>autoregressive decoding</b>. When you generate one token at a time, you must cache and reload the key/value tensors for every past position. With standard attention those tensors are not shared across heads, so the memory traffic is large and accelerator utilization is poor. Sharing K and V shrinks that cache by a factor of $k$, making generation dramatically cheaper &mdash; the ancestor of the grouped-query attention now standard in production LLMs."},
+            {"type":"h2","text":"4. RoPE embeddings, 5. shared embeddings, 6. no biases"},
+            {"type":"list","items":[
+              "<b>RoPE</b> (Rotary Position Embeddings, Su et al., 2021): instead of adding a learned position vector, positions are encoded by rotating the query/key vectors by an angle proportional to position. This generalizes better to long sequences and became the near-universal positional scheme after PaLM.",
+              "<b>Shared input-output embeddings</b>: the matrix that maps tokens to vectors on the way in is reused (transposed) to map vectors back to token logits on the way out &mdash; it saves parameters and is a common trick.",
+              "<b>No biases</b>: no bias terms in any dense layer or LayerNorm. The paper reports this <i>improves training stability for large models</i>, one fewer thing to blow up."
+            ]},
+            {"type":"p","html":"<b>Vocabulary:</b> a 256k-token <b>SentencePiece</b> vocabulary, deliberately large to cover 100+ languages without over-tokenizing. It is lossless (whitespace is preserved, critical for code) and numbers are split into individual digits, e.g. <code>123.5 &rarr; 1 2 3 . 5</code> &mdash; a design choice that helps arithmetic reasoning by giving the model consistent digit-level structure."}
+          ]
+        },
+        {
+          "title": "Three sizes, one recipe",
+          "subtitle": "8B, 62B, 540B and the data they saw",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {"type":"p","html":"To measure the <i>effect of scale</i> cleanly you need models that differ only in size. PaLM comes in three: 8B, 62B, and 540B parameters, trained on <b>identical data in identical order</b> (only batch size differs). Because they are standard dense Transformers, FLOPs-per-token is roughly equal to parameter count, so 540B does about 68&times; the compute-per-token of 8B."},
+            {"type":"table","headers":["Model","Layers","Heads","d_model","Params (B)"],"rows":[
+              ["PaLM 8B","32","16","4096","8.63"],
+              ["PaLM 62B","64","32","8192","62.50"],
+              ["PaLM 540B","118","48","18432","540.35"]
+            ]},
+            {"type":"p","html":"Reading the table: <code>d_model</code> is the width of the residual stream (the vector size flowing through the network); the feed-forward hidden size is always $4 \\times d_{\\text{model}}$ and every attention head is size 256. The 540B model is <b>118 layers deep and 18432 wide</b> &mdash; both dimensions grew together, following the aspect-ratio heuristics from prior scaling work."},
+            {"type":"h2","text":"The training corpus"},
+            {"type":"p","html":"PaLM was trained on <b>780 billion tokens</b>, a single epoch (each token seen once), drawn from a mix built on the LaMDA and GLaM datasets:"},
+            {"type":"table","headers":["Source","Share"],"rows":[
+              ["Social media conversations (multilingual)","50%"],
+              ["Filtered webpages (multilingual)","27%"],
+              ["Books (English)","13%"],
+              ["GitHub (code)","5%"],
+              ["Wikipedia (multilingual)","4%"],
+              ["News (English)","1%"]
+            ]},
+            {"type":"p","html":"Two things worth flagging. First, half the corpus is <b>conversational</b> multilingual data &mdash; PaLM was aimed at more than English essays from the start. Second, the <b>5% code</b> (196GB from permissively-licensed GitHub repos across 24 languages, deduplicated by Levenshtein distance) is small but load-bearing: it drives PaLM's strong code and reasoning results."},
+            {"type":"p","html":"A note on the scaling philosophy: PaLM trained a 540B model on only 780B tokens. The near-simultaneous <b>Chinchilla</b> paper (Hoffmann et al., 2022) argued this is compute-inefficient &mdash; that a smaller model trained on far more tokens would do better for the same FLOPs. PaLM sits on the &lsquo;big model, fewer tokens&rsquo; side of that debate, which is exactly why the two papers are read together as the bookends of the 2022 scaling conversation."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Training Infrastructure",
+      "pages": [
+        {
+          "title": "6144 chips, no pipeline bubbles",
+          "subtitle": "How Pathways scaled across two TPU pods",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type":"p","html":"Training a 540B dense model is a systems problem before it is a modeling problem. The parameters alone are over a terabyte; no single chip holds them, and no single pod has enough chips. PaLM used <b>6144 TPU v4 chips</b> spread across <b>two pods</b> (3072 chips each, 768 hosts per pod) connected over the ordinary data-center network (DCN). This is the largest TPU config reported at the time trained end-to-end."},
+            {"type":"h2","text":"The problem: crossing pods usually forces pipelining"},
+            {"type":"p","html":"To scale past one pod, most prior systems (e.g. Megatron-Turing on 2240 A100 GPUs) reach for <b>pipeline parallelism</b> &mdash; splitting the layers across groups of devices and streaming micro-batches through them like an assembly line. Pipelining has two nasty costs. The <b>bubble</b>: at the start and end of each batch, devices sit idle waiting for the pipeline to fill and drain. And <b>weight reloading</b>: each micro-batch reloads weights from memory, straining bandwidth. PaLM wanted to avoid both."},
+            {"type":"h2","text":"The solution: 2D sharding within pods, plain data parallelism across them"},
+            {"type":"p","html":"Inside each pod, every weight tensor is sharded across all 3072 chips using <b>12-way model parallelism</b> (the tensor split 12 ways) crossed with <b>256-way fully-sharded data parallelism</b> &mdash; the &lsquo;2D finalized&rsquo; layout of Xu et al. (2021). Each pod holds a <b>full copy</b> of the model. During the forward pass, weights are all-gathered along the data-parallel axis; on the backward pass the rest is recomputed as needed."},
+            {"type":"p","html":"Across the two pods, PaLM does something simpler: standard <b>data parallelism</b>. Each pod computes gradients on its own half of the batch, then the two pods exchange and sum their gradients over the slower DCN link. Because gradient exchange happens once per step (not once per micro-batch), the DCN bandwidth is enough &mdash; and Pathways overlaps that cross-pod communication with in-pod compute so the network latency is largely hidden."},
+            {"type":"p","html":"This is what <b>Pathways</b> buys: a single Python client dispatches work to both pods asynchronously, and the framework schedules the compute and communication so the 6144 chips stay busy without a hand-built pipeline. PaLM reported a <b>model FLOPs utilization (MFU) of 46.2%</b> &mdash; the fraction of the hardware's theoretical peak actually spent on useful math &mdash; a record for a model this size, roughly double typical large-model efficiency."},
+            {"type":"h2","text":"Training instability: the loss spikes"},
+            {"type":"p","html":"At 540B scale the loss <b>spiked about 20 times</b> during training, at irregular intervals, despite gradient clipping &mdash; and the smaller models never did this. With no principled fix affordable at that cost, the authors used a blunt but effective one: rewind to a checkpoint ~100 steps before the spike and <b>skip the 200&ndash;500 data batches</b> around it. The loss then did not spike again at that point. Crucially, replaying those same batches from an <i>earlier</i> checkpoint did <b>not</b> reproduce the spike &mdash; so it was not &lsquo;bad data&rsquo; per se, but a fragile interaction between specific batches and a specific parameter state. A candid, widely-cited window into what training frontier models actually feels like."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "6. Evaluation",
+      "pages": [
+        {
+          "title": "Few-shot NLP: new state of the art",
+          "subtitle": "28 of 29 benchmarks, no finetuning",
+          "pdfPages": [11, 13],
+          "blocks": [
+            {"type":"p","html":"The first evaluation is the classic few-shot suite: the same <b>29 English benchmarks</b> GPT-3 and GLaM were measured on &mdash; TriviaQA, Natural Questions, LAMBADA, HellaSwag, WinoGrande, PIQA, ARC, DROP, SuperGLUE, Adversarial NLI, and more. The rule is strict: <b>single pretrained checkpoint, no finetuning</b>, task specified purely by a few in-context examples."},
+            {"type":"p","html":"The result: PaLM 540B beats prior state of the art on <b>24 of 29 tasks in the 1-shot setting and 28 of 29 in the few-shot setting</b> &mdash; on several Reading Comprehension and NLI tasks by more than 10 points. Averaged over the 29 benchmarks (1-shot):"},
+            {"type":"table","headers":["Model","Avg NLG","Avg NLU"],"rows":[
+              ["GPT-3 175B","52.9","65.4"],
+              ["GLaM 64B/64E","58.4","68.7"],
+              ["PaLM 8B","41.5","59.2"],
+              ["PaLM 62B","57.7","67.3"],
+              ["PaLM 540B","63.9","74.7"]
+            ]},
+            {"type":"p","html":"NLG is Natural Language Generation (eight tasks like TriviaQA, DROP, CoQA); NLU is Natural Language Understanding (the rest). Read the column top-to-bottom for PaLM and you see the scaling story in three numbers: <b>NLU 59.2 &rarr; 67.3 &rarr; 74.7</b> as you go 8B &rarr; 62B &rarr; 540B. The returns did not flatten."},
+            {"type":"p","html":"A subtle but important point the authors stress: PaLM 540B beats the <b>similarly-sized</b> Megatron-Turing NLG 530B on all benchmarks. Since the two are almost the same size, the gap cannot be scale alone &mdash; it credits the <b>data quality, training recipe, and token count</b>. Scale is necessary but not sufficient."},
+            {"type":"h2","text":"MMLU: 5-shot expert knowledge"},
+            {"type":"p","html":"On <b>MMLU</b> (57 multiple-choice tasks spanning math, history, law, medicine), PaLM 540B set a new average, beating the prior SOTA Chinchilla on every category except &lsquo;Other&rsquo;:"},
+            {"type":"table","headers":["Model","Avg","Humanities","STEM","Social Sci"],"rows":[
+              ["Chinchilla 70B","67.5","63.6","54.9","79.3"],
+              ["PaLM 8B","25.3","25.6","23.8","24.1"],
+              ["PaLM 62B","53.7","59.5","41.9","62.7"],
+              ["PaLM 540B","69.3","77.0","55.6","81.0"]
+            ]},
+            {"type":"p","html":"Note the 8B row hovers at ~25% &mdash; that is <b>random chance</b> on 4-way multiple choice. Broad expert knowledge is simply absent at 8B and present at 540B, the same latent-until-scale pattern the next page makes central."}
+          ]
+        },
+        {
+          "title": "BIG-bench and discontinuous jumps",
+          "subtitle": "When capability appears all at once",
+          "pdfPages": [15, 17, 19],
+          "blocks": [
+            {"type":"p","html":"<b>BIG-bench</b> is a crowd-sourced benchmark of 150+ deliberately hard and unusual tasks &mdash; logical deduction, cause-and-effect, cross-lingual proverbs, made-up-on-purpose puzzles &mdash; many built specifically so that memorization would not help. On aggregate over 150 text tasks, PaLM 540B few-shot <b>exceeds average human performance</b>, though top human raters still beat it on about 35% of individual tasks."},
+            {"type":"p","html":"The scores are reported as a <b>normalized preferred metric</b>: each task is rescaled so 100 = best possible and 0 = random chance, then averaged. Negative means worse than guessing. This lets wildly different tasks be pooled into one number."},
+            {"type":"h2","text":"The discontinuity"},
+            {"type":"p","html":"The striking finding is <i>how</i> the curve rises. The paper sorts tasks into three shapes as you scale 8B &rarr; 62B &rarr; 540B (Figure 5):"},
+            {"type":"list","items":[
+              "<b>Log-linear</b> (e.g. <code>goal_step_wikihow</code>): smooth improvement with scale, a straight line on a log axis &mdash; the expected pattern.",
+              "<b>Discontinuous</b> (e.g. <code>english_proverbs</code>, <code>logical_sequence</code>): the 8B and 62B models are near flat, then 540B <b>jumps sharply</b> &mdash; a task the model essentially could not do until it crossed a size threshold.",
+              "<b>Flat</b> (e.g. <code>navigate</code>, <code>mathematical_induction</code>): scale barely helps, usually because per-example difficulty varies wildly."
+            ]},
+            {"type":"p","html":"The paper reports that on a set of hard tasks, a large fraction showed a <b>discontinuity greater than +20%</b> between the second-largest and largest model &mdash; capability jumping into existence rather than easing in. This is the concrete evidence behind the &lsquo;<b>emergent abilities</b>&rsquo; framing that dominated LLM discourse afterward (and was later debated: some argued the discontinuity is partly an artifact of harsh all-or-nothing metrics)."},
+            {"type":"quote","html":"This demonstrates that discontinuous improvements from scale are a common phenomenon on challenging few-shot language tasks."},
+            {"type":"h2","text":"Ruling out cheating"},
+            {"type":"p","html":"Whenever a model &lsquo;suddenly&rsquo; aces a hard benchmark, the first suspicion is memorization &mdash; that the test leaked into training. The authors defend the result three ways: (1) BIG-bench task files contain a unique <b>canary string</b> they verified never appears in PaLM's training data; (2) most BIG-bench tasks were newly authored and were not on the public internet when the training data was scraped; (3) they spot-checked inputs and outputs on strong tasks and manually confirmed no gold labels leaked during decoding."},
+            {"type":"p","html":"That diligence matters because it is what lets the emergence claim stand: the jumps are the model generalizing, not remembering."}
+          ]
+        },
+        {
+          "title": "Reasoning: scale meets chain-of-thought",
+          "subtitle": "How PaLM cracked grade-school math",
+          "pdfPages": [20, 21],
+          "blocks": [
+            {"type":"p","html":"The most influential result in the paper is about <b>multi-step reasoning</b> &mdash; problems where the arithmetic is trivial but the model has to chain several inferences. Consider a GSM8K grade-school word problem:"},
+            {"type":"quote","html":"Q: The cafeteria had 23 apples. If they used 20 to make lunch and bought 6 more, how many apples do they have?"},
+            {"type":"p","html":"With <b>standard prompting</b> (answer only), PaLM blurts &lsquo;The answer is 50&rsquo; &mdash; wrong. Language models had long been known to fail at exactly this kind of multi-step problem. The fix is a prompting change, not a model change."},
+            {"type":"h2","text":"Chain-of-thought prompting"},
+            {"type":"p","html":"<b>Chain-of-thought (CoT)</b> prompting means the few-shot exemplars in the prompt include the <i>worked reasoning</i>, not just the final answer. Shown a couple of examples that reason step by step, the model imitates the format and writes out its own steps before answering:"},
+            {"type":"quote","html":"The cafeteria had 23 apples originally. They used 20 to make lunch. So they had 23 - 20 = 3. They bought 6 more apples, so they have 3 + 6 = 9. The answer is 9."},
+            {"type":"p","html":"Same model, same weights, only the prompt changed &mdash; and the answer flips to correct. The intuition: forcing intermediate steps gives the model &lsquo;scratch space&rsquo;, decomposing one hard leap into several easy ones it can each get right. Only the final answer is scored, but the visible reasoning also aids error analysis."},
+            {"type":"h2","text":"The headline number: GSM8K"},
+            {"type":"p","html":"On GSM8K (grade-school math), 8-shot chain-of-thought plus a post-hoc external calculator:"},
+            {"type":"table","headers":["Model + technique","Accuracy"],"rows":[
+              ["PaLM 540B + CoT + calculator","58%"],
+              ["PaLM 540B + CoT","54%"],
+              ["PaLM 540B, no CoT","17%"],
+              ["PaLM 62B + CoT","33%"],
+              ["GPT-3 + finetune + CoT + calc + verifier","55%"]
+            ]},
+            {"type":"p","html":"Two comparisons carry the whole result. Vertically: CoT lifts PaLM 540B from <b>17% to 54%</b> &mdash; the reasoning was latent in the model and prompting unlocked it. Against the prior SOTA: that 55% from Cobbe et al. (2021) required a <b>finetuned</b> GPT-3 <i>plus</i> a specially-trained <b>verifier</b> model to rank candidate solutions. PaLM's 58% needed <b>neither</b> &mdash; just an off-the-shelf few-shot model prompted to think aloud. A hand-built reasoning pipeline was beaten by scale and a prompt."},
+            {"type":"p","html":"Scale is essential to the effect: PaLM 62B + CoT gets only 33%. The authors analyzed 150 GSM8K problems that 62B got wrong and found scaling to 540B fixed a large share of every error category &mdash; semantic-understanding errors, one-step-missing errors, and other (hallucination, repetition, symbol errors). CoT is the key that opens the lock, but 540B is the lock worth opening."},
+            {"type":"p","html":"This section, together with Wei et al. (2022b), is why chain-of-thought became the default way to elicit reasoning from LLMs and seeded the entire line of work &mdash; self-consistency, least-to-most, and ultimately the reasoning-trained models &mdash; that followed."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Significance",
+      "pages": [
+        {
+          "title": "What PaLM settled and what it started",
+          "subtitle": "Its place in the scaling story",
+          "pdfPages": [1, 15, 21],
+          "blocks": [
+            {"type":"p","html":"PaLM's lasting importance is less any single benchmark and more the three questions it answered at a moment when they were genuinely open."},
+            {"type":"h2","text":"1. Scale had not saturated"},
+            {"type":"p","html":"Going from GPT-3's 175B to 540B kept paying off &mdash; NLU average rose across every size step, and 540B set state of the art on 28 of 29 few-shot tasks. This kept the industry's scale-up trajectory credible for another generation of models, even as Chinchilla simultaneously argued the compute should be spent on more tokens rather than more parameters. Read together, PaLM and Chinchilla define the two axes of the 2022 scaling debate."},
+            {"type":"h2","text":"2. Some abilities are emergent"},
+            {"type":"p","html":"The discontinuous BIG-bench jumps gave hard evidence that certain capabilities appear abruptly at scale rather than growing smoothly. This reframed how the field talked about progress &mdash; from &lsquo;models get a bit better&rsquo; to &lsquo;new abilities switch on&rsquo; &mdash; and drove both the excitement and the safety concern that you cannot fully predict a bigger model's behavior from a smaller one. (The claim was later contested as partly a metric artifact, but the discussion it started was central.)"},
+            {"type":"h2","text":"3. Reasoning is a prompting problem, not just a training problem"},
+            {"type":"p","html":"Chain-of-thought turning 17% into 54% on GSM8K showed that a base model already <i>contains</i> reasoning ability that the right prompt can surface. This launched the prompting-and-reasoning research wave and pointed directly at the reasoning-focused models that followed."},
+            {"type":"h2","text":"Engineering and legacy"},
+            {"type":"list","items":[
+              "Its architecture choices &mdash; <b>SwiGLU, RoPE, multi-query/grouped-query attention, parallel layers, no biases</b> &mdash; became the default modern LLM stack; open models like LLaMA adopt nearly the same set.",
+              "The <b>Pathways</b> two-pod, pipeline-free training and 46.2% MFU showed dense models could scale efficiently on commodity accelerators, setting an efficiency bar.",
+              "The honest reporting of <b>loss spikes</b> and the rewind-and-skip fix became a reference point for anyone training at frontier scale.",
+              "PaLM directly seeded <b>PaLM 2</b> and Google's <b>Med-PaLM</b>, and its recipe informed the models that came after."
+            ]},
+            {"type":"p","html":"The paper is not shy about limitations: it devotes real space to <b>bias and toxicity</b> analysis (gender/occupation bias, stereotype affirmation on race/religion prompts, higher toxicity in continuations at 62B/540B) and to <b>memorization</b> versus scale. That candor &mdash; publishing the failure modes alongside the records &mdash; is part of why PaLM reads as a milestone rather than just a leaderboard entry."}
+          ]
+        }
+      ]
+    }
+  ]
+}

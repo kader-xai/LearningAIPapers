@@ -1,0 +1,174 @@
+{
+  "title": "The Pile: An 800GB Dataset of Diverse Text for Language Modeling",
+  "authors": "Gao, Biderman, Black, et al. (EleutherAI)",
+  "year": "2020",
+  "venue": "arXiv:2101.00027",
+  "sections": [
+    {
+      "title": "Abstract & Motivation",
+      "pages": [
+        {
+          "title": "Why build another dataset?",
+          "subtitle": "Diversity as the missing ingredient",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"By 2020, the recipe for a strong language model was well understood: take a Transformer, make it big, and feed it an enormous pile of text. The <i>text</i> part had converged on one dominant source — <b>Common Crawl</b>, a monthly web scrape of billions of pages. GPT-3 (Brown et al., 2020) and T5 (Raffel et al., 2019) were both trained largely on filtered Common Crawl. Web text is abundant and free, but it is also messy, repetitive, and skewed toward the kind of writing that ends up on the open internet: forum posts, product pages, news, blogs. What it lacks is <i>depth</i> in specialized domains."},
+            {"type":"p","html":"The Pile's central claim is stated in the very first sentence of the abstract: <b>diversity of training data improves a model's general cross-domain knowledge and its ability to generalize to new domains.</b> If you want a model that can reason about a biology paper, a legal opinion, a GitHub commit, and a Shakespeare play, the argument goes, you should train it on all of those things — not just on whatever the web happens to contain."},
+            {"type":"quote","html":"Recent work has demonstrated that increased training dataset diversity improves general cross-domain knowledge and downstream generalization capability for large-scale language models. With this in mind, we present the Pile: an 825 GiB English text corpus targeted at training large-scale language models."},
+            {"type":"p","html":"Concretely, the Pile is <b>825.18 GiB</b> of English text assembled from <b>22 distinct sub-datasets</b>. Fourteen of them are newly constructed for this paper; the rest are existing corpora folded in. The list reads like a tour of human knowledge: PubMed biomedical papers, arXiv preprints in LaTeX, all of GitHub's public code, the US Patent Office, Stack Exchange Q&amp;A, court opinions from the Free Law Project, Project Gutenberg books, YouTube subtitles, and even the Enron email dump."},
+            {"type":"p","html":"There is a second, quieter contribution that mattered just as much historically: <b>the Pile is open.</b> GPT-3's training set was described in a paper but never released. EleutherAI — a grassroots collective, not a corporate lab — released the Pile publicly along with the construction code, so that anyone could train a GPT-3-scale model on a documented, reproducible corpus. This is what turned it into the default open pretraining set."},
+            {"type":"p","html":"The paper does two things at once: it <i>builds</i> the corpus, and it <i>evaluates existing models</i> on it. When they run GPT-2 and GPT-3 (which never saw the Pile) across its 22 components, those models struggle badly on academic writing, code, and symbolic math — direct evidence that the mainstream web-trained models had blind spots the Pile was designed to fill."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Composition",
+      "pages": [
+        {
+          "title": "22 datasets, deliberately weighted",
+          "subtitle": "What goes in, and how much",
+          "pdfPages": [2, 3],
+          "blocks": [
+            {"type":"p","html":"A dataset is not just a bag of text — it is a set of <b>proportions</b>. If 90% of your corpus is web pages, the model spends 90% of its learning budget on web pages, no matter how much biomedical text you also included. So the interesting design decisions in the Pile are not just <i>what</i> is in it, but <i>how heavily each piece is weighted.</i>"},
+            {"type":"p","html":"Table 1 lays this out. Each component has a <b>Raw Size</b> (how much text actually exists), a number of <b>Epochs</b> (how many times it is repeated in one pass over the Pile), and an <b>Effective Size</b> (raw size multiplied by epochs). High-quality sources are <i>up-sampled</i> — deliberately repeated — so they punch above their raw weight. Following Brown et al. (2020), Wikipedia is seen up to 3 times per epoch."},
+            {"type":"table","headers":["Component","Raw Size","Epochs","Effective Size","% Weight"],"rows":[
+              ["Pile-CC (filtered web)","227.12 GiB","1.0","227.12 GiB","18.11%"],
+              ["PubMed Central","90.27 GiB","2.0","180.55 GiB","14.40%"],
+              ["Books3","100.96 GiB","1.5","151.44 GiB","12.07%"],
+              ["OpenWebText2","62.77 GiB","2.0","125.54 GiB","10.01%"],
+              ["ArXiv","56.21 GiB","2.0","112.42 GiB","8.96%"],
+              ["GitHub","95.16 GiB","1.0","95.16 GiB","7.59%"],
+              ["FreeLaw","51.15 GiB","1.5","76.73 GiB","6.12%"],
+              ["Stack Exchange","32.20 GiB","2.0","64.39 GiB","5.13%"],
+              ["Wikipedia (en)","6.38 GiB","3.0","19.13 GiB","1.53%"],
+              ["Enron Emails","0.88 GiB","2.0","1.76 GiB","0.14%"]
+            ]},
+            {"type":"p","html":"Read the table this way. <b>Raw Size</b> is the input on disk. <b>Epochs</b> is the repeat factor — note GitHub, at 95 GiB, gets only 1.0 epoch (it is large but not maximally trusted), while Wikipedia's tiny 6.38 GiB is repeated 3× because it is clean, expository, and multi-domain. <b>Effective Size</b> = Raw × Epochs, and the <b>% Weight</b> is that component's share of the final 1254.20 GiB of effective bytes the model actually trains on. So Wikipedia goes from 0.5% of raw bytes to 1.53% of training exposure."},
+            {"type":"p","html":"Notice the shape of the corpus. The single biggest slice, <b>Pile-CC</b>, is still web text — but it is a <i>re-extracted</i> Common Crawl. Instead of using Common Crawl's pre-extracted plaintext (WET files), EleutherAI ran the <code>jusText</code> extractor on the raw HTML (WARC files), which strips boilerplate menus and ads far better and yields cleaner prose. Web text is unavoidable at scale; the Pile just makes it a minority (18%) rather than the whole meal."},
+            {"type":"p","html":"The other structural choice is <b>mean document size</b>, which varies wildly. PubMed Abstracts average 1.30 KiB (a paragraph), while Project Gutenberg books average 398.73 KiB and Ubuntu IRC logs 545.48 KiB. That long-document tail is deliberate: the paper argues books are <q>invaluable for long-range context modeling research and coherent storytelling</q>. A model that only ever sees short web snippets never learns to hold a thread across tens of thousands of tokens."},
+            {"type":"p","html":"Figure 1 groups the 22 sources into five buckets — <b>Academic</b> (PubMed, arXiv, FreeLaw, USPTO, PhilPapers, NIH), <b>Internet</b> (Pile-CC, OpenWebText2, Stack Exchange, Wikipedia), <b>Prose</b> (Books3, Gutenberg, BookCorpus2), <b>Dialogue</b> (subtitles, IRC, HackerNews, EuroParl), and <b>Misc</b> (GitHub, DM Mathematics, Enron). The academic bucket is enormous by design — that is the diversity that GPT-3's web diet was missing."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Sources",
+      "pages": [
+        {
+          "title": "A guided tour of the sources",
+          "subtitle": "Why each domain earns its place",
+          "pdfPages": [3, 4],
+          "blocks": [
+            {"type":"p","html":"Each sub-dataset was chosen because it teaches the model a <i>skill</i> or a <i>domain</i> that generic web text underrepresents. The paper documents the provenance and rationale of every one — a level of data documentation almost unheard of at the time, when most large models simply said \"filtered Common Crawl\" and moved on. Here is the reasoning behind the load-bearing pieces."},
+            {"type":"list","items":[
+              "<b>PubMed Central (14.4%)</b> — full-text biomedical articles from the NIH repository. Inclusion is mandated for NIH-funded research since 2008, so it is a huge, legally clean, high-quality medical corpus. Purpose: give the model real medical knowledge, not WebMD summaries.",
+              "<b>ArXiv (8.96%)</b> — preprints in Math, CS, and Physics, kept in their raw <b>LaTeX</b> source. The authors explicitly wanted a model that can read and write LaTeX and absorb technical reasoning: <q>Training a language model to be able to generate papers written in LaTeX could be a huge boon to the research community.</q>",
+              "<b>GitHub (7.59%)</b> — a large corpus of open-source code. The motivation is a striking observation: GPT-3 could already write plausible code <i>despite its training data containing no explicitly gathered code</i>. The Pile makes that ability deliberate rather than accidental.",
+              "<b>FreeLaw (6.12%)</b> — millions of US court opinions from the Free Law Project's CourtListener, entirely public domain. Legal English is a distinct register the web underrepresents.",
+              "<b>Stack Exchange (5.13%)</b> — the full anonymized data dump of question-and-answer threads, spanning <q>from programming, to gardening, to Buddhism</q>. Purpose: improve downstream question-answering across many domains.",
+              "<b>USPTO Backgrounds (3.65%)</b> — the background sections of granted patents: technical writing on applied subjects, aimed at a non-technical reader.",
+              "<b>Books3 &amp; BookCorpus2 &amp; Gutenberg (PG-19)</b> — long-form fiction and non-fiction for coherent, long-range narrative. Books3 alone is 100 GiB, nearly an order of magnitude larger than the next book set."
+            ]},
+            {"type":"p","html":"A few sources are there for texture rather than volume. <b>Enron Emails</b> (0.14%) is included specifically because email is a <q>modality... typically not found in any of our other datasets</q> — the model needs to have seen at least some real correspondence. <b>DM Mathematics</b> is synthetically generated math problems, included to build symbolic and arithmetic ability. <b>Ubuntu IRC</b>, <b>HackerNews</b>, and <b>YouTube subtitles</b> supply spontaneous, conversational, spoken-style text."},
+            {"type":"p","html":"The design philosophy is subtractive as much as additive. Any single source has a characteristic bias — arXiv is dense and equation-heavy, Enron is terse and business-like, Gutenberg is archaic. Blend twenty-two of them and no single bias dominates; the idiosyncrasies partially cancel, and what remains is a broad, balanced picture of written English. That is the whole diversity thesis, made concrete in a table."},
+            {"type":"p","html":"<b>Trivia and provenance.</b> Datasets marked with a dagger in Table 1 (Books3, Gutenberg, OpenSubtitles, Wikipedia, DM Mathematics, EuroParl, Enron) are used with minimal preprocessing from prior work. Books3 was assembled by co-author Shawn Presser from the Bibliotik tracker — a choice that later drew copyright scrutiny and, years on, led to Books3 being removed from some redistributions. The careful per-dataset documentation the Pile pioneered is exactly what made those provenance questions <i>answerable</i>."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The BPB metric",
+      "pages": [
+        {
+          "title": "Measuring in bits per byte, not perplexity",
+          "subtitle": "A metric that survives different tokenizers",
+          "pdfPages": [6],
+          "blocks": [
+            {"type":"p","html":"Here is a subtle problem that any multi-dataset benchmark must solve. The usual language-modeling score is <b>perplexity</b> — roughly, how surprised the model is by the next token. But perplexity is measured <i>per token</i>, and two models can chop text into tokens completely differently. GPT-2's tokenizer might split a LaTeX equation into 40 tokens while a character-level model uses 200. Comparing their per-token surprise is apples to oranges. Worse, \"per character\" is ambiguous too, because a single Unicode character can be one byte or four."},
+            {"type":"p","html":"The Pile's answer is to normalize by something every model agrees on: <b>bytes of UTF-8 text.</b> The preferred metric is <b>bits per byte (BPB)</b> — how many bits of information the model needs, on average, to encode one byte of the raw file. Bytes are tokenizer-independent, so BPB lets you compare GPT-2, GPT-3, and any future model on exactly the same footing."},
+            {"type":"quote","html":"Bits per byte is preferred over bits per character or perplexity when using Pile as a metric due to its invariance to different tokenization schemes and the ambiguity of measuring characters in Unicode."},
+            {"type":"math","tex":"\\text{BPB} = \\frac{L_T}{L_B}\\,\\log_2\\!\\left(e^{\\ell}\\right) = \\frac{L_T}{L_B}\\cdot\\frac{\\ell}{\\ln(2)}"},
+            {"type":"p","html":"Reading it term by term. $\\ell$ is the model's <b>negative log-likelihood loss</b> per token — the natural-log surprise it reports during evaluation (this is exactly the cross-entropy loss you train on). $L_T$ is the length of the dataset <b>in tokens</b>, and $L_B$ is its length <b>in UTF-8 bytes</b>; both are just counts of the same text measured two ways. The ratio $L_T / L_B$ converts \"per token\" into \"per byte.\" The factor $1/\\ln(2)$ converts natural-log <i>nats</i> into <i>bits</i> (base-2), because information is conventionally measured in bits."},
+            {"type":"p","html":"So the recipe is: run the model, read off its average loss $\\ell$ in nats-per-token, multiply by the tokens-per-byte ratio to get nats-per-byte, then divide by $\\ln 2$ to get bits-per-byte. The paper measures $L_T / L_B \\approx 0.29335$ across the whole Pile — i.e. the GPT-2 tokenizer produces about 0.293 tokens per byte, or equivalently one token per ~3.4 bytes of English text."},
+            {"type":"p","html":"<b>Why this matters for the results.</b> Because BPB is tokenizer-invariant, the numbers in Table 2 are directly comparable across a model that consumes LaTeX efficiently and one that doesn't. A component like GitHub or DM Mathematics, where GPT-2's tokenizer is inefficient (many tokens per byte), would look artificially good or bad under raw perplexity; BPB corrects for that automatically. Lower BPB is better — it means fewer bits of surprise per byte of real text."},
+            {"type":"p","html":"One more methodological detail with big consequences: perplexity is computed <b>per document, independently</b>, not by concatenating everything into one giant stream. Documents are evaluated on their own so the metric reflects how well the model handles each domain in isolation, rather than letting long common-crawl runs dominate."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Diagnosing GPT-3",
+      "pages": [
+        {
+          "title": "Where GPT-2 and GPT-3 fall down",
+          "subtitle": "Using the Pile as an X-ray of existing models",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type":"p","html":"Before training anything new, the authors turn the Pile into a diagnostic tool. They evaluate <b>every public GPT-2 size</b> (small through XL) and <b>all four GPT-3 sizes</b> served by the OpenAI API — <code>ada</code>, <code>babbage</code>, <code>curie</code>, <code>davinci</code>, assumed to be 2.7B, 6.7B, 13B, and 175B parameters — on each of the 22 components. None of these models ever saw the Pile, so this is a pure <b>zero-shot</b> probe of what web-trained models know."},
+            {"type":"p","html":"Table 2 reports the BPB of each model on each component. The pattern is what the diversity thesis predicts: even the largest model, GPT-3 davinci, does <i>well</i> on web-like text and <i>badly</i> on everything the web underrepresents. The best BPB (lower is better) on Pile-CC is 0.7070 and on OpenWebText2 is 0.6242 — but on the specialized domains it climbs sharply."},
+            {"type":"table","headers":["Component","GPT-3 davinci BPB","Character"],"rows":[
+              ["OpenWebText2","0.6242","web text — easiest"],
+              ["Wikipedia (en)","0.5953","clean, seen in training"],
+              ["Github","0.5635","code — but see caveat"],
+              ["ArXiv","0.7702","academic LaTeX — hard"],
+              ["Stack Exchange","0.7321","technical Q&A"],
+              ["HackerNews","0.9457","niche discussion"],
+              ["Ubuntu IRC","0.9915","raw chat logs"],
+              ["Enron Emails","1.0201","email — hardest"],
+              ["DM Mathematics","2.0228","symbolic math — worst"]
+            ]},
+            {"type":"p","html":"The numbers tell a clean story. DM Mathematics at 2.02 BPB is more than <b>three times</b> the surprise per byte of OpenWebText2 — symbolic math is almost a foreign language to a web-trained model. Academic writing (ArXiv 0.77, PubMed Central 0.65) and domain-specific text (FreeLaw, HackerNews, USPTO) all sit well above the web baseline. The paper concludes GPT-3 <q>appears to perform poorly on datasets pertaining to research or academic writing... domain-specific datasets... and on datasets containing predominantly text distinct from natural language, like GitHub and DM Mathematics.</q>"},
+            {"type":"p","html":"To sharpen this into a single ranking, they define a relative metric $\\Delta_{\\text{set}}$ that measures how much <i>harder</i> each component is for GPT-3 than for a GPT-2-sized model trained on the Pile, normalized so that OpenWebText2 is zero:"},
+            {"type":"math","tex":"\\Delta_{\\text{set}} = \\left(L^{\\text{GPT3}}_{\\text{set}} - L^{\\text{GPT3}}_{\\text{owt2}}\\right) - \\left(L^{\\text{GPT2Pile}}_{\\text{set}} - L^{\\text{GPT2Pile}}_{\\text{owt2}}\\right)"},
+            {"type":"p","html":"Term by term: $L^{\\text{GPT3}}_{\\text{set}}$ is GPT-3's loss on a given component, and $L^{\\text{GPT3}}_{\\text{owt2}}$ is its loss on OpenWebText2 — the first bracket is how much <i>worse</i> GPT-3 does on that component than on familiar web text. The second bracket is the same gap for a GPT-2-sized model trained on the Pile, which serves as a control for the component's <i>intrinsic</i> difficulty. Subtracting the two isolates the part of the difficulty that comes from GPT-3's training-data blind spot, not from the domain just being hard for everyone. A large positive $\\Delta_{\\text{set}}$ flags a component GPT-3 would most benefit from training on."},
+            {"type":"p","html":"Figure 3 ranks the components by this measure. At the top — the domains GPT-3 is missing most — sit <b>DM Mathematics, Enron Emails, PubMed Central, GitHub, and ArXiv.</b> As a sanity check, datasets that GPT-3 essentially <i>did</i> train on (Books3, Wikipedia, Pile-CC, Gutenberg) score near zero: the metric correctly says GPT-3 has nothing to gain there. This is the paper's evidence that the Pile's academic and code components are genuinely <i>non-redundant</i> with GPT-3's web-based diet."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Evaluation",
+      "pages": [
+        {
+          "title": "Does training on the Pile actually help?",
+          "subtitle": "A controlled head-to-head against Common Crawl",
+          "pdfPages": [8, 9],
+          "blocks": [
+            {"type":"p","html":"Diagnosing GPT-3's gaps is suggestive, but the real test is: if you <i>train a fresh model on the Pile</i>, does it beat a model trained on ordinary web data? To answer cleanly, the authors train three architecturally-identical <b>1.3-billion-parameter</b> models (matching the GPT-3 design) on three different datasets and compare them."},
+            {"type":"p","html":"The three training sets are <b>the Pile</b>, <b>CC-100 (en)</b> (a well-known filtered-Common-Crawl corpus), and <b>raw CC</b> (Common Crawl WET files filtered only for English). The critical fairness move: all three are <b>downsampled to ~40 GB</b> so that <i>dataset size is held constant</i>. Any difference is due to <b>composition</b>, not to one model simply seeing more text. The authors note this is actually <i>generous</i> to CC-100, since the real Pile is about 3× larger."},
+            {"type":"p","html":"They also <b>decontaminate</b> — remove any test-set text that leaks into training — using the same 13-gram overlap filter as GPT-3, so the evaluation isn't inflated by memorization. The models are then scored on two standard benchmarks (WikiText and LAMBADA) plus the Pile itself as a cross-domain generalization measure."},
+            {"type":"table","headers":["Trained on","Pile test (BPB)","WikiText (PPL)","LAMBADA (PPL)","LAMBADA (ACC)"],"rows":[
+              ["The Pile","0.9433","5.59","12.78","50.1"],
+              ["CC-100 (en)","1.3293","8.27","11.78","49.7"],
+              ["Raw CC","1.1275","11.75","19.84","43.8"]
+            ]},
+            {"type":"p","html":"Read the table with \"lower is better\" for BPB and perplexity (PPL), \"higher is better\" for accuracy (ACC). The headline: the Pile-trained model reaches <b>0.9433 BPB</b> on the Pile test set versus <b>1.3293</b> for CC-100 — a large margin, exactly as expected since only the Pile model has seen academic and code text. But crucially it also <i>wins on the traditional benchmarks it wasn't specialized for</i>: WikiText perplexity of <b>5.59 vs 8.27</b> for CC-100 and 11.75 for raw CC. Diversity didn't cost it anything on the standard tasks; it helped."},
+            {"type":"p","html":"LAMBADA (predicting the last word of a passage, testing long-range coherence) is the one near-tie: CC-100 edges the Pile on perplexity (11.78 vs 12.78), but the Pile leads on accuracy (50.1 vs 49.7). The paper's summary is that the Pile <q>improves significantly on WikiText and shows negligible changes in LAMBADA</q> — i.e. you gain broad cross-domain ability essentially for free."},
+            {"type":"p","html":"The most instructive surprise is buried in the raw-CC row. <b>Raw, barely-filtered Common Crawl (1.1275 BPB) beats the heavily-filtered CC-100 (1.3293) on the Pile.</b> The authors' explanation is a warning about over-filtering: CC-100 uses a perplexity filter that trains a model on Wikipedia and discards anything too different from it. That throws away exactly the diverse, unusual text that makes a corpus general — the filter optimizes for looking like Wikipedia and, in doing so, <q>severely limits the diversity of the collected data.</q> Aggressive quality-filtering can quietly destroy the very diversity you want."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. Scaling & Impact",
+      "pages": [
+        {
+          "title": "A scaling law with no plateau",
+          "subtitle": "And why the Pile became the open standard",
+          "pdfPages": [6, 9],
+          "blocks": [
+            {"type":"p","html":"Kaplan et al. (2020) had shown that model loss falls as a smooth power law in model size. The Pile authors check whether that law holds when GPT-2/3 models are evaluated on the Pile — a corpus they never trained on. If diverse held-out text broke the scaling law, that would be bad news for the whole \"just make it bigger\" program."},
+            {"type":"p","html":"Figure 2 plots Pile test BPB against parameter count on log axes for all the GPT-2 and GPT-3 sizes. The points fall on a clean straight line — a power law — with a fitted slope (coefficient) of <b>-0.1674</b> and intercept <b>2.5516</b>. The negative slope means bigger models get steadily lower BPB, and, importantly, <b>the line shows no sign of flattening</b> even out toward 175B parameters."},
+            {"type":"quote","html":"Interestingly, while GPT-2 and GPT-3 were not trained on the Pile, there still appears to be a clear scaling law without diminishing returns. We hypothesize that this is due to the inherent generalization capability of these models."},
+            {"type":"p","html":"Why does this matter? It says the benefits of scale <i>transfer</i> to out-of-distribution, diverse text. A bigger model isn't just memorizing web patterns better; it is getting genuinely better at modeling text it has never seen the likes of. That is precisely the generalization property the Pile was built to encourage and to measure — the corpus doubles as a broad-coverage benchmark, not just a training set."},
+            {"type":"h2","text":"What the Pile became"},
+            {"type":"p","html":"The Pile's real legacy is infrastructural. Because it was open, documented, and reproducible, it became the <b>default pretraining corpus for the open-source LLM movement</b> that grew up in GPT-3's shadow. EleutherAI's own <b>GPT-Neo</b> (2.7B) and <b>GPT-J</b> (6B) were trained on it — the first freely-downloadable models approaching GPT-3-scale. Later, the <b>Pythia</b> suite (2023) trained a whole ladder of model sizes on the Pile specifically to enable controlled interpretability and training-dynamics research, which only works because the exact training data is public and fixed."},
+            {"type":"p","html":"It also set a norm. The Pile's per-dataset documentation of provenance, size, weighting, and preprocessing was far ahead of the \"filtered Common Crawl\" hand-wave that preceded it, and it presaged the datasheets-and-data-cards practices that later became standard. When copyright questions eventually surfaced around Books3, they were <i>traceable</i> precisely because the paper documented where every gigabyte came from."},
+            {"type":"p","html":"The through-line from this paper to everything after: <b>data composition is a first-class design decision, diversity generalizes, and open + documented data is what makes reproducible science on large models possible.</b> Successor corpora — ROOTS (BLOOM), RedPajama, Dolma, and others — all inherit the Pile's core moves: mix many curated sources, weight them deliberately, and write down exactly what you did."}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "title": "Train Short, Test Long: Attention with Linear Biases (ALiBi)",
+  "authors": "Press, Smith, Lewis",
+  "year": "2021",
+  "venue": "arXiv:2108.12409",
+  "sections": [
+    {
+      "title": "Abstract",
+      "pages": [
+        {
+          "title": "The problem: models can't test longer than they trained",
+          "subtitle": "Why a transformer trained on 1024 tokens falls apart at 3000",
+          "pdfPages": [1],
+          "blocks": [
+            {"type":"p","html":"Imagine you trained a language model by only ever showing it paragraphs of at most 1024 words. Then, at deployment, you feed it a 4000-word document. A good model should keep working — maybe not perfectly, but gracefully. In practice, standard transformers do the opposite: their quality <i>collapses</i>. Perplexity (a measure of how surprised the model is by the next word; lower is better) shoots up dramatically the moment the input is even slightly longer than what it saw in training."},
+            {"type":"p","html":"This paper, by <b>Ofir Press</b>, <b>Noah A. Smith</b>, and <b>Mike Lewis</b> (University of Washington, Facebook AI Research, and the Allen Institute for AI), asks a question that had gone unanswered since the transformer was introduced in 2017: <i>how do we make a transformer trained on short sequences still work on much longer ones at inference time?</i> They call this ability <b>extrapolation</b> — continuing to perform well as the number of input tokens at validation grows beyond the number seen during training."},
+            {"type":"h2","text":"The culprit is the position method"},
+            {"type":"p","html":"A transformer, on its own, has no idea about word <i>order</i> — attention is a set operation, so \"dog bites man\" and \"man bites dog\" look identical to it. To fix this, the original transformer added <b>position embeddings</b> (sinusoidal vectors encoding each token's absolute position) to the word embeddings. The authors' key diagnosis: this failure to extrapolate is caused by the position method itself. Swap the position method and extrapolation changes drastically."},
+            {"type":"p","html":"They surveyed the alternatives — sinusoidal, rotary, and the T5 relative bias — and found the T5 bias extrapolates best. But the T5 bias is <i>slow and memory-hungry</i>. So the paper introduces something simpler and cheaper that beats them all: <b>Attention with Linear Biases (ALiBi)</b>."},
+            {"type":"h2","text":"The ALiBi idea in one sentence"},
+            {"type":"quote","html":"ALiBi does not add positional embeddings to word embeddings; instead, it biases query-key attention scores with a penalty that is proportional to their distance."},
+            {"type":"p","html":"That is the entire method. No position vectors anywhere. Just subtract a small penalty from each attention score — bigger penalty for tokens that are farther apart — so the model naturally favors recent, nearby tokens. This gives it what the authors call an <b>inductive bias towards recency</b>."},
+            {"type":"p","html":"The headline result: a 1.3-billion-parameter model trained on sequences of length <b>1024</b> matches the perplexity of a sinusoidal model trained on length <b>2048</b>, while training <b>11% faster</b> and using <b>11% less memory</b>. And on the WikiText-103 benchmark, ALiBi's recency bias makes it <i>outperform</i> multiple strong position methods even without any length extrapolation."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "2. Why current methods fail",
+      "pages": [
+        {
+          "title": "Sinusoidal, rotary, and the expensive T5 bias",
+          "subtitle": "Ranking the existing position methods by how far they extrapolate",
+          "pdfPages": [2, 4],
+          "blocks": [
+            {"type":"p","html":"Before proposing anything new, the authors ran a careful bake-off. They took one fixed transformer language model (the Baevski &amp; Auli architecture) trained on WikiText-103, and swapped <i>only</i> the position method, holding everything else constant. Then they measured perplexity as they fed the model longer and longer validation sequences. Figure 1 in the paper tells the whole story: three of the four methods curve sharply upward (bad) as inputs grow; only ALiBi stays flat."},
+            {"type":"h2","text":"Sinusoidal — the original, and the worst at extrapolating"},
+            {"type":"p","html":"Sinusoidal embeddings (Vaswani et al., 2017) encode absolute position with sine and cosine waves of different frequencies, added to the word embeddings at the very bottom of the network. In principle these functions are defined for any position, so they <i>should</i> extrapolate. In practice the authors show they barely do — perplexity degrades almost immediately past the training length. A model trained on 512 tokens is nearly unusable at 600."},
+            {"type":"h2","text":"Rotary — better, but still not satisfying"},
+            {"type":"p","html":"The <b>rotary</b> method (Su et al., 2021; popularized by GPT-J) instead <i>rotates</i> the query and key vectors by an angle that depends on position, injecting position information at <i>every</i> attention layer rather than just the first, and never touching the value vectors. The authors note this segregation of position from values may help extrapolation — an insight they borrow for ALiBi. Rotary does improve over sinusoidal: an L=512 model gains up to about 200 extra usable tokens. But it comes at a cost of slower training and inference, and it still stops extrapolating fairly soon."},
+            {"type":"h2","text":"T5 bias — best extrapolation, worst efficiency"},
+            {"type":"p","html":"The <b>T5 bias</b> (Raffel et al., 2020) is a relative-position method. It adds no position embeddings; instead, it adds a <i>learned scalar</i> to each query-key attention score, and that scalar depends only on the distance between the query and the key. Same-token pairs (distance 0) share one learned bias, one-apart pairs share another, and so on — with far-apart distances eventually bucketed together (which itself may help extrapolation)."},
+            {"type":"p","html":"The authors are the first to show the T5 bias actually lets a language model extrapolate — an L=512 model keeps improving for ~600 extra tokens. But there is a catch, and it is the whole motivation for ALiBi:"},
+            {"type":"quote","html":"training is at least twice as slow as with the sinusoidal model. Therefore, this model's extrapolation ability provides no efficiency advantage."},
+            {"type":"p","html":"Concretely: an L=1024 sinusoidal model runs at 28.5k words/second, while an L=512 T5-bias model that extrapolates to 1024 runs at just 14.4k words/second. You extrapolate, but you pay it all back in slowness. ALiBi is designed to get the T5 bias's extrapolation without any of its cost."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "3. The ALiBi Method",
+      "pages": [
+        {
+          "title": "How attention normally computes scores",
+          "subtitle": "The baseline you need before you can see what ALiBi changes",
+          "pdfPages": [5],
+          "blocks": [
+            {"type":"p","html":"To understand the one thing ALiBi changes, you first need the standard attention score. Inside each attention head, for the <i>i</i>-th query, the model compares that query against all the keys it is allowed to see and turns those comparisons into a probability distribution with a softmax."},
+            {"type":"math","tex":"\\text{softmax}(\\mathbf{q}_i \\mathbf{K}^\\top)"},
+            {"type":"p","html":"Reading this term by term: $\\mathbf{q}_i \\in \\mathbb{R}^{1 \\times d}$ is the query vector for token <i>i</i>, where <i>d</i> is the per-head dimension. $\\mathbf{K} \\in \\mathbb{R}^{i \\times d}$ stacks the first <i>i</i> key vectors — only the first <i>i</i> because a language model uses a <b>causal mask</b>: token <i>i</i> may attend only to tokens 1 through <i>i</i> (itself and everything to its left), never to the future. The product $\\mathbf{q}_i \\mathbf{K}^\\top$ is a length-<i>i</i> row of raw <b>attention scores</b> — one dot product per key, measuring how relevant each earlier token is to the current query. The <b>softmax</b> turns those raw scores into weights that sum to 1."},
+            {"type":"p","html":"Those weights are then used to take a weighted average of the value vectors, producing the head's output. That is standard attention. Crucially, in this equation there is <i>nothing about position</i> — which is exactly why the unmodified transformer needs position embeddings bolted on at the bottom of the network."},
+            {"type":"p","html":"A subtle detail the authors flag: in the real transformer this dot product is divided by $\\sqrt{d}$ (a scaling factor for numerical stability). To keep the exposition clean they omit it here — and, importantly, they will <i>not</i> apply that scaling to the ALiBi bias they are about to add."}
+          ]
+        },
+        {
+          "title": "ALiBi: add a static linear distance penalty",
+          "subtitle": "The full method, the equation, and every symbol in it",
+          "pdfPages": [5],
+          "blocks": [
+            {"type":"p","html":"Here is the whole method. When using ALiBi, you add <i>no</i> position embeddings anywhere in the network. The only change is a single term added to the attention scores just before the softmax:"},
+            {"type":"math","tex":"\\text{softmax}\\big(\\mathbf{q}_i \\mathbf{K}^\\top + m \\cdot [-(i-1), \\ldots, -2, -1, 0]\\big)"},
+            {"type":"p","html":"Reading it term by term. $\\mathbf{q}_i \\mathbf{K}^\\top$ is the same length-<i>i</i> row of raw attention scores from the previous page. The new piece is $m \\cdot [-(i-1), \\ldots, -2, -1, 0]$: a fixed vector of distances, scaled by a scalar $m$. That vector is <b>0 for the current token</b> (rightmost, distance 0), <b>−1 for the token one step back</b>, <b>−2 for two steps back</b>, and so on up to $-(i-1)$ for the very first token. So it penalizes each attention score in linear proportion to how far away that key is from the query."},
+            {"type":"p","html":"The scalar <b>m</b> is a <b>head-specific slope</b>. It is <i>fixed before training and never learned</i> — it is not a parameter the model updates. It just controls how steeply that particular head discounts distant tokens: a large <i>m</i> means the head only looks at very nearby tokens; a small <i>m</i> means it discounts distance gently and can look far back."},
+            {"type":"p","html":"Picture it as a matrix (the paper's Figure 3): on the left, the usual grid of query-key scores $\\mathbf{q}_i \\cdot \\mathbf{k}_j$; on the right, a fixed lower-triangular grid of biases whose values are 0 on the diagonal and grow more negative as you move left (0, then a row of −1, 0, then −2, −1, 0, and so on), the whole grid multiplied by <i>m</i>. You literally just add the two grids together, then softmax as usual. The rest of the transformer is untouched."},
+            {"type":"h2","text":"A worked mini-example"},
+            {"type":"p","html":"Suppose a head has slope $m = 0.25$, and the current token (position 5) produced raw scores $[2.0, 2.0, 2.0, 2.0, 2.0]$ for the five tokens it can see (positions 1–5, left to right). ALiBi adds $0.25 \\times [-4, -3, -2, -1, 0] = [-1.0, -0.75, -0.5, -0.25, 0]$, giving biased scores $[1.0, 1.25, 1.5, 1.75, 2.0]$. Even though every token was equally relevant on the raw dot product, after the bias the softmax now favors the <i>nearest</i> tokens and mostly ignores the far-left one. That is the recency bias, made concrete."},
+            {"type":"h2","text":"How the slopes are chosen"},
+            {"type":"p","html":"For a model with <b>8 heads</b>, the slopes are the geometric sequence $\\tfrac{1}{2^1}, \\tfrac{1}{2^2}, \\ldots, \\tfrac{1}{2^8}$ — i.e. start at $\\tfrac{1}{2}$ and keep halving. For <b>16 heads</b>, they interpolate by starting at $2^{-0.5}$ and using that same value as the ratio: $\\tfrac{1}{2^{0.5}}, \\tfrac{1}{2^1}, \\tfrac{1}{2^{1.5}}, \\ldots, \\tfrac{1}{2^8}$. In general, for <i>n</i> heads, the slopes form a geometric sequence starting at $2^{-8/n}$ with that value as the ratio."},
+            {"type":"p","html":"The design rationale: the authors want a <i>range</i> of behaviors across heads. Steep-slope heads become myopic local specialists; shallow-slope heads keep a long view. Together they cover short- and long-range dependencies. They found the method robust to the exact slopes — even randomly sampling slopes from an exponential distribution worked in some cases (though with higher variance)."}
+          ]
+        },
+        {
+          "title": "Why not learn the slopes? And why it costs almost nothing",
+          "subtitle": "Design rationale, failed alternatives, and the trivial implementation",
+          "pdfPages": [5, 6],
+          "blocks": [
+            {"type":"p","html":"An obvious question: if <i>m</i> is so important, why fix it instead of letting the model learn it? The authors tried exactly that. Making the slopes trainable <i>did not yield strong extrapolation results</i>, and it also slowed training by 3%. A brief manual exploration of about ten slope sets led them to the fixed geometric sequence. Their insight: the best slope sets have slopes in the $(0, 1)$ range, densest near 0 — which is precisely what the geometric sequence gives you."},
+            {"type":"p","html":"This is a deliberate echo of the sinusoidal approach. There, Vaswani et al. hand-set the frequency schedule once and everyone reused it across models and datasets. ALiBi does the same: pick the slope formula once, reuse it everywhere. The paper confirms the same slopes work across different model sizes, training budgets, and text domains — no per-model tuning needed."},
+            {"type":"h2","text":"Position only in queries and keys, never in values"},
+            {"type":"p","html":"Like the rotary and T5-bias methods, ALiBi injects position information into the <i>keys and queries at every layer</i>, but never into the <i>value</i> vectors. The authors hypothesize this segregation — keeping raw content in the values, untouched by position — is part of what makes extrapolation work."},
+            {"type":"h2","text":"The implementation is a few lines and free at runtime"},
+            {"type":"quote","html":"ALiBi is easy to implement, with all changes accomplished in a few lines of code."},
+            {"type":"p","html":"A causal language model already adds a <b>mask matrix</b> to the query-key scores before softmax (to hide future tokens by setting them to $-\\infty$). ALiBi's linear biases are simply <i>baked into that same mask matrix</i>. Since the model was already adding a mask, adding ALiBi introduces <b>no new operations</b> — hence no runtime penalty at all."},
+            {"type":"p","html":"The one cost is a little memory. The plain causal mask has size $L \\times L$. ALiBi needs a slightly larger $n \\times L \\times L$ mask (where <i>n</i> is the number of heads), because each head uses a different slope. In the authors' experiments this was an increase of up to about 100 MB — a rounding error compared to the multiple <i>gigabytes</i> saved by being able to train on much shorter sequences."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "4. Results",
+      "pages": [
+        {
+          "title": "WikiText-103: extrapolating past 6x the training length",
+          "subtitle": "It doesn't just survive longer inputs — it gets better",
+          "pdfPages": [6, 7],
+          "blocks": [
+            {"type":"p","html":"The authors first develop ALiBi on <b>WikiText-103</b> (Merity et al., 2016), replacing the sinusoidal embeddings in the Baevski &amp; Auli language model. They train ALiBi models at many input lengths <i>L</i> and then evaluate on longer validation lengths $L_{valid}$."},
+            {"type":"h2","text":"Observation 1: ALiBi wins even without extrapolating"},
+            {"type":"p","html":"For every training length <i>L</i>, ALiBi beats sinusoidal even when both are evaluated at the same length (no extrapolation involved). For example, the sinusoidal Baevski &amp; Auli model gets <b>18.67 ± 0.24</b> perplexity when trained and tested at L=3072, while ALiBi trained at L=3072 gets <b>17.60</b> — a clear win purely from the recency inductive bias."},
+            {"type":"h2","text":"Observation 2: it improves when fed more tokens than it trained on"},
+            {"type":"p","html":"This is the striking part. An ALiBi model trained on just <b>512 tokens</b> scores 19.73 perplexity at its native length — but when you let it read <b>3072-token</b> sequences at inference, its perplexity <i>drops to 18.40</i>. Extrapolating made it better, not worse. And 18.40 <i>beats</i> the L=3072 sinusoidal model by a statistically significant margin — despite the ALiBi model training far faster on its short 512-token sequences."},
+            {"type":"quote","html":"The L = 512 model is 1.84 times faster to train and yet still outperforms the L = 3072 sinusoidal model when extrapolating to L_valid = 3072."},
+            {"type":"p","html":"There is also a memory angle: the L=3072 sinusoidal model needs a GPU with more than 16 GB just to hold its large attention matrices. The ALiBi L=512 model beats it while fitting on a much smaller GPU, because short sequences mean small attention matrices."},
+            {"type":"h2","text":"How far does it keep improving?"},
+            {"type":"p","html":"On WikiText-103, ALiBi keeps improving perplexity until roughly <b>3L</b> (three times the training length), with the L=512 model still improving even past 12,000 tokens. By contrast the T5 bias — the best baseline — stops improving around 2L. And even once ALiBi stops <i>improving</i>, it never degrades: it holds strong performance out to sequences of length 10,000, whereas sinusoidal and rotary have long since blown up."}
+          ]
+        },
+        {
+          "title": "Scaling to 1.3B parameters on 461 GB of text",
+          "subtitle": "The headline efficiency claim, verified at real scale",
+          "pdfPages": [7, 8],
+          "blocks": [
+            {"type":"p","html":"A method that only works on a small academic benchmark is easy to dismiss. So the authors' final experiment stress-tests ALiBi at serious scale, with <i>zero</i> changes to the slopes tuned on WikiText-103."},
+            {"type":"p","html":"They train a <b>1.3-billion-parameter</b> model (25 transformer layers, 16 heads, model dimension 2048, 8192 feedforward dimension) on the <b>CC100+RoBERTa</b> corpus — the RoBERTa training data plus the English part of CC-100, totaling <b>461 GB</b> of text. Training is one epoch = 50k updates on <b>128 V100 GPUs</b>. This is the regime real large LMs live in; the authors note GPT-3 and Jurassic-1 use learned positions and GPT-J uses rotary, so ALiBi working here is a meaningful generalization test."},
+            {"type":"h2","text":"The 11% claim, from the abstract, verified"},
+            {"type":"p","html":"They compare an ALiBi model trained on <b>L=1024</b> against a sinusoidal model trained on <b>L=2048</b>, both evaluated at $L_{valid} = 2048$. The ALiBi model — trained on sequences <i>half as long</i> — actually <b>outperforms</b> the sinusoidal one by 0.09 perplexity, while using <b>3.1 GB less memory</b>. Sampling five points across training, they compute that the ALiBi L=1024 model reaches any given perplexity <b>11% faster</b> on average. That is the abstract's headline number, at 1.3B scale."},
+            {"type":"p","html":"A second comparison: ALiBi trained on L=512 versus sinusoidal on L=1024 (both evaluated at 1024). At the point ALiBi finishes its single epoch, it lands within just <b>0.06 perplexity</b> of the baseline — even though it trained on sequences half as long, using less memory the whole way."},
+            {"type":"h2","text":"Best around 2L, and the low-resource bonus fades"},
+            {"type":"p","html":"On this large corpus (Figure 6), ALiBi's best extrapolation sweet spot is around <b>2L</b> — the L=512 model gets 9.79 perplexity at its native length and improves to about <b>9.3</b> when extrapolating to ~1024 tokens, then holds steady out to 10,000. Interestingly, the authors note that at this large-data scale ALiBi performs <i>similarly</i> to sinusoidal when both train at the same <i>L</i> — the extra inductive-bias win they saw on small WikiText-103 shrinks, suggesting ALiBi's recency prior helps most in <b>lower-resource</b> settings where the model can't learn everything from data alone."}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "5. Significance",
+      "pages": [
+        {
+          "title": "Why ALiBi mattered and what it influenced",
+          "subtitle": "The legacy of a three-line change",
+          "pdfPages": [1, 5],
+          "blocks": [
+            {"type":"p","html":"ALiBi is a rare paper where the method is almost embarrassingly simple — subtract a fixed, per-head, distance-proportional penalty from attention scores — yet it reframed how the field thinks about position in transformers. Its central thesis, that <b>extrapolation ability depends heavily on the position method</b>, turned an obscure implementation detail into a first-class design decision."},
+            {"type":"h2","text":"The trade-off table, at a glance"},
+            {"type":"table","headers":["Method","Injects position at","Extrapolates?","Cost vs. sinusoidal"],"rows":[
+              ["Sinusoidal","Bottom layer only","Barely","Baseline"],
+              ["Rotary","Every layer (q, k)","Somewhat","Slower"],
+              ["T5 bias","Every layer (score bias)","Yes, best of baselines","≥ 2x slower"],
+              ["ALiBi","Every layer (score bias)","Yes, farthest","≈ Free (tiny memory)"]
+            ]},
+            {"type":"p","html":"ALiBi's move was to keep the T5 bias's winning ingredient — a relative-distance penalty added directly to attention scores at every layer — but replace the T5's <i>learned, bucketed</i> biases with a <i>fixed linear</i> one. Fixing it is what makes it free at runtime and what makes it extrapolate cleanly to distances never seen in training (a linear function is defined everywhere; a lookup table of learned buckets is not)."},
+            {"type":"h2","text":"What it enabled downstream"},
+            {"type":"p","html":"Because ALiBi lets you train cheaply on short sequences yet deploy on long ones, it became a practical building block for long-context models. It was adopted in the <b>BLOOM</b> 176B multilingual model and the <b>MPT</b> family from MosaicML (whose MPT-7B-StoryWriter variant advertised 65k-token contexts precisely by leaning on ALiBi's extrapolation), among others. The authors' framing also connects to the era of in-context learning that Brown et al. (2020) opened: if you feed NLP training examples as context to a language model, ALiBi lets you fit more examples and generate longer outputs."},
+            {"type":"h2","text":"Honest limits and later refinements"},
+            {"type":"p","html":"ALiBi is not the last word. Its hard recency bias can hurt tasks that need to retrieve information from far back in the context (later work found it can under-attend to distant tokens), and rotary-based schemes with interpolation tricks became the more common route to very long contexts in the largest models. But ALiBi's real legacy is conceptual: it proved you can get strong length extrapolation with essentially <i>no</i> extra parameters, no extra runtime, and a change small enough to fit in a few lines of existing transformer code — a durable reminder that the cheapest idea is sometimes the one that wins."}
+          ]
+        }
+      ]
+    }
+  ]
+}
